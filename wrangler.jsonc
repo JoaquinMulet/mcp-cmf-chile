@@ -1,0 +1,28 @@
+﻿{
+  "name": "mcp-cmf-chile",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-07-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "custom_domains": [
+    { "domain": "cmf-mcp.kumocloud.cl" }
+  ],
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "CMF_RATE_LIMIT_MS": "1100",
+    "CMF_CACHE_TTL_S": "900",
+    "CMF_MAX_ROWS": "500",
+    "CMF_UPSTREAM_TIMEOUT_MS": "12000"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "CMF_KV",
+      "id": "4440aa404d7c4880b06f93fad597e99d"
+    }
+  ],
+  "triggers": {
+    "crons": []
+  }
+}
