@@ -180,7 +180,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
             : "/institucional/estadisticas/fm.inversiones_inter.php";
         const res = await getLegacyBinario(
           path,
-          { out: "excel", lang: "es", consulta: consulta ?? "fondos", admins: "0", tipofondo: "0", moneda: "0", mes: mes ?? "12", anio },
+          { out: "excel", lang: "es", consulta: consulta ?? "fondos", admins: "0", tipofondo: "0", moneda: "0", mes: mes ?? "12", anio, tipoinversion: tipo === "nacio" ? "naci" : "inter", ...(tipo === "nacio" ? { eminaci: "0" } : { eminter: "0" }) },
           env,
         );
         const filas = xlsAJson(res);

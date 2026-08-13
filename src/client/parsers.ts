@@ -167,7 +167,7 @@ export function xlsAJson(bytes: ArrayBuffer | Uint8Array): Record<string, unknow
         !v.includes(":") &&
         !/^\d+(\.\d+)?$/.test(v) &&
         !/^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$/.test(v) &&
-        /^[A-Za-zÁÉÍÓÚÑÜáéíóúñü0-9 &/.,'()%*#+-]+$/.test(v),
+        /^[A-Za-zÁÉÍÓÚÑÜáéíóúñü0-9 °&/.,'()%*#+-]+$/.test(v),
     );
   };
 

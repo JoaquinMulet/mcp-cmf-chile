@@ -20,6 +20,7 @@ export const HOSTS_ALLOWLIST = new Set([
   "best-cmf.cl",
   "www.best-cmf.cl",
   "tasas.cmfchile.cl",
+  "datosbanco.cmfchile.cl",
   "cronologiabancaria.cmfchile.cl",
   "conocetudeuda.cmfchile.cl",
   "conocetuseguro.cl",
@@ -116,13 +117,15 @@ export async function fetchCmf(
   if (cookie) headers.set("Cookie", cookie);
 
   const rl = getLimiter(cfg.rateLimitMs);
+  // El timeout configurado (env) debe aplicar también a los intentos del anti-bot
+  const fetchConCfg = (u: string, i: RequestInit) => fetchConTimeout(u, i, cfg.upstreamTimeoutMs);
 
   let ultimoError: unknown = null;
   for (let intento = 0; intento < 3; intento++) {
     if (intento > 0) await new Promise((r) => setTimeout(r, 500 * 2 ** (intento - 1)));
     await rl.esperar(u.hostname);
     try {
-      const res = await resolverChallenge(fetchConTimeout, url, { ...init, headers }, jar);
+      const res = await resolverChallenge(fetchConCfg, url, { ...init, headers }, jar);
       rl.liberar();
       if (res.status >= 300 && res.status < 400 && res.headers.get("location")) {
         // Redirect manual validado (allowlist)

@@ -15,8 +15,8 @@ const handler = createMcpHandler(() => createServer({ __pdfModule: pdfModule }))
 const transport = new StreamableHTTPClientTransport("http://localhost/mcp", {
   fetch: (u, i) => handler.fetch(new Request(u, i)),
 });
-const client = new Client({ name: "runner-prueba-uso", version: "1" }, {});
-await client.connect(transport);
+const client = new Client({ name: "runner-prueba-uso", version: "1" }, { requestTimeout: 180_000 });
+await client.connect(transport, { timeout: 300_000 });
 
 const archivos = ["test/prueba-uso-a.jsonl", "test/prueba-uso-b.jsonl", "test/prueba-uso-c.jsonl"];
 const llamadas: any[] = [];
@@ -34,7 +34,7 @@ for (const l of llamadas) {
   if (l.skip) { saltadas++; console.log(`SKIP ${l.tool} (tarea ${l.tarea}): ${l.skip}`); continue; }
   const t0 = Date.now();
   try {
-    const res = await client.callTool({ name: l.tool, arguments: l.args });
+    const res = await client.callTool({ name: l.tool, arguments: l.args }, { timeout: 300_000 });
     const ms = Date.now() - t0;
     const texto = (res.content?.[0]?.text ?? "").replace(/\s+/g, " ").slice(0, 200);
     const esCaptcha = /captcha/i.test(texto) && res.isError;

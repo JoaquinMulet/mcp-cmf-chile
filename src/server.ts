@@ -46,7 +46,6 @@ export function createServer(env: CmfEnv = {}): McpServer {
         "- Resultados paginados: las tools con offset/limit devuelven next_offset/total; itere para ver todas las filas (nunca asuma que la primera página es el total).",
         "- Los documentos firmados se gestionan en el servidor; para leer el contenido de un PDF: cmf_documento_markdown (token s567 o url completa del documento).",
         "- Si una consulta devuelve 'sin datos', verifique el período o la norma (IFRS vs NCH) antes de concluir que la información no existe; si el error menciona que la fuente de la CMF no devolvió datos, es una condición del sistema de la CMF (verifique la página oficial indicada) y no implica ausencia de datos.",
-        "- Sistemas legacy de la CMF actualmente sin datos parseables (las tools lo reportan como error de fuente, no como ausencia): normativa (buscador), dividendos, APV, clasificaciones de riesgo, SCOMP, SATRA, siniestros, cumplimiento de aseguradoras, cartera C.1835, producción de corredores (ISPRO), rentas vitalicias por compañía, tasas bancarias (InfoFinanciera), reportes BaseDato, inversiones agregadas de fondos mutuos y cuadros de resultados AV/CB.",
       ].join("\n"),
     },
   );

@@ -18,7 +18,6 @@ Límites y notas:
 - Resultados paginados: las tools con offset/limit devuelven next_offset/total; itere para ver todas las filas (nunca asuma que la primera página es el total).
 - Los documentos firmados se gestionan en el servidor; para leer el contenido de un PDF: cmf_documento_markdown (token s567 o url completa del documento).
 - Si una consulta devuelve 'sin datos', verifique el período o la norma (IFRS vs NCH) antes de concluir que la información no existe; si el error menciona que la fuente de la CMF no devolvió datos, es una condición del sistema de la CMF (verifique la página oficial indicada) y no implica ausencia de datos.
-- Sistemas legacy de la CMF actualmente sin datos parseables (las tools lo reportan como error de fuente, no como ausencia): normativa (buscador), dividendos, APV, clasificaciones de riesgo, SCOMP, SATRA, siniestros, cumplimiento de aseguradoras, cartera C.1835, producción de corredores (ISPRO), rentas vitalicias por compañía, tasas bancarias (InfoFinanciera), reportes BaseDato, inversiones agregadas de fondos mutuos y cuadros de resultados AV/CB.
 ```
 
 ## TOOLS (86)
@@ -316,7 +315,7 @@ Límites y notas:
 
 ### cmf_clasificaciones_riesgo
 - title: Clasificaciones de riesgo
-- description: Devuelve las clasificaciones de riesgo vigentes (corte a hoy) asignadas a emisores e instrumentos por las clasificadoras. Filtre opcionalmente por emisor, clasificadora o tipo_instrumento (texto libre); pagine con offset/limit (máx 500). Use esta tool para evaluar calidad crediticia de instrumentos; para el historial financiero del emisor use cmf_empresa_eeff.
+- description: Devuelve las clasificaciones de riesgo asignadas a emisores e instrumentos por las clasificadoras (XLSX oficial de la CMF). El sistema usa un flujo en 2 pasos: la tool genera el archivo (POST a excel_busqueda_clasificaciones) y descarga el XLSX resultante, que luego se parsea a filas. Filtre opcionalmente por emisor, clasificadora o tipo_instrumento (los filtros se aplican sobre las filas descargadas). Use esta tool para evaluar calidad crediticia de instrumentos; para el historial financiero del emisor use cmf_empresa_eeff.
 - parámetros:
   - emisor: Filtro por nombre o RUT del emisor (texto libre, opcional)
   - clasificadora: Filtro por clasificadora (texto libre, opcional)
@@ -372,14 +371,14 @@ Límites y notas:
 
 ### cmf_dividendos
 - title: Dividendos de sociedades
-- description: Devuelve los dividendos declarados por sociedades anónimas (detalle y resumen por acción) para un período. Seleccione sociedades por RUT (array; default todas), anio en AAAA, anio2 opcional para rangos, mes/mes2 opcionales en MM (default 01-12) y tipodiv (default DIV). Use esta tool para historial de dividendos; para operaciones de capital use cmf_operaciones_capital.
+- description: Devuelve los dividendos declarados por sociedades anónimas (detalle por sociedad, del grid acc_dividendos1grid de la CMF). Seleccione sociedades por RUT (array; el catálogo de sociedades del form usa RUTs específicos: pruebe con un RUT concreto si ['0'] no devuelve), anio en AAAA, anio2 opcional para rangos, mes/mes2 opcionales en MM (default 01-12) y tipodiv (0=dividendos, default 0). Si una sociedad no tiene dividendos en el período, la CMF lo dice y la tool lo reporta como ausencia real. Use esta tool para historial de dividendos; para operaciones de capital use cmf_operaciones_capital.
 - parámetros:
   - sociedades default=["0"]: RUTs de sociedades sin DV (['0'] = todas)
   - anio (REQUERIDO): Año en formato AAAA (acepta 2026 o '2026'). Ej: 2025
   - anio2: Año final del rango en AAAA (default: igual a anio)
-  - mes: Mes en formato MM (01-12; acepta 3 o '03'). Ej: 03
-  - mes2: Mes final del rango en MM (default 12)
-  - tipodiv: Tipo de dividendo (default DIV)
+  - mes: Mes inicial en MM (default 01)
+  - mes2: Mes final en MM (default 12)
+  - tipodiv default="0": Tipo de dividendo (0=dividendos, default)
 - annotations: {"readOnlyHint":true,"destructiveHint":false}
 - outputSchema: {filas}
 
@@ -395,14 +394,16 @@ Límites y notas:
 
 ### cmf_apv
 - title: Valores APV
-- description: Devuelve los valores de ahorro previsional voluntario (APV) del mercado por tipo de fondo y cuadro, para un rango de períodos. Fije anio_desde/anio_hasta en AAAA y mes_desde/mes_hasta opcionales en MM (default 01-12); tipo y cuadro opcionales. Use esta tool para estadísticas de APV; para fondos mutuos use las tools cmf_fondos_mutuos_*.
+- description: Devuelve los valores de ahorro previsional voluntario (APV) que publica la CMF (Circular 1981): depósitos, traspasos, cuentas y bonificaciones por tipo de entidad y mes. Elija el cuadro (1=Depósitos APV, 2=Depósitos Convenidos, 3=APV Colectivo, 4=Bonificación APV/APVC, 5-10=Traspasos, 11+=Cuentas y desgloses), el rango (anio_desde/anio_hasta en AAAA, mes_desde/mes_hasta en MM) y los tipos de entidad (FI=fondos de inversión, FM=mutuos, FV=seguros de vida, IV, SV, SA). Con exportar=true devuelve además el XLS oficial del cuadro (base64). Use esta tool para estadísticas de APV; para fondos mutuos use las tools cmf_fondos_mutuos_*.
 - parámetros:
   - anio_desde (REQUERIDO): Año en formato AAAA (acepta 2026 o '2026'). Ej: 2025
   - anio_hasta (REQUERIDO): Año final del rango en AAAA (ej: 2025)
-  - mes_desde: Mes en formato MM (01-12; acepta 3 o '03'). Ej: 03
-  - mes_hasta: Mes final del rango en MM (default 12)
-  - tipo: Tipo de APV (texto libre, opcional)
-  - cuadro: Cuadro (texto libre, opcional)
+  - mes_desde: Mes inicial en MM (default 01)
+  - mes_hasta: Mes final en MM (default 12)
+  - cuadro default="1": Cuadro estadístico: 1=Depósitos APV, 2=Depósitos Convenidos, 3=APV Colectivo, 4=Bonificación APV/APVC, 5-10=Traspasos, 11+=Cuentas y desgloses (default 1)
+  - tipo_e default=["FI","FM","FV"]: Tipos de entidad a incluir (default FI,FM,FV)
+  - tipo enum=[entidad|agregado]: Vista: entidad o agregado (default entidad)
+  - exportar default=false: true = además descarga el XLS oficial del cuadro (base64 en xls_base64)
 - annotations: {"readOnlyHint":true,"destructiveHint":false}
 - outputSchema: {filas}
 
@@ -456,9 +457,11 @@ Límites y notas:
 
 ### cmf_resultados_av_cb
 - title: Cuadros de resultados (AV/CB y emisores NCH)
-- description: Devuelve los cuadros de resultados de agentes de valores y corredores de bolsa (tipo=av_cb, default) o de emisores bajo norma NCH (tipo=emisores_nch). Use esta tool para estados de resultados agregados del mercado; para EEFF de un emisor individual use cmf_empresa_eeff o cmf_empresa_eeff_nch.
+- description: Devuelve los cuadros de resultados de agentes de valores y corredores de bolsa (tipo=av_cb, norma IFRS) o de emisores bajo norma NCH (tipo=emisores_nch), para un período. Fije anio en AAAA y mes en MM (03/06/09/12 para IFRS; 12 para NCH); la respuesta trae la tabla de corredores y la de agentes. Use esta tool para estados de resultados agregados del mercado; para EEFF de un emisor individual use cmf_empresa_eeff o cmf_empresa_eeff_nch.
 - parámetros:
-  - tipo enum=[av_cb|emisores_nch]: av_cb=agentes/corredores (default), emisores_nch=emisores bajo NCH
+  - tipo enum=[av_cb|emisores_nch]: av_cb=agentes/corredores IFRS (default), emisores_nch=emisores bajo NCH
+  - anio: Año del período en AAAA (default 2025)
+  - mes: Mes de corte (03/06/09/12; default 12)
 - annotations: {"readOnlyHint":true,"destructiveHint":false}
 - outputSchema: {filas}
 
@@ -474,8 +477,10 @@ Límites y notas:
 
 ### cmf_prestamos_otorgados
 - title: Préstamos otorgados
-- description: Devuelve el reporte de préstamos otorgados del mercado de valores publicado por la CMF (el sistema legacy entrega el reporte completo, sin filtro de fechas). Use esta tool para estadísticas de préstamos del mercado.
-- parámetros: ninguno
+- description: Devuelve el reporte mensual de préstamos otorgados en el mercado de valores publicado por la CMF (XLS oficial), con detalle por entidad. Fije anio (2016-2026) y mes (01-12); si el mes no tiene reporte, la CMF devuelve solo el título y la tool lo indica. Use esta tool para estadísticas de préstamos del mercado.
+- parámetros:
+  - anio: Año del reporte en AAAA (2016-2026; default año actual)
+  - mes: Mes del reporte en MM (default mes actual)
 - annotations: {"readOnlyHint":true,"destructiveHint":false}
 - outputSchema: {filas}
 
@@ -641,7 +646,7 @@ Límites y notas:
 
 ### cmf_normativa_buscar
 - title: Buscar normativa
-- description: Busca normas de la CMF (circulares, oficios, normas de carácter general NCG) por tipo, número, rango de fechas, entidad o materia, paginado con offset/limit. Usa el buscador legacy de la CMF, que puede estar caído (la CMF migró al portal nuevo): si no devuelve resultados, use cmf_normativa_descargar si conoce la ruta, o el portal cmfchile.cl. Use esta tool para encontrar normas por materia; para descargar el PDF de una norma ya identificada use cmf_normativa_descargar.
+- description: Busca normas de la CMF (circulares CIR, oficios OFC, normas de carácter general NCG) por NÚMERO en el buscador legacy (verificado: solo devuelve resultados por número; las búsquedas por fechas sin número no funcionan en el sistema de la CMF). Use tipo (CIR/OFC/NCG/ALL) y numero (ej: 2343); los filtros desde/hasta y materia se envían pero el sistema legacy los ignora. Para descargar el PDF use cmf_normativa_descargar con la ruta del compendio.
 - parámetros:
   - tipo enum=[ALL|CIR|OFC|NCG]: Tipo de norma: ALL=todos, CIR=circular, OFC=oficio, NCG=norma de carácter general
   - numero: Número de la norma
@@ -677,9 +682,11 @@ Límites y notas:
 
 ### cmf_seguros_rentas_vitalicias
 - title: Estadísticas de Rentas Vitalicias
-- description: Devuelve estadísticas del mercado de rentas vitalicias previsionales por compañía (comisiones, primas, tasas de interés, rankings de asesores). Elija la estadística con codigo (ej: com_int_rvp=comisiones intermediación, pri_uni_rvp=primas únicas, tas_int_med_rvp=tasas de interés promedio, rank_ases_prev=ranking de asesores); resultados paginados con offset/limit (máx 500). Use cmf_seguros_scomp para estadísticas agregadas del sistema SCOMP.
+- description: Devuelve estadísticas del mercado de rentas vitalicias previsionales por compañía (grid oficial de la CMF): comisiones de intermediación (com_int_rvp), primas únicas (pri_uni_rvp) y tasas de interés promedio (tas_int_med_rvp). Fije el rango desde/hasta en YYYY-MM-DD (default: año actual completo) y pagine con offset/limit. Use cmf_seguros_scomp para estadísticas agregadas del sistema SCOMP.
 - parámetros:
-  - codigo (REQUERIDO): Código de estadística (ej: com_int_rvp, pri_uni_rvp, tas_int_med_rvp, rank_ases_prev)
+  - codigo (REQUERIDO) enum=[com_int_rvp|pri_uni_rvp|tas_int_med_rvp]: Estadística: com_int_rvp=comisiones de intermediación, pri_uni_rvp=primas únicas, tas_int_med_rvp=tasas de interés promedio
+  - desde: Inicio del rango en YYYY-MM-DD (default 01-01 del año actual)
+  - hasta: Fin del rango en YYYY-MM-DD (default 31-12 del año actual)
   - offset default=0: Desplazamiento para paginación
   - limit default=100: Límite de filas (máx 500)
 - annotations: {"readOnlyHint":true,"destructiveHint":false}
@@ -687,8 +694,12 @@ Límites y notas:
 
 ### cmf_seguros_scomp
 - title: Estadísticas SCOMP
-- description: Devuelve las estadísticas del SCOMP (Sistema de Consultas y Ofertas del Mercado de Pensiones) publicadas por la CMF. Sin parámetros de filtro; use offset/limit para paginar el listado. Use esta tool para el mercado de pensiones a nivel sistema; para estadísticas por compañía use cmf_seguros_rentas_vitalicias.
+- description: Devuelve las estadísticas del SCOMP (Sistema de Consultas y Ofertas del Mercado de Pensiones) publicadas por la CMF. Elija el informe (solicitudes=inf1, certificados emitidos=inf22, aceptaciones según vía=inf28), el rango desde/hasta en YYYY-MM-DD y la granularidad (D=día, M=mes, A=año). Use esta tool para el mercado de pensiones a nivel sistema; para estadísticas por compañía use cmf_seguros_rentas_vitalicias.
 - parámetros:
+  - informe enum=[inf1|inf22|inf28]: Informe: inf1=solicitudes de oferta ingresadas, inf22=certificados de ofertas emitidos, inf28=aceptaciones según vía de ingreso (default inf1)
+  - desde (REQUERIDO): Fecha en formato YYYY-MM-DD (acepta también DD/MM/AAAA). Ej: 2026-01-31
+  - hasta (REQUERIDO): Fecha en formato YYYY-MM-DD (acepta también DD/MM/AAAA). Ej: 2026-01-31
+  - granularidad enum=[D|M|A]: Granularidad: D=día, M=mes, A=año (default D)
   - offset default=0: Desplazamiento para paginación
   - limit default=100: Límite de filas (máx 500)
 - annotations: {"readOnlyHint":true,"destructiveHint":false}
@@ -705,8 +716,11 @@ Límites y notas:
 
 ### cmf_seguros_satra
 - title: Transacciones Art. 12 Ley 18.045
-- description: Devuelve las transacciones de compañías de seguros informadas conforme al artículo 12 de la Ley 18.045 (Ley de Mercado de Valores), publicadas por la CMF. Sin parámetros de filtro; use offset/limit para paginar el listado. Use esta tool para transacciones del mercado de seguros; para los estados financieros de aseguradoras use cmf_seguros_eeff.
+- description: Devuelve las transacciones de compañías de seguros informadas conforme al artículo 12 de la Ley 18.045 (Ley de Mercado de Valores), publicadas por la CMF, filtrables por sociedad (RUT) y rango de fechas. Fije desde/hasta en YYYY-MM-DD y soc opcional (RUT sin DV; omitir = todas). Use esta tool para transacciones del mercado de seguros; para los estados financieros de aseguradoras use cmf_seguros_eeff.
 - parámetros:
+  - soc: RUT de la sociedad (sin DV; omitir = todas)
+  - desde (REQUERIDO): Fecha en formato YYYY-MM-DD (acepta también DD/MM/AAAA). Ej: 2026-01-31
+  - hasta (REQUERIDO): Fecha en formato YYYY-MM-DD (acepta también DD/MM/AAAA). Ej: 2026-01-31
   - offset default=0: Desplazamiento para paginación
   - limit default=100: Límite de filas (máx 500)
 - annotations: {"readOnlyHint":true,"destructiveHint":false}
@@ -714,8 +728,9 @@ Límites y notas:
 
 ### cmf_seguros_siniestros
 - title: Siniestros detectados no reportados
-- description: Devuelve los siniestros detectados por la CMF que no fueron reportados por las compañías de seguros dentro del plazo. Sin parámetros de filtro; use offset/limit para paginar el listado. Use esta tool para fiscalización de aseguradoras; para el cumplimiento normativo general use cmf_seguros_cumplimiento.
+- description: Devuelve los siniestros detectados por la CMF que no fueron reportados por las compañías de seguros dentro del plazo, por año. Fije anio en AAAA y pagine con offset/limit. Use esta tool para fiscalización de aseguradoras; para el cumplimiento normativo general use cmf_seguros_cumplimiento.
 - parámetros:
+  - anio: Año del listado en AAAA (default año actual)
   - offset default=0: Desplazamiento para paginación
   - limit default=100: Límite de filas (máx 500)
 - annotations: {"readOnlyHint":true,"destructiveHint":false}
@@ -723,29 +738,31 @@ Límites y notas:
 
 ### cmf_seguros_cumplimiento
 - title: Cumplimiento de normativa de seguros
-- description: Devuelve el estado de cumplimiento de la normativa por compañías de seguros de la CMF (sistema sv_cumplimientos). Filtre por anio en AAAA, mes en MM (opcional; default 12) y tipoentidad (CSGEN=seguros generales, CSVID=seguros de vida; default CSGEN). Use esta tool para supervisar cumplimiento; para siniestros no reportados use cmf_seguros_siniestros.
+- description: Devuelve el estado de cumplimiento de la normativa por compañías de seguros de la CMF (sistema sv_cumplimientos, XLSX oficial). Fije anio en AAAA, mes1/mes2 opcionales en MM (default 12/12) y tipoentidad (CSVID=seguros de vida, CSGEN=seguros generales, R=reaseguradoras). Use esta tool para supervisar cumplimiento; para siniestros no reportados use cmf_seguros_siniestros.
 - parámetros:
   - anio (REQUERIDO): Año en formato AAAA (acepta 2026 o '2026'). Ej: 2025
-  - mes: Mes en formato MM (01-12; acepta 3 o '03'). Ej: 03
-  - tipoentidad: Tipo de entidad: CSGEN=seguros generales (default), CSVID=seguros de vida
+  - mes: Mes final en MM (default 12)
+  - tipoentidad: Tipo de entidad: CSVID=seguros de vida (default), CSGEN=seguros generales, R=reaseguradoras
 - annotations: {"readOnlyHint":true,"destructiveHint":false}
 - outputSchema: {filas}
 
 ### cmf_seguros_inversiones_vida
 - title: Cartera de inversiones de seguros (C.1835)
-- description: Devuelve la cartera de inversiones de compañías de seguros de la CMF (Circular 1835), con detalle de instrumentos por entidad. Filtre por tipoentidad (CSVID=seguros de vida, CSGEN=seguros generales; default CSVID) y pagine con offset/limit. Use esta tool para ver en qué invierten las aseguradoras; para la cartera de fondos mutuos use cmf_fondos_mutuos_cartera.
+- description: Devuelve la cartera de inversiones de compañías de seguros de la CMF (Circular 1835). Sin peri: devuelve los períodos disponibles (JSON oficial). Con peri (AAAAMM): descarga el ZIP oficial del período y devuelve sus entradas (un TXT de ancho fijo por compañía y tipo de inversión) con tamaño y primeras líneas de cada una (el detalle completo se sirve como base64 del ZIP en zip_base64 si max_entradas no lo limita). Filtre por tipoentidad (CSVID=seguros de vida, CSGEN=seguros generales). Use esta tool para ver en qué invierten las aseguradoras; para la cartera de fondos mutuos use cmf_fondos_mutuos_cartera.
 - parámetros:
   - tipoentidad enum=[CSVID|CSGEN]: Tipo de entidad: CSVID=seguros de vida (default), CSGEN=seguros generales
-  - offset default=0: Desplazamiento para paginación
-  - limit default=100: Límite de filas (máx 500)
+  - peri: Período AAAAMM (ej: 202512); sin él, la tool lista los períodos disponibles
+  - max_entradas default=10: Máximo de entradas a describir (default 10)
+  - incluir_zip default=false: true = incluye el ZIP completo en base64 (zip_base64; puede ser ~16MB)
 - annotations: {"readOnlyHint":true,"destructiveHint":false}
 - outputSchema: {filas}
 
 ### cmf_seguros_produccion_corredores
 - title: Producción de corredores de seguros
-- description: Devuelve la producción de corredores de seguros publicada por la CMF (sistema ISPRO). Filtre por tipoentidad (CSJUR=corredores, CSGEN=seguros generales, CSVID=seguros de vida; default CSJUR) y pagine con offset/limit. Use esta tool para la intermediación del mercado de seguros; para la cartera de las compañías use cmf_seguros_inversiones_vida.
+- description: Devuelve la producción de corredores de seguros publicada por la CMF (sistema ISPRO) para un período AAAAMM: descarga el ZIP oficial y parsea los archivos de ancho fijo (identifi=catálogo de corredores, prodramo=producción por ramo, intercia=producción por compañía). Fije peri en AAAAMM (ej: 202512; los períodos disponibles van del año 2017 al actual, corte diciembre) y elija sección. Use esta tool para la intermediación del mercado de seguros; para la cartera de las compañías use cmf_seguros_inversiones_vida.
 - parámetros:
-  - tipoentidad enum=[CSJUR|CSGEN|CSVID]: Tipo de entidad: CSJUR=corredores (default), CSGEN=seguros generales, CSVID=seguros de vida
+  - peri (REQUERIDO): Período AAAAMM (ej: 202512)
+  - seccion enum=[identifi|prodramo|intercia]: Sección: identifi=catálogo de corredores (default), prodramo=producción por ramo, intercia=producción por compañía
   - offset default=0: Desplazamiento para paginación
   - limit default=100: Límite de filas (máx 500)
 - annotations: {"readOnlyHint":true,"destructiveHint":false}
@@ -842,9 +859,10 @@ Límites y notas:
 
 ### cmf_bancos_tasas
 - title: Buscador de tasas bancarias
-- description: Devuelve las tasas de interés de instituciones financieras chilenas publicadas por la CMF (servlet InfoFinanciera de la ex SBIF) para el índice solicitado. Si el índice corresponde a un formulario, la respuesta puede no traer tablas parseables. Use esta tool para tasas bancarias; para reportes de instituciones use cmf_bancos_reportes.
+- description: Devuelve las tasas de interés de instituciones financieras chilenas publicadas por la CMF (servlet InfoFinanciera de la ex SBIF, host tasas.cmfchile.cl). El índice 4.2.1 trae las tasas de interés corriente y máxima convencional por segmento para una fecha; otros índices: 4.2.2=certificados de tasas (por año) y 4.2.3=tasas por período (POST). Use esta tool para tasas bancarias; para reportes de instituciones use cmf_bancos_reportes.
 - parámetros:
-  - indice default="4.1": Índice del reporte
+  - indice default="4.2.1": Índice del reporte (default 4.2.1=tasas por fecha)
+  - fecha: Fecha de las tasas en YYYY-MM-DD (default hoy)
 - annotations: {"readOnlyHint":true,"destructiveHint":false}
 - outputSchema: {filas}
 
@@ -858,13 +876,12 @@ Límites y notas:
 
 ### cmf_bancos_reportes
 - title: Reportes de instituciones financieras (BaseDato)
-- description: Devuelve reportes del sistema BaseDato de instituciones financieras de la CMF (ex SBIF). Use reporte (default FIC) e indice (default 30.1); acote con periodo_inicial/periodo_final en AAAA-MM e institucion (código de institución). Puede requerir resolver el challenge anti-bot de la CMF; si falla, reintente. Use esta tool para reportes históricos de la banca; para tasas de interés use cmf_bancos_tasas.
+- description: Devuelve reportes del sistema BaseDato de instituciones financieras de la CMF (ex SBIF, host datosbanco.cmfchile.cl): MR1=información contable mensual, MB1=?, ADC=adecuación de capital, ADC2=adecuación (v2), HEC=hechos económicos. Fije codUnicoBank (código SBIF, ej: 001; vea cmf://bancos/codigos), reporte, indice (default 30.1) y período (periodo_inicial AAAA-MM; solo se usa mes y año). Use esta tool para reportes históricos de la banca; para tasas de interés use cmf_bancos_tasas.
 - parámetros:
-  - reporte default="FIC": Código del reporte
+  - reporte enum=[MR1|MB1|ADC|ADC2|HEC]: Código del reporte (default MR1=información contable mensual)
   - indice default="30.1": Índice del reporte (default 30.1)
-  - periodo_inicial: Período inicial en AAAA-MM (ej: 2025-01)
-  - periodo_final: Período final en AAAA-MM (ej: 2025-12)
-  - institucion: Código de institución
+  - codUnicoBank: Código SBIF de la institución (ej: 001=Banco de Chile; default 001)
+  - periodo_inicial: Período en AAAA-MM (ej: 2026-06; default período actual)
 - annotations: {"readOnlyHint":true,"destructiveHint":false}
 - outputSchema: {filas}
 

@@ -5,11 +5,17 @@ import { getLegacy, postLegacy, getLegacyBinario, fetchCmf, fetchCmfBinario, typ
 import { htmlTablaAJson, fechaLegacyCompleta, fechaLegacy, xlsAJson } from "../client/parsers.js";
 import { fromError, toolError, toolErrorFuente, toolOk, resumirTabla } from "../util/errors.js";
 import { bytesABase64 } from "../util/zip.js";
+import { unzip, type ZipEntrada } from "../util/unzip.js";
+
+/** Decodifica páginas legacy (latin1) de los hosts de datos bancarios. */
+function decodificarLatin1(bytes: ArrayBuffer): string {
+  return new TextDecoder("latin1").decode(bytes);
+}
 import { pdfAMarkdown } from "../pdf.js";
 import { procesarTablasEEFF, textoVerificacion, textoAviso } from "../eeff-tables.js";
 import { paginar } from "../util/paginate.js";
 import {
-  anioSchema, fechaSchema, mesSchema, offsetSchema, limitSchema, tipoNormaSchema } from "../util/schemas.js";
+  anioSchema, codigoSchema, fechaSchema, mesSchema, offsetSchema, limitSchema, rutSchema, tipoNormaSchema } from "../util/schemas.js";
 
 export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
   // ---------- Normativa ----------
@@ -20,7 +26,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       annotations: { readOnlyHint: true, destructiveHint: false },
       title: "Buscar normativa",
       description:
-        "Busca normas de la CMF (circulares, oficios, normas de carácter general NCG) por tipo, número, rango de fechas, entidad o materia, paginado con offset/limit. Usa el buscador legacy de la CMF, que puede estar caído (la CMF migró al portal nuevo): si no devuelve resultados, use cmf_normativa_descargar si conoce la ruta, o el portal cmfchile.cl. Use esta tool para encontrar normas por materia; para descargar el PDF de una norma ya identificada use cmf_normativa_descargar.",
+        "Busca normas de la CMF (circulares CIR, oficios OFC, normas de carácter general NCG) por NÚMERO en el buscador legacy (verificado: solo devuelve resultados por número; las búsquedas por fechas sin número no funcionan en el sistema de la CMF). Use tipo (CIR/OFC/NCG/ALL) y numero (ej: 2343); los filtros desde/hasta y materia se envían pero el sistema legacy los ignora. Para descargar el PDF use cmf_normativa_descargar con la ruta del compendio.",
       inputSchema: z.object({
         tipo: tipoNormaSchema.default("ALL"),
         numero: z.string().optional().describe("Número de la norma"),
@@ -39,36 +45,41 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
     },
     async ({ tipo, numero, desde, hasta, entidad, materia, offset, limit }) => {
       try {
-        // desde/hasta vienen en YYYY-MM-DD: el buscador legacy espera dd/mm/aa por separado.
-        const f1 = desde ? { dd: desde.slice(8, 10), mm: desde.slice(5, 7), aa: desde.slice(0, 4) } : { dd: "01", mm: "01", aa: "2000" };
-        const f2 = hasta ? { dd: hasta.slice(8, 10), mm: hasta.slice(5, 7), aa: hasta.slice(0, 4) } : { dd: "31", mm: "12", aa: "2100" };
-        const html = await getLegacy(
-          "/institucional/legislacion_normativa/normativa2.php",
-          {
-            tiponorma: tipo,
-            numero: numero ?? "",
-            dd: f1.dd,
-            mm: f1.mm,
-            aa: f1.aa,
-            dd2: f2.dd,
-            mm2: f2.mm,
-            aa2: f2.aa,
-            buscar: "Buscar",
-            entidad_web: entidad ?? "",
-            materia: materia ?? "",
-            enviado: 1,
-          },
-          env,
-        );
-        const filas = htmlTablaAJson(html);
-        // Cuando el buscador falla o está caído, la página muestra la tabla de ayuda
-        // (Entidad: Todas / nomenclatura) o un error del script: nunca entregar eso como normas.
+        // El buscador legacy solo resuelve búsquedas por número; además, enviar
+        // `buscar` o `materia` (aunque vacíos) rompe la búsqueda por número
+        // (verificado contra la CMF). Solo se envían los params imprescindibles.
+        const params: Record<string, string | undefined> = {
+          tiponorma: tipo,
+          numero: numero ?? "",
+          enviado: "1",
+          hidden_mercado: "%",
+          ...(materia ? { materia } : {}),
+          ...(desde || hasta
+            ? {
+                dd: desde ? desde.slice(8, 10) : "01",
+                mm: desde ? desde.slice(5, 7) : "01",
+                aa: desde ? desde.slice(0, 4) : "2000",
+                dd2: hasta ? hasta.slice(8, 10) : "31",
+                mm2: hasta ? hasta.slice(5, 7) : "12",
+                aa2: hasta ? hasta.slice(0, 4) : "2100",
+              }
+            : {}),
+        };
+        void entidad;
+        const html = await getLegacy("/institucional/legislacion_normativa/normativa2.php", params, env);
+        const filas = htmlTablaAJson(html, ["tipo", "numero", "fecha", "titulo", "hojas", "informe"]);
+        // Verificado contra la CMF (2026-08): normativa2.php SOLO devuelve resultados
+        // por número de norma; las búsquedas por rango de fechas sin número devuelven
+        // "No existen Normas" aunque existan normas en el período.
         if (html.includes("ERROR Linea") || html.includes("No existen Normas")) {
+          if (numero) {
+            return toolOk(`La CMF no tiene la norma ${tipo} ${numero} en el rango consultado.`, { normas: [], total: 0, next_offset: null });
+          }
           return toolError(
-            "El buscador de normativa legacy de la CMF (normativa2.php) no devolvió resultados: está caído o ya no se mantiene " +
-              "(la CMF migró su normativa al portal nuevo). Alternativas: (1) use cmf_normativa_descargar con la ruta del compendio " +
-              "(ej: /web/compendio/cir/cir_2343_2024.pdf) si conoce el documento, o (2) consulte el portal de normativa de la CMF en " +
-              "https://www.cmfchile.cl/portal/normativa/624/w4-propertyname-916.html y reintente más tarde.",
+            "El buscador legacy de normativa de la CMF solo devuelve resultados por NÚMERO de norma (use numero, ej: 2343). " +
+              "La búsqueda por fechas sin número no funciona en el sistema de la CMF. " +
+              "Alternativas: (1) use cmf_normativa_descargar si conoce la ruta del compendio (ej: /web/compendio/cir/cir_2343_2024.pdf), " +
+              "o (2) consulte el portal nuevo en https://www.cmfchile.cl/portal/normativa/624/w4-propertyname-916.html.",
           );
         }
         const normasReales = filas.filter((f) => Object.values(f).some((v) => v && !/Entidad :|Nomenclatura|CIR :|OFC|NCG :/.test(v)));
@@ -184,27 +195,40 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Estadísticas de Rentas Vitalicias",
       description:
-        "Devuelve estadísticas del mercado de rentas vitalicias previsionales por compañía (comisiones, primas, tasas de interés, rankings de asesores). Elija la estadística con codigo (ej: com_int_rvp=comisiones intermediación, pri_uni_rvp=primas únicas, tas_int_med_rvp=tasas de interés promedio, rank_ases_prev=ranking de asesores); resultados paginados con offset/limit (máx 500). Use cmf_seguros_scomp para estadísticas agregadas del sistema SCOMP.",
+        "Devuelve estadísticas del mercado de rentas vitalicias previsionales por compañía (grid oficial de la CMF): comisiones de intermediación (com_int_rvp), primas únicas (pri_uni_rvp) y tasas de interés promedio (tas_int_med_rvp). Fije el rango desde/hasta en YYYY-MM-DD (default: año actual completo) y pagine con offset/limit. Use cmf_seguros_scomp para estadísticas agregadas del sistema SCOMP.",
       inputSchema: z.object({
         codigo: z
-          .string()
-          .describe("Código de estadística (ej: com_int_rvp, pri_uni_rvp, tas_int_med_rvp, rank_ases_prev)"),
+          .enum(["com_int_rvp", "pri_uni_rvp", "tas_int_med_rvp"])
+          .describe("Estadística: com_int_rvp=comisiones de intermediación, pri_uni_rvp=primas únicas, tas_int_med_rvp=tasas de interés promedio"),
+        desde: fechaSchema.optional().describe("Inicio del rango en YYYY-MM-DD (default 01-01 del año actual)"),
+        hasta: fechaSchema.optional().describe("Fin del rango en YYYY-MM-DD (default 31-12 del año actual)"),
         offset: offsetSchema,
         limit: limitSchema,
       }),
     },
-    async ({ codigo, offset, limit }) => {
+    async ({ codigo, desde, hasta, offset, limit }) => {
       try {
-        const html = await getLegacy("/institucional/estadisticas/svtas_param.php", { p: codigo }, env);
+        const anioActual = String(new Date().getFullYear());
+        const aaaaIni = (desde ?? `${anioActual}-01-01`).slice(0, 4);
+        const mmIni = (desde ?? `${anioActual}-01-01`).slice(5, 7);
+        const aaaaFin = (hasta ?? `${anioActual}-12-31`).slice(0, 4);
+        const mmFin = (hasta ?? `${anioActual}-12-31`).slice(5, 7);
+        const html = await postLegacy(
+          `/institucional/estadisticas/svtas_${codigo}.php`,
+          { p: codigo, aaaa_ini: aaaaIni, mm_ini: mmIni, aaaa_fin: aaaaFin, mm_fin: mmFin },
+          env,
+        );
         const filas = htmlTablaAJson(html);
-        if (filas.length === 0) {
+        if (filas.length === 0 && !/<table/i.test(html)) {
           return toolErrorFuente(
             `Estadísticas de rentas vitalicias ${codigo}`,
             `https://www.cmfchile.cl/institucional/estadisticas/svtas_param.php?p=${codigo}`,
           );
         }
         const { filas: paginadas, paginado } = paginar(filas, offset, limit);
-        const texto = `RVP ${codigo} (total ${paginado.total}):\n${resumirTabla(paginadas, Object.keys(paginadas[0] ?? {}).slice(0, 6))}`;
+        const texto = filas.length
+          ? `RVP ${codigo} ${aaaaIni}-${mmIni} a ${aaaaFin}-${mmFin} (total ${paginado.total}):\n${resumirTabla(paginadas, Object.keys(paginadas[0] ?? {}).slice(0, 6))}`
+          : `Sin estadísticas RVP ${codigo} para el rango (la CMF no devolvió filas).`;
         return toolOk(texto, { codigo, filas: paginadas, total: paginado.total });
       } catch (e) {
         return fromError(e);
@@ -219,22 +243,43 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Estadísticas SCOMP",
       description:
-        "Devuelve las estadísticas del SCOMP (Sistema de Consultas y Ofertas del Mercado de Pensiones) publicadas por la CMF. Sin parámetros de filtro; use offset/limit para paginar el listado. Use esta tool para el mercado de pensiones a nivel sistema; para estadísticas por compañía use cmf_seguros_rentas_vitalicias.",
-      inputSchema: z.object({ offset: offsetSchema, limit: limitSchema }),
+        "Devuelve las estadísticas del SCOMP (Sistema de Consultas y Ofertas del Mercado de Pensiones) publicadas por la CMF. Elija el informe (solicitudes=inf1, certificados emitidos=inf22, aceptaciones según vía=inf28), el rango desde/hasta en YYYY-MM-DD y la granularidad (D=día, M=mes, A=año). Use esta tool para el mercado de pensiones a nivel sistema; para estadísticas por compañía use cmf_seguros_rentas_vitalicias.",
+      inputSchema: z.object({
+        informe: z.enum(["inf1", "inf22", "inf28"]).default("inf1").describe("Informe: inf1=solicitudes de oferta ingresadas, inf22=certificados de ofertas emitidos, inf28=aceptaciones según vía de ingreso (default inf1)"),
+        desde: fechaSchema,
+        hasta: fechaSchema,
+        granularidad: z.enum(["D", "M", "A"]).default("D").describe("Granularidad: D=día, M=mes, A=año (default D)"),
+        offset: offsetSchema,
+        limit: limitSchema,
+      }),
     },
-    async ({ offset, limit }) => {
+    async ({ informe, desde, hasta, granularidad, offset, limit }) => {
       try {
-        const html = await getLegacy("/institucional/mercados/seguros_scomp_estadisticas.php", {}, env);
+        const ARCHIVOS: Record<string, string> = {
+          inf1: "inf1_num_ofer_ingr_tot_v3.php",
+          inf22: "inf22_num_cert_ofert_emit_pension.php",
+          inf28: "inf28_num_acep_segun_via_ingreso_v2.php",
+        };
+        const via = granularidad === "D" ? "W" : granularidad === "M" ? "W" : "W";
+        const f1 = fechaLegacy(desde);
+        const f2 = fechaLegacy(hasta);
+        const html = await getLegacy(
+          `/institucional/inc/${ARCHIVOS[informe]}?via=${via}&dd=${f1.dd}&mm=${f1.mm}&aa=${f1.aa}&dd2=${f2.dd}&mm2=${f2.mm}&aa2=${f2.aa}`,
+          {},
+          env,
+        );
         const filas = htmlTablaAJson(html);
-        if (filas.length === 0) {
+        if (filas.length === 0 && !/<table/i.test(html)) {
           return toolErrorFuente(
-            "Estadísticas SCOMP",
+            `Estadísticas SCOMP ${informe}`,
             "https://www.cmfchile.cl/institucional/mercados/seguros_scomp_estadisticas.php",
           );
         }
         const { filas: paginadas, paginado } = paginar(filas, offset, limit);
-        const texto = `SCOMP (total ${paginado.total}):\n${resumirTabla(paginadas, Object.keys(paginadas[0] ?? {}).slice(0, 6))}`;
-        return toolOk(texto, { filas: paginadas, total: paginado.total });
+        const texto = filas.length
+          ? `SCOMP ${informe} (total ${paginado.total}):\n${resumirTabla(paginadas, Object.keys(paginadas[0] ?? {}).slice(0, 6))}`
+          : `Sin estadísticas SCOMP ${informe} para el rango.`;
+        return toolOk(texto, { informe, filas: paginadas, total: paginado.total });
       } catch (e) {
         return fromError(e);
       }
@@ -276,21 +321,41 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Transacciones Art. 12 Ley 18.045",
       description:
-        "Devuelve las transacciones de compañías de seguros informadas conforme al artículo 12 de la Ley 18.045 (Ley de Mercado de Valores), publicadas por la CMF. Sin parámetros de filtro; use offset/limit para paginar el listado. Use esta tool para transacciones del mercado de seguros; para los estados financieros de aseguradoras use cmf_seguros_eeff.",
-      inputSchema: z.object({ offset: offsetSchema, limit: limitSchema }),
+        "Devuelve las transacciones de compañías de seguros informadas conforme al artículo 12 de la Ley 18.045 (Ley de Mercado de Valores), publicadas por la CMF, filtrables por sociedad (RUT) y rango de fechas. Fije desde/hasta en YYYY-MM-DD y soc opcional (RUT sin DV; omitir = todas). Use esta tool para transacciones del mercado de seguros; para los estados financieros de aseguradoras use cmf_seguros_eeff.",
+      inputSchema: z.object({
+        soc: rutSchema.optional().describe("RUT de la sociedad (sin DV; omitir = todas)"),
+        desde: fechaSchema,
+        hasta: fechaSchema,
+        offset: offsetSchema,
+        limit: limitSchema,
+      }),
     },
-    async ({ offset, limit }) => {
+    async ({ soc, desde, hasta, offset, limit }) => {
       try {
-        const html = await getLegacy("/institucional/estadisticas/seguros_satra_art12v.php", {}, env);
+        const f1 = fechaLegacy(desde);
+        const f2 = fechaLegacy(hasta);
+        const html = await getLegacy(
+          "/institucional/inc/tra/art_12_val.php",
+          {
+            soc: soc ?? "0",
+            desde: `${f1.dd}-${f1.mm}-${f1.aa}`,
+            hasta: `${f2.dd}-${f2.mm}-${f2.aa}`,
+            dias: "",
+            mercado: "S",
+          },
+          env,
+        );
         const filas = htmlTablaAJson(html);
-        if (filas.length === 0) {
+        if (filas.length === 0 && !/<table/i.test(html)) {
           return toolErrorFuente(
             "Transacciones Art. 12 Ley 18.045",
             "https://www.cmfchile.cl/institucional/estadisticas/seguros_satra_art12v.php",
           );
         }
         const { filas: paginadas, paginado } = paginar(filas, offset, limit);
-        const texto = `Transacciones Art. 12 (total ${paginado.total}):\n${resumirTabla(paginadas, Object.keys(paginadas[0] ?? {}).slice(0, 6))}`;
+        const texto = filas.length
+          ? `Transacciones Art. 12 (total ${paginado.total}):\n${resumirTabla(paginadas, Object.keys(paginadas[0] ?? {}).slice(0, 6))}`
+          : `Sin transacciones Art. 12 para el rango.`;
         return toolOk(texto, { filas: paginadas, total: paginado.total });
       } catch (e) {
         return fromError(e);
@@ -305,22 +370,35 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Siniestros detectados no reportados",
       description:
-        "Devuelve los siniestros detectados por la CMF que no fueron reportados por las compañías de seguros dentro del plazo. Sin parámetros de filtro; use offset/limit para paginar el listado. Use esta tool para fiscalización de aseguradoras; para el cumplimiento normativo general use cmf_seguros_cumplimiento.",
-      inputSchema: z.object({ offset: offsetSchema, limit: limitSchema }),
+        "Devuelve los siniestros detectados por la CMF que no fueron reportados por las compañías de seguros dentro del plazo, por año. Fije anio en AAAA y pagine con offset/limit. Use esta tool para fiscalización de aseguradoras; para el cumplimiento normativo general use cmf_seguros_cumplimiento.",
+      inputSchema: z.object({
+        anio: anioSchema.optional().describe("Año del listado en AAAA (default año actual)"),
+        offset: offsetSchema,
+        limit: limitSchema,
+      }),
     },
-    async ({ offset, limit }) => {
+    async ({ anio, offset, limit }) => {
       try {
-        const html = await getLegacy("/institucional/estadisticas/sgndr/consulta_siniestro.php", {}, env);
-        const filas = htmlTablaAJson(html);
-        if (filas.length === 0) {
+        const aa = anio ?? String(new Date().getFullYear());
+        const html = await getLegacy(
+          "/institucional/estadisticas/sgndr/consulta_siniestro.php",
+          { anno: aa },
+          env,
+        );
+        // La página trae celdas con tags desanidados (<td>…</th>): normalizar antes de parsear.
+        const normalizado = html.replace(/(<td[^>]*>[\s\S]*?)<\/th>/gi, "$1</td>");
+        const filas = htmlTablaAJson(normalizado);
+        if (filas.length === 0 && !/<table/i.test(normalizado)) {
           return toolErrorFuente(
-            "Siniestros detectados no reportados",
+            `Siniestros detectados no reportados ${aa}`,
             "https://www.cmfchile.cl/institucional/estadisticas/sgndr/consulta_siniestro.php",
           );
         }
         const { filas: paginadas, paginado } = paginar(filas, offset, limit);
-        const texto = `Siniestros no reportados (total ${paginado.total}):\n${resumirTabla(paginadas, Object.keys(paginadas[0] ?? {}).slice(0, 6))}`;
-        return toolOk(texto, { filas: paginadas, total: paginado.total });
+        const texto = filas.length
+          ? `Siniestros no reportados ${aa} (total ${paginado.total}):\n${resumirTabla(paginadas, Object.keys(paginadas[0] ?? {}).slice(0, 6))}`
+          : `Sin siniestros no reportados para ${aa}.`;
+        return toolOk(texto, { anio: aa, filas: paginadas, total: paginado.total });
       } catch (e) {
         return fromError(e);
       }
@@ -334,25 +412,40 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Cumplimiento de normativa de seguros",
       description:
-        "Devuelve el estado de cumplimiento de la normativa por compañías de seguros de la CMF (sistema sv_cumplimientos). Filtre por anio en AAAA, mes en MM (opcional; default 12) y tipoentidad (CSGEN=seguros generales, CSVID=seguros de vida; default CSGEN). Use esta tool para supervisar cumplimiento; para siniestros no reportados use cmf_seguros_siniestros.",
+        "Devuelve el estado de cumplimiento de la normativa por compañías de seguros de la CMF (sistema sv_cumplimientos, XLSX oficial). Fije anio en AAAA, mes1/mes2 opcionales en MM (default 12/12) y tipoentidad (CSVID=seguros de vida, CSGEN=seguros generales, R=reaseguradoras). Use esta tool para supervisar cumplimiento; para siniestros no reportados use cmf_seguros_siniestros.",
       inputSchema: z.object({
         anio: anioSchema,
-        mes: mesSchema.optional(),
-        tipoentidad: z.string().optional().describe("Tipo de entidad: CSGEN=seguros generales (default), CSVID=seguros de vida"),
+        mes: mesSchema.optional().describe("Mes final en MM (default 12)"),
+        tipoentidad: z.string().optional().describe("Tipo de entidad: CSVID=seguros de vida (default), CSGEN=seguros generales, R=reaseguradoras"),
       }),
     },
     async ({ anio, mes, tipoentidad }) => {
       try {
-        const html = await postLegacy(
+        const tiposociedad = tipoentidad === "CSGEN" ? "G" : tipoentidad === "R" ? "R" : "A";
+        const bytes = await getLegacyBinario(
           "/institucional/estadisticas/merc_seguros/sv_cumplimientos/seg_cumplimiento1grid.php",
-          { anio, mes: mes ?? "12", tipoentidad: tipoentidad ?? "CSGEN" },
+          {
+            lang: "es",
+            vigente: "",
+            cia: "2",
+            tiposociedad,
+            "sociedad[]": "0",
+            anno_ini: "2010",
+            mes_ini: "12",
+            mes1: "12",
+            anno1: anio,
+            mes2: mes ?? "12",
+            anno2: anio,
+            xls: "y",
+            vsn: "2",
+          },
           env,
         );
-        const filas = htmlTablaAJson(html);
+        const filas = xlsAJson(bytes) as Record<string, unknown>[];
         if (filas.length === 0) {
           return toolErrorFuente(
             `Cumplimiento de aseguradoras ${anio}-${mes ?? "12"}`,
-            "https://www.cmfchile.cl/institucional/estadisticas/merc_seguros/sv_cumplimientos/seg_cumplimiento1grid.php",
+            "https://www.cmfchile.cl/institucional/estadisticas/merc_seguros/sv_cumplimientos/seg_cumplimiento_index.php",
           );
         }
         const texto = `Cumplimiento ${anio}-${mes ?? "12"} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`;
@@ -370,30 +463,54 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Cartera de inversiones de seguros (C.1835)",
       description:
-        "Devuelve la cartera de inversiones de compañías de seguros de la CMF (Circular 1835), con detalle de instrumentos por entidad. Filtre por tipoentidad (CSVID=seguros de vida, CSGEN=seguros generales; default CSVID) y pagine con offset/limit. Use esta tool para ver en qué invierten las aseguradoras; para la cartera de fondos mutuos use cmf_fondos_mutuos_cartera.",
+        "Devuelve la cartera de inversiones de compañías de seguros de la CMF (Circular 1835). Sin peri: devuelve los períodos disponibles (JSON oficial). Con peri (AAAAMM): descarga el ZIP oficial del período y devuelve sus entradas (un TXT de ancho fijo por compañía y tipo de inversión) con tamaño y primeras líneas de cada una (el detalle completo se sirve como base64 del ZIP en zip_base64 si max_entradas no lo limita). Filtre por tipoentidad (CSVID=seguros de vida, CSGEN=seguros generales). Use esta tool para ver en qué invierten las aseguradoras; para la cartera de fondos mutuos use cmf_fondos_mutuos_cartera.",
       inputSchema: z.object({
         tipoentidad: z.enum(["CSVID", "CSGEN"]).default("CSVID").describe("Tipo de entidad: CSVID=seguros de vida (default), CSGEN=seguros generales"),
-        offset: offsetSchema,
-        limit: limitSchema,
+        peri: z.string().regex(/^\d{6}$/, "AAAAMM").optional().describe("Período AAAAMM (ej: 202512); sin él, la tool lista los períodos disponibles"),
+        max_entradas: z.number().int().min(1).max(500).default(10).describe("Máximo de entradas a describir (default 10)"),
+        incluir_zip: z.boolean().default(false).describe("true = incluye el ZIP completo en base64 (zip_base64; puede ser ~16MB)"),
       }),
     },
-    async ({ tipoentidad, offset, limit }) => {
+    async ({ tipoentidad, peri, max_entradas, incluir_zip }) => {
       try {
-        const html = await getLegacy(
-          "/institucional/estadisticas/merc_seguros/cartera_inversiones/dcisgv/descarga_cartera_inv.php",
-          { tipoentidad },
-          env,
-        );
-        const filas = htmlTablaAJson(html);
-        if (filas.length === 0) {
+        const base = "/institucional/estadisticas/merc_seguros/cartera_inversiones/dcisgv/descarga_cartera_inv.php";
+        if (!peri) {
+          const periodos = await getLegacy(base, { tipoentidad, fnAjax: "per_u" }, env);
+          try {
+            const lista = JSON.parse(periodos) as Record<string, unknown>[];
+            const texto = `Períodos disponibles de cartera de inversiones ${tipoentidad} (${lista.length}):\n${resumirTabla(lista.slice(0, 10), Object.keys(lista[0] ?? {}))}`;
+            return toolOk(texto, { tipoentidad, periodos: lista });
+          } catch {
+            return toolErrorFuente(
+              `Períodos de cartera de inversiones ${tipoentidad}`,
+              "https://www.cmfchile.cl/institucional/estadisticas/merc_seguros/cartera_inversiones/dcisgv/descarga_cartera_inv.php",
+            );
+          }
+        }
+        const bytes = await getLegacyBinario(base, { tipoentidad, fnAjax: "descarga", peri }, env);
+        if (bytes.length < 1000 || !(bytes[0] === 0x50 && bytes[1] === 0x4b)) {
           return toolErrorFuente(
-            `Cartera de inversiones (C.1835) ${tipoentidad}`,
+            `Cartera de inversiones ${tipoentidad} ${peri}`,
             "https://www.cmfchile.cl/institucional/estadisticas/merc_seguros/cartera_inversiones/dcisgv/descarga_cartera_inv.php",
+            "la CMF no devolvió el ZIP del período (¿período inexistente?)",
           );
         }
-        const { filas: paginadas, paginado } = paginar(filas, offset, limit);
-        const texto = `Cartera inversiones ${tipoentidad} (total ${paginado.total}):\n${resumirTabla(paginadas, Object.keys(paginadas[0] ?? {}).slice(0, 6))}`;
-        return toolOk(texto, { tipoentidad, filas: paginadas, total: paginado.total });
+        const entradas = await unzip(bytes);
+        const resumen = entradas.slice(0, max_entradas).map((e) => ({
+          archivo: e.nombre,
+          tamano_kb: Math.round(e.bytes.length / 1024),
+          primeras_lineas: new TextDecoder("latin1").decode(e.bytes.subarray(0, 800)).replace(/\r/g, ""),
+        }));
+        const texto = `Cartera de inversiones ${tipoentidad} ${peri}: ${entradas.length} archivos en el ZIP oficial.\n${resumen
+          .map((r) => `- ${r.archivo} (${r.tamano_kb} KB): ${r.primeras_lineas.split("\n")[0]?.slice(0, 90)}`)
+          .join("\n")}`;
+        return toolOk(texto, {
+          tipoentidad,
+          peri,
+          total_archivos: entradas.length,
+          entradas: resumen,
+          ...(incluir_zip ? { zip_base64: bytesABase64(bytes) } : {}),
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -407,30 +524,46 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Producción de corredores de seguros",
       description:
-        "Devuelve la producción de corredores de seguros publicada por la CMF (sistema ISPRO). Filtre por tipoentidad (CSJUR=corredores, CSGEN=seguros generales, CSVID=seguros de vida; default CSJUR) y pagine con offset/limit. Use esta tool para la intermediación del mercado de seguros; para la cartera de las compañías use cmf_seguros_inversiones_vida.",
+        "Devuelve la producción de corredores de seguros publicada por la CMF (sistema ISPRO) para un período AAAAMM: descarga el ZIP oficial y parsea los archivos de ancho fijo (identifi=catálogo de corredores, prodramo=producción por ramo, intercia=producción por compañía). Fije peri en AAAAMM (ej: 202512; los períodos disponibles van del año 2017 al actual, corte diciembre) y elija sección. Use esta tool para la intermediación del mercado de seguros; para la cartera de las compañías use cmf_seguros_inversiones_vida.",
       inputSchema: z.object({
-        tipoentidad: z.enum(["CSJUR", "CSGEN", "CSVID"]).default("CSJUR").describe("Tipo de entidad: CSJUR=corredores (default), CSGEN=seguros generales, CSVID=seguros de vida"),
+        peri: z.string().regex(/^\d{6}$/, "AAAAMM").describe("Período AAAAMM (ej: 202512)"),
+        seccion: z.enum(["identifi", "prodramo", "intercia"]).default("identifi").describe("Sección: identifi=catálogo de corredores (default), prodramo=producción por ramo, intercia=producción por compañía"),
         offset: offsetSchema,
         limit: limitSchema,
       }),
     },
-    async ({ tipoentidad, offset, limit }) => {
+    async ({ peri, seccion, offset, limit }) => {
       try {
-        const html = await getLegacy(
-          "/institucional/estadisticas/merc_seguros/produccion/ispro/descarga_ispro.php",
-          { tipoentidad },
+        const bytes = await getLegacyBinario(
+          "/institucional/estadisticas/merc_seguros/produccion/ispro/descarga_ispro2.php",
+          { peri },
           env,
         );
-        const filas = htmlTablaAJson(html);
-        if (filas.length === 0) {
+        if (bytes.length < 1000 || !(bytes[0] === 0x50 && bytes[1] === 0x4b)) {
           return toolErrorFuente(
-            `Producción de corredores (ISPRO) ${tipoentidad}`,
+            `Producción de corredores (ISPRO) ${peri}`,
             "https://www.cmfchile.cl/institucional/estadisticas/merc_seguros/produccion/ispro/descarga_ispro.php",
+            "la CMF no devolvió el ZIP del período",
           );
         }
+        const entradas = await unzip(bytes);
+        const objetivo = entradas.find((e) => e.nombre.toLowerCase().includes(seccion) && e.nombre.toLowerCase().endsWith(".txt"));
+        if (!objetivo) {
+          return toolError(`No se encontró la sección ${seccion} en el ZIP del período ${peri}. Secciones: ${entradas.map((e) => e.nombre).join(", ")}`);
+        }
+        const lineas = new TextDecoder("latin1").decode(objetivo.bytes).split(/\r?\n/).filter((l) => l.trim().length > 0);
+        const filas: Record<string, unknown>[] = lineas.slice(1).map((l, i) => {
+          if (seccion === "identifi") {
+            return { cod_corredor: l.slice(0, 10).trim(), nombre: l.slice(10, 85).trim(), detalle: l.slice(85).trim() };
+          }
+          if (seccion === "prodramo") {
+            return { periodo: l.slice(0, 6).trim(), cod_corredor: l.slice(6, 16).trim(), ramo: l.slice(17, 20).trim(), importe: l.slice(20).trim() };
+          }
+          return { periodo: l.slice(0, 6).trim(), cod_corredor: l.slice(6, 16).trim(), tipo: l.slice(17, 19).trim(), rut_cia: l.slice(19, 29).trim(), nombre_cia: l.slice(29, 49).trim(), importe: l.slice(49).trim() };
+        });
         const { filas: paginadas, paginado } = paginar(filas, offset, limit);
-        const texto = `Producción corredores ${tipoentidad} (total ${paginado.total}):\n${resumirTabla(paginadas, Object.keys(paginadas[0] ?? {}).slice(0, 6))}`;
-        return toolOk(texto, { tipoentidad, filas: paginadas, total: paginado.total });
+        const texto = `ISPRO ${seccion} ${peri} (${filas.length} filas; cabecera del archivo: ${lineas[0]?.slice(0, 80)}):\n${resumirTabla(paginadas, Object.keys(paginadas[0] ?? {}))}`;
+        return toolOk(texto, { peri, seccion, filas: paginadas, total: paginado.total });
       } catch (e) {
         return fromError(e);
       }
@@ -801,28 +934,30 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Buscador de tasas bancarias",
       description:
-        "Devuelve las tasas de interés de instituciones financieras chilenas publicadas por la CMF (servlet InfoFinanciera de la ex SBIF) para el índice solicitado. Si el índice corresponde a un formulario, la respuesta puede no traer tablas parseables. Use esta tool para tasas bancarias; para reportes de instituciones use cmf_bancos_reportes.",
+        "Devuelve las tasas de interés de instituciones financieras chilenas publicadas por la CMF (servlet InfoFinanciera de la ex SBIF, host tasas.cmfchile.cl). El índice 4.2.1 trae las tasas de interés corriente y máxima convencional por segmento para una fecha; otros índices: 4.2.2=certificados de tasas (por año) y 4.2.3=tasas por período (POST). Use esta tool para tasas bancarias; para reportes de instituciones use cmf_bancos_reportes.",
       inputSchema: z.object({
-        indice: z.string().default("4.1").describe("Índice del reporte"),
+        indice: z.string().default("4.2.1").describe("Índice del reporte (default 4.2.1=tasas por fecha)"),
+        fecha: fechaSchema.optional().describe("Fecha de las tasas en YYYY-MM-DD (default hoy)"),
       }),
     },
-    async ({ indice }) => {
+    async ({ indice, fecha }) => {
       try {
-        const html = await getLegacy(
-          "/sbifweb/servlet/InfoFinanciera",
-          { indice },
-          env,
-        );
-        const filas = htmlTablaAJson(html);
-        if (filas.length === 0) {
+        const f = fecha ? fechaLegacy(fecha) : (() => { const d = new Date(); return { dd: String(d.getDate()).padStart(2, "0"), mm: String(d.getMonth() + 1).padStart(2, "0"), aa: String(d.getFullYear()) }; })();
+        const url = `https://tasas.cmfchile.cl/sbifweb/servlet/InfoFinanciera?indice=${indice}&FECHA=${f.dd}/${f.mm}/${f.aa}`;
+        const res = await fetchCmf(url, {}, env);
+        const textoRaw = decodificarLatin1(await res.arrayBuffer());
+        const filas = htmlTablaAJson(textoRaw);
+        if (filas.length === 0 && !/<table/i.test(textoRaw)) {
           return toolErrorFuente(
             `Tasas de interés (índice ${indice})`,
-            "https://www.cmfchile.cl/institucional/bancos/estadisticas_financieras.html",
-            "el servlet InfoFinanciera de la ex SBIF devolvió el formulario sin tablas parseables",
+            "https://tasas.cmfchile.cl/",
+            "el servlet InfoFinanciera no devolvió tablas para esa combinación",
           );
         }
-        const texto = `Tasas (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`;
-        return toolOk(texto, { indice, filas: filas.slice(0, 200) });
+        const texto = filas.length
+          ? `Tasas (${filas.length} filas, índice ${indice}, fecha ${f.dd}/${f.mm}/${f.aa}):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
+          : `El índice ${indice} no devolvió tablas parseables (puede ser un formulario o un PDF).`;
+        return toolOk(texto, { indice, fecha: `${f.aa}-${f.mm}-${f.dd}`, filas: filas.slice(0, 200) });
       } catch (e) {
         return fromError(e);
       }
@@ -864,41 +999,33 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Reportes de instituciones financieras (BaseDato)",
       description:
-        "Devuelve reportes del sistema BaseDato de instituciones financieras de la CMF (ex SBIF). Use reporte (default FIC) e indice (default 30.1); acote con periodo_inicial/periodo_final en AAAA-MM e institucion (código de institución). Puede requerir resolver el challenge anti-bot de la CMF; si falla, reintente. Use esta tool para reportes históricos de la banca; para tasas de interés use cmf_bancos_tasas.",
+        "Devuelve reportes del sistema BaseDato de instituciones financieras de la CMF (ex SBIF, host datosbanco.cmfchile.cl): MR1=información contable mensual, MB1=?, ADC=adecuación de capital, ADC2=adecuación (v2), HEC=hechos económicos. Fije codUnicoBank (código SBIF, ej: 001; vea cmf://bancos/codigos), reporte, indice (default 30.1) y período (periodo_inicial AAAA-MM; solo se usa mes y año). Use esta tool para reportes históricos de la banca; para tasas de interés use cmf_bancos_tasas.",
       inputSchema: z.object({
-        reporte: z.string().default("FIC").describe("Código del reporte"),
+        reporte: z.enum(["MR1", "MB1", "ADC", "ADC2", "HEC"]).default("MR1").describe("Código del reporte (default MR1=información contable mensual)"),
         indice: z.string().default("30.1").describe("Índice del reporte (default 30.1)"),
-        periodo_inicial: z.string().regex(/^\d{4}-\d{2}$/).optional().describe("Período inicial en AAAA-MM (ej: 2025-01)"),
-        periodo_final: z.string().regex(/^\d{4}-\d{2}$/).optional().describe("Período final en AAAA-MM (ej: 2025-12)"),
-        institucion: z.string().optional().describe("Código de institución"),
+        codUnicoBank: codigoSchema.optional().describe("Código SBIF de la institución (ej: 001=Banco de Chile; default 001)"),
+        periodo_inicial: z.string().regex(/^\d{4}-\d{2}$/).optional().describe("Período en AAAA-MM (ej: 2026-06; default período actual)"),
       }),
     },
-    async ({ reporte, indice, periodo_inicial, periodo_final, institucion }) => {
+    async ({ reporte, indice, codUnicoBank, periodo_inicial }) => {
       try {
-        const html = await getLegacy(
-          "/sbifweb/servlet/BaseDato",
-          {
-            "instituciones-financieras": 1,
-            reporte,
-            indice,
-            periodo_inicial_anio: periodo_inicial?.slice(0, 4),
-            periodo_inicial_mes: periodo_inicial?.slice(5, 7),
-            periodo_final_anio: periodo_final?.slice(0, 4),
-            periodo_final_mes: periodo_final?.slice(5, 7),
-            codUnicoBank: institucion ?? "",
-          },
-          env,
-        );
-        const filas = htmlTablaAJson(html);
-        if (filas.length === 0) {
+        const ahora = new Date();
+        const per = periodo_inicial ?? `${ahora.getFullYear()}-${String(ahora.getMonth() + 1).padStart(2, "0")}`;
+        const url = `https://datosbanco.cmfchile.cl/sbifweb/servlet/BaseDato?instituciones-financieras=1&codUnicoBank=${codUnicoBank ?? "001"}&reporte=${reporte}&indice=${indice}&month=${per.slice(5, 7)}&year=${per.slice(0, 4)}`;
+        const res = await fetchCmf(url, {}, env);
+        const textoRaw = decodificarLatin1(await res.arrayBuffer());
+        const filas = htmlTablaAJson(textoRaw);
+        if (filas.length === 0 && !/<table/i.test(textoRaw)) {
           return toolErrorFuente(
             `Reporte ${reporte} (índice ${indice})`,
-            "https://www.cmfchile.cl/institucional/bancos/estadisticas_financieras.html",
-            `el servlet BaseDato devolvió una respuesta sin tablas parseables (${html.length} bytes; puede ser el challenge anti-bot)`,
+            "https://datosbanco.cmfchile.cl/",
+            `el servlet BaseDato no devolvió tablas (${textoRaw.length} bytes; puede ser el challenge anti-bot)`,
           );
         }
-        const texto = `Reporte ${reporte} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`;
-        return toolOk(texto, { reporte, indice, filas: filas.slice(0, 200) });
+        const texto = filas.length
+          ? `Reporte ${reporte} ${per} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
+          : `El reporte ${reporte} no devolvió tablas parseables para ${per}.`;
+        return toolOk(texto, { reporte, indice, periodo: per, filas: filas.slice(0, 200) });
       } catch (e) {
         return fromError(e);
       }

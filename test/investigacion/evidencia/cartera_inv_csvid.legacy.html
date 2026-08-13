@@ -1,0 +1,47 @@
+<!-- begin estadisticas/merc_seguros/cartera_inversiones/dcisgv/descarga_cartera_inv.php -->
+<script src="js/function.js"></script> 
+
+<!--div id="d_descarga"><a id="a_descarga" href="javascript:void(0)"><img src="images/zip.jpg" title="Descargue el último periodo" alt="Descargue el último periodo" width="30" height="30" /> Descargue el último periodo correspondiente a  </a></div-->
+<div class="ui-widget">
+	<div class="ui-state-highlight ui-corner-all" style="margin-top: 20px; padding: 0 .7em;">
+		<p><span class="ui-icon ui-icon-info" style="float: left; margin-right: .3em;"></span>
+		La información contenida en este reporte es proporcionada por las compañías de seguros, tiene el carácter de provisoria y puede ser modificada en cualquier momento.<br /><br />Obtenga siempre la última versión desde el sitio web CMF (<a href="http://www.cmfchile.cl">http://www.cmfchile.cl</a>).<br /><br />La información para descarga está disponible a partir de Enero de 2016.
+</p>
+	</div>
+</div>
+<br />
+
+<div id="d_descarga">
+<a id="a_descarga" href="javascript:void(0)"><img src="images/zip.jpg" title="Descargue el último periodo" alt="Descargue el último periodo" width="30" height="30" /> Descargue el último periodo correspondiente a  </a><br /><br />
+<a id="a_descarga" href="/sitio/seil/software-manual/sgsci/SGSCI_circ_1835.doc" target="_blank"><img src="images/word.png" title="Descargue el documento descriptivo de archivos" alt="Descargue el último periodo" width="30" height="30" /> Descargue el documento descriptivo de los archivos</a>
+</div>
+<form action="#">
+	<label>Seleccione periodo: </label>
+	<select name="s_mes" id="s_mes" class='select_svs'>
+		<option value="00">Mes</option>
+	</select> / 
+	<select name="s_agno" id='s_agno' size='1' class='select_svs'>
+		<option value="0000">Año</option>
+	</select>
+    <!--input id="b_descargar" type="button" value="Descargar" /-->
+     
+    <label id="l_error" style="color:#0038A8; display:none"><b>Debe seleccionar un periodo válido</b></label>
+    <label id="l_error2" style="color:#0038A8; display:none"><b>No está disponible la descarga para el periodo seleccionado</b></label>
+    <br />
+    <p style="padding-top:7px"><a href="javascript:void(0);" onClick="recargaCaptcha()"><!--title="Click para recargar la imagen"--><img id="captcha_img" src="/sitio/biblioteca/captcha2/captcha.php?rand=26104" width="280" height="80" alt="Captcha image" border="0" /> </a></p>
+	<p>(presione la imagen si necesita generar una nueva)</p>
+    <br />
+
+    <label>Ingrese los caracteres de la imagen: <input name="fcaptcha" type="text" id="fcaptcha" size="10" maxlength="10" style="vertical-align:top" /></label>
+    <label id="l_error3" style="color:#0038A8; display:none"><b>Debe Ingresar los caracteres que aparecen en la imagen, si estos son poco claros, presione la Imagen para obtener otra</b></label>
+    <br /><br />
+    <p><a href="javaScript:void(0)" class="button" id="b_descargar">Descargar</a></p>
+</form>
+<div id="exportar" name"exportar" style="display:none">
+<p style="padding-top:7px"><a href="javascript:void(0);" onClick="recargaCaptcha2()"><!--title="Click para recargar la imagen"--><img id="captcha_img2" src="/sitio/biblioteca/captcha2/captcha.php?rand=26104" width="360" height="120" alt="Captcha image" border="0" /> </a></p>
+	<p>(presione la imagen si necesita generar una nueva)</p>
+    <br />
+    <p><label><b>Ingrese los caracteres de la imagen:</b> <input name="fcaptcha2" type="text" id="fcaptcha2" size="10" maxlength="10" style="vertical-align:top" /></label></p>
+    <br />
+    <label id="l_error4" style="color:#0038A8; display:none"><b>Debe Ingresar los caracteres que aparecen en la imagen, si estos son poco claros, presione la Imagen para obtener otra</b></label>
+</div><!-- end estadisticas/merc_seguros/cartera_inversiones/dcisgv/descarga_cartera_inv.php -->

@@ -1,11 +1,12 @@
 ﻿import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { empresaArraySchema, historialSchema, globalesSchema, paginadoSchema, filasSchema } from "../util/schemas-output.js";
-import { getLegacy, postLegacy, fetchCmf, fetchCmfBinario, getLegacyConCookies, type CmfEnv } from "../client/cmf-client.js";
-import { gridGoogleVisAJson, htmlTablaAJson, fechaLegacy, fechaLegacyCompleta, fixMojibake, txtCsvAJson } from "../client/parsers.js";
+import { getLegacy, postLegacy, postLegacyBinario, getLegacyBinario, fetchCmf, fetchCmfBinario, getLegacyConCookies, type CmfEnv } from "../client/cmf-client.js";
+import { gridGoogleVisAJson, htmlTablaAJson, xlsAJson, fechaLegacy, fechaLegacyCompleta, fixMojibake, txtCsvAJson } from "../client/parsers.js";
 import { pedirCaptchaCMF, obtenerCaptcha, ultimoCaptcha, consumirCaptcha } from "../captcha.js";
 import { fromError, toolOk, toolError, toolErrorFuente, sinDatosOFuente, resumirTabla } from "../util/errors.js";
 import { paginar } from "../util/paginate.js";
+import { bytesABase64 } from "../util/zip.js";
 import { pdfAMarkdown } from "../pdf.js";
 import { procesarTablasEEFF, textoVerificacion, textoAviso } from "../eeff-tables.js";
 import {
@@ -836,7 +837,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: paginadoSchema("clasificaciones"),
       title: "Clasificaciones de riesgo",
       description:
-        "Devuelve las clasificaciones de riesgo vigentes (corte a hoy) asignadas a emisores e instrumentos por las clasificadoras. Filtre opcionalmente por emisor, clasificadora o tipo_instrumento (texto libre); pagine con offset/limit (máx 500). Use esta tool para evaluar calidad crediticia de instrumentos; para el historial financiero del emisor use cmf_empresa_eeff.",
+        "Devuelve las clasificaciones de riesgo asignadas a emisores e instrumentos por las clasificadoras (XLSX oficial de la CMF). El sistema usa un flujo en 2 pasos: la tool genera el archivo (POST a excel_busqueda_clasificaciones) y descarga el XLSX resultante, que luego se parsea a filas. Filtre opcionalmente por emisor, clasificadora o tipo_instrumento (los filtros se aplican sobre las filas descargadas). Use esta tool para evaluar calidad crediticia de instrumentos; para el historial financiero del emisor use cmf_empresa_eeff.",
       inputSchema: z.object({
         emisor: z.string().optional().describe("Filtro por nombre o RUT del emisor (texto libre, opcional)"),
         clasificadora: z.string().optional().describe("Filtro por clasificadora (texto libre, opcional)"),
@@ -847,20 +848,57 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
     },
     async ({ emisor, clasificadora, tipo_instrumento, offset, limit }) => {
       try {
-        const html = await getLegacy(
-          "/institucional/estadisticas/valores_clasificaciones_asignadas.php",
-          { clasificadora, emisor, tipo_instrumento, vig_instrumento: "VIG", fecha_corte: "hoy" },
-          env,
+        // La generación del XLSX en la CMF puede tardar: timeout ampliado para estos 2 pasos.
+        const envLento = { ...env, CMF_UPSTREAM_TIMEOUT_MS: "90000" };
+        // Paso 1: generar el archivo (el endpoint devuelve {estado, hash}; claves exactas del JS de la CMF)
+        const paso1 = await postLegacy(
+          "/institucional/inc/excel_busqueda_clasificaciones.php",
+          {
+            clasificadora: "0",
+            tipo_emisor: "0",
+            emisor: "0",
+            tipo_instrumento: "0",
+            fecha_desde: "",
+            fecha_hasta: "",
+            fecha_corte: "",
+            insc_emisor: "0",
+            viginst: "S",
+          },
+          envLento,
         );
-        const filas = htmlTablaAJson(html);
+        const hash = /"hash"\s*:\s*"([0-9a-f]+)"/i.exec(paso1)?.[1];
+        if (!hash) {
+          return toolErrorFuente(
+            "Clasificaciones de riesgo",
+            "https://www.cmfchile.cl/institucional/estadisticas/valores_clasificaciones_asignadas.php",
+            "el generador de clasificaciones no devolvió hash",
+          );
+        }
+        // Paso 2: descargar el XLSX generado
+        const bytes = await getLegacyBinario(
+          `/institucional/estadisticas/clasificaciones_asignadas_excel_fcorte_descargar.php?hash=${hash}`,
+          {},
+          envLento,
+        );
+        let filas = xlsAJson(bytes) as Record<string, unknown>[];
         if (filas.length === 0) {
           return toolErrorFuente(
             "Clasificaciones de riesgo",
             "https://www.cmfchile.cl/institucional/estadisticas/valores_clasificaciones_asignadas.php",
+            "el XLSX generado no trajo filas",
           );
         }
+        if (emisor || clasificadora || tipo_instrumento) {
+          const fEmisor = emisor?.toLowerCase() ?? "";
+          const fClasif = clasificadora?.toLowerCase() ?? "";
+          const fTipo = tipo_instrumento?.toLowerCase() ?? "";
+          filas = filas.filter((f) => {
+            const textoFila = Object.values(f).join(" ").toLowerCase();
+            return (!fEmisor || textoFila.includes(fEmisor)) && (!fClasif || textoFila.includes(fClasif)) && (!fTipo || textoFila.includes(fTipo));
+          });
+        }
         const { filas: clasificaciones, paginado } = paginar(filas, offset, limit);
-        const texto = `Clasificaciones (total ${paginado.total}):\n${resumirTabla(clasificaciones, Object.keys(clasificaciones[0] ?? {}).slice(0, 5))}`;
+        const texto = `Clasificaciones de riesgo (total ${paginado.total}):\n${resumirTabla(clasificaciones, Object.keys(clasificaciones[0] ?? {}).slice(0, 5))}`;
         return toolOk(texto, { clasificaciones, total: paginado.total, next_offset: paginado.next_offset });
       } catch (e) {
         return fromError(e);
@@ -1043,14 +1081,14 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Dividendos de sociedades",
       description:
-        "Devuelve los dividendos declarados por sociedades anónimas (detalle y resumen por acción) para un período. Seleccione sociedades por RUT (array; default todas), anio en AAAA, anio2 opcional para rangos, mes/mes2 opcionales en MM (default 01-12) y tipodiv (default DIV). Use esta tool para historial de dividendos; para operaciones de capital use cmf_operaciones_capital.",
+        "Devuelve los dividendos declarados por sociedades anónimas (detalle por sociedad, del grid acc_dividendos1grid de la CMF). Seleccione sociedades por RUT (array; el catálogo de sociedades del form usa RUTs específicos: pruebe con un RUT concreto si ['0'] no devuelve), anio en AAAA, anio2 opcional para rangos, mes/mes2 opcionales en MM (default 01-12) y tipodiv (0=dividendos, default 0). Si una sociedad no tiene dividendos en el período, la CMF lo dice y la tool lo reporta como ausencia real. Use esta tool para historial de dividendos; para operaciones de capital use cmf_operaciones_capital.",
       inputSchema: z.object({
         sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
         anio: anioSchema,
         anio2: anioSchema.optional().describe("Año final del rango en AAAA (default: igual a anio)"),
-        mes: mesSchema.optional(),
-        mes2: mesSchema.optional().describe("Mes final del rango en MM (default 12)"),
-        tipodiv: z.string().optional().describe("Tipo de dividendo (default DIV)"),
+        mes: mesSchema.optional().describe("Mes inicial en MM (default 01)"),
+        mes2: mesSchema.optional().describe("Mes final en MM (default 12)"),
+        tipodiv: z.string().default("0").describe("Tipo de dividendo (0=dividendos, default)"),
       }),
     },
     async ({ sociedades, anio, anio2, mes, mes2, tipodiv }) => {
@@ -1058,24 +1096,35 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const html = await postLegacy(
           "/institucional/estadisticas/divi/acc_dividendos1grid.php",
           {
-            lang: "es",
             anno: anio,
             anno2: anio2 ?? anio,
             mes: mes ?? "01",
             mes2: mes2 ?? "12",
-            tipodiv: tipodiv ?? "DIV",
+            tipodiv,
             "sociedad[]": sociedades,
             enviar: "Buscar",
           },
           env,
+          { lang: "es" },
         );
-        const filas = htmlTablaAJson(html);
-        if (filas.length === 0) {
+        if (html.includes("dataAsJson")) {
+          const { filas: filasGrid } = gridGoogleVisAJson(html);
+          const filas = filasGrid as Record<string, unknown>[];
+          const texto = filas.length
+            ? `Dividendos ${anio} (${filas.length} registros):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
+            : `Sin dividendos para la selección.`;
+          return toolOk(texto, { anio, filas: filas.slice(0, 300) });
+        }
+        if (/no se encuentran datos/i.test(html)) {
+          return toolOk(`Sin dividendos para las sociedades seleccionadas en el período ${anio} (la CMF no encontró datos).`, { anio, filas: [] });
+        }
+        if (!/<table/i.test(html)) {
           return toolErrorFuente(
             `Dividendos ${anio}`,
             "https://www.cmfchile.cl/institucional/estadisticas/divi/acc_dividendos_index.php",
           );
         }
+        const filas = htmlTablaAJson(html);
         const texto = `Dividendos ${anio} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`;
         return toolOk(texto, { anio, filas: filas.slice(0, 300) });
       } catch (e) {
@@ -1125,40 +1174,52 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Valores APV",
       description:
-        "Devuelve los valores de ahorro previsional voluntario (APV) del mercado por tipo de fondo y cuadro, para un rango de períodos. Fije anio_desde/anio_hasta en AAAA y mes_desde/mes_hasta opcionales en MM (default 01-12); tipo y cuadro opcionales. Use esta tool para estadísticas de APV; para fondos mutuos use las tools cmf_fondos_mutuos_*.",
+        "Devuelve los valores de ahorro previsional voluntario (APV) que publica la CMF (Circular 1981): depósitos, traspasos, cuentas y bonificaciones por tipo de entidad y mes. Elija el cuadro (1=Depósitos APV, 2=Depósitos Convenidos, 3=APV Colectivo, 4=Bonificación APV/APVC, 5-10=Traspasos, 11+=Cuentas y desgloses), el rango (anio_desde/anio_hasta en AAAA, mes_desde/mes_hasta en MM) y los tipos de entidad (FI=fondos de inversión, FM=mutuos, FV=seguros de vida, IV, SV, SA). Con exportar=true devuelve además el XLS oficial del cuadro (base64). Use esta tool para estadísticas de APV; para fondos mutuos use las tools cmf_fondos_mutuos_*.",
       inputSchema: z.object({
         anio_desde: anioSchema,
         anio_hasta: anioSchema.describe("Año final del rango en AAAA (ej: 2025)"),
-        mes_desde: mesSchema.optional(),
-        mes_hasta: mesSchema.optional().describe("Mes final del rango en MM (default 12)"),
-        tipo: z.string().optional().describe("Tipo de APV (texto libre, opcional)"),
-        cuadro: z.string().optional().describe("Cuadro (texto libre, opcional)"),
+        mes_desde: mesSchema.optional().describe("Mes inicial en MM (default 01)"),
+        mes_hasta: mesSchema.optional().describe("Mes final en MM (default 12)"),
+        cuadro: z.string().default("1").describe("Cuadro estadístico: 1=Depósitos APV, 2=Depósitos Convenidos, 3=APV Colectivo, 4=Bonificación APV/APVC, 5-10=Traspasos, 11+=Cuentas y desgloses (default 1)"),
+        tipo_e: z.array(z.enum(["FI", "FM", "FV", "IV", "SV", "SA"])).default(["FI", "FM", "FV"]).describe("Tipos de entidad a incluir (default FI,FM,FV)"),
+        tipo: z.enum(["entidad", "agregado"]).default("entidad").describe("Vista: entidad o agregado (default entidad)"),
+        exportar: z.boolean().default(false).describe("true = además descarga el XLS oficial del cuadro (base64 en xls_base64)"),
       }),
     },
-    async ({ anio_desde, anio_hasta, mes_desde, mes_hasta, tipo, cuadro }) => {
+    async ({ anio_desde, anio_hasta, mes_desde, mes_hasta, cuadro, tipo_e, tipo, exportar }) => {
       try {
-        const html = await postLegacy(
-          "/institucional/estadisticas/valores_apv_enero2010.php",
-          {
-            ano_desde: anio_desde,
-            ano_hasta: anio_hasta,
-            mes_desde: mes_desde ?? "01",
-            mes_hasta: mes_hasta ?? "12",
-            tipo: tipo ?? "",
-            cuadro: cuadro ?? "",
-            enviar: "Buscar",
-          },
-          env,
-        );
+        const params = {
+          cuadro,
+          tipo,
+          mes_desde: mes_desde ?? "01",
+          ano_desde: anio_desde,
+          mes_hasta: mes_hasta ?? "12",
+          ano_hasta: anio_hasta,
+          "tipo_e[]": tipo_e,
+        };
+        const envLento = { ...env, CMF_UPSTREAM_TIMEOUT_MS: "90000" };
+        const html = await postLegacy("/institucional/estadisticas/cuadros.php", params, envLento);
         const filas = htmlTablaAJson(html);
-        if (filas.length === 0) {
+        if (filas.length === 0 && !/<table/i.test(html)) {
           return toolErrorFuente(
-            `Valores APV ${anio_desde}-${anio_hasta}`,
+            `Valores APV ${anio_desde}-${anio_hasta} cuadro ${cuadro}`,
             "https://www.cmfchile.cl/institucional/estadisticas/valores_apv_enero2010.php",
           );
         }
-        const texto = `Valores APV ${anio_desde}-${anio_hasta} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`;
-        return toolOk(texto, { anio_desde, anio_hasta, filas: filas.slice(0, 300) });
+        let xlsBase64: string | undefined;
+        if (exportar) {
+          const qs = new URLSearchParams();
+          for (const [k, v] of Object.entries(params)) {
+            if (Array.isArray(v)) v.forEach((x) => qs.append(k, String(x)));
+            else qs.set(k, String(v));
+          }
+          const bytes = await getLegacyBinario(`/institucional/estadisticas/exportacion_excel_cuadros.php?${qs}`, {}, env);
+          if (bytes.length > 5000) xlsBase64 = bytesABase64(bytes);
+        }
+        const texto = filas.length
+          ? `Valores APV cuadro ${cuadro} ${anio_desde}-${anio_hasta} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
+          : `Sin información para el cuadro ${cuadro} en el período (la CMF no tiene datos para la combinación pedida).`;
+        return toolOk(texto, { anio_desde, anio_hasta, cuadro, filas: filas.slice(0, 300), ...(xlsBase64 ? { xls_base64: xlsBase64 } : {}) });
       } catch (e) {
         return fromError(e);
       }
@@ -1345,29 +1406,41 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Cuadros de resultados (AV/CB y emisores NCH)",
       description:
-        "Devuelve los cuadros de resultados de agentes de valores y corredores de bolsa (tipo=av_cb, default) o de emisores bajo norma NCH (tipo=emisores_nch). Use esta tool para estados de resultados agregados del mercado; para EEFF de un emisor individual use cmf_empresa_eeff o cmf_empresa_eeff_nch.",
+        "Devuelve los cuadros de resultados de agentes de valores y corredores de bolsa (tipo=av_cb, norma IFRS) o de emisores bajo norma NCH (tipo=emisores_nch), para un período. Fije anio en AAAA y mes en MM (03/06/09/12 para IFRS; 12 para NCH); la respuesta trae la tabla de corredores y la de agentes. Use esta tool para estados de resultados agregados del mercado; para EEFF de un emisor individual use cmf_empresa_eeff o cmf_empresa_eeff_nch.",
       inputSchema: z.object({
-        tipo: z.enum(["av_cb", "emisores_nch"]).default("av_cb").describe("av_cb=agentes/corredores (default), emisores_nch=emisores bajo NCH"),
+        tipo: z.enum(["av_cb", "emisores_nch"]).default("av_cb").describe("av_cb=agentes/corredores IFRS (default), emisores_nch=emisores bajo NCH"),
+        anio: anioSchema.optional().describe("Año del período en AAAA (default 2025)"),
+        mes: mesCorteSchema.optional().describe("Mes de corte (03/06/09/12; default 12)"),
       }),
     },
-    async ({ tipo }) => {
+    async ({ tipo, anio, mes }) => {
       try {
+        const aa = anio ?? "2025";
+        const mm = mes ?? (tipo === "av_cb" ? "12" : "12");
         const path =
           tipo === "av_cb"
-            ? "/institucional/estadisticas/valores_agentes_cuadro.php"
-            : "/institucional/estadisticas/valores_sociedades_cuadroresultados.php";
-        const html = await getLegacy(path, {}, env);
-        const filas = htmlTablaAJson(html);
+            ? "/institucional/estadisticas/valores_agentes_cuadro2_ifrs.php"
+            : "/institucional/estadisticas/valores_agentes_cuadro2.php";
+        const html = await postLegacy(
+          path,
+          { mm, aa, norma: tipo === "av_cb" ? "IFRS" : "NCH", enviar: "Buscar" },
+          env,
+        );
+        const filas: Record<string, unknown>[] = [];
+        for (const id of ["tabla_corredores", "tabla_agentes"]) {
+          const m = html.match(new RegExp(`<table[^>]*id="${id}"[\\s\\S]*?<\\/table>`, "i"));
+          if (m) {
+            filas.push(...htmlTablaAJson(m[0]).map((f) => ({ ...f, tabla: id.replace("tabla_", "") })));
+          }
+        }
         if (filas.length === 0) {
           return toolErrorFuente(
-            `Cuadros de resultados ${tipo}`,
-            tipo === "av_cb"
-              ? "https://www.cmfchile.cl/institucional/estadisticas/valores_agentes_cuadro.php"
-              : "https://www.cmfchile.cl/institucional/estadisticas/valores_sociedades_cuadroresultados.php",
+            `Cuadros de resultados ${tipo} ${aa}-${mm}`,
+            "https://www.cmfchile.cl/institucional/estadisticas/valores_agentes_cuadro.php",
           );
         }
-        const texto = `Cuadro ${tipo} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`;
-        return toolOk(texto, { tipo, filas: filas.slice(0, 300) });
+        const texto = `Cuadro ${tipo} ${aa}-${mm} (${filas.length} filas, tablas corredores/agentes):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`;
+        return toolOk(texto, { tipo, anio: aa, mes: mm, filas: filas.slice(0, 300) });
       } catch (e) {
         return fromError(e);
       }
@@ -1425,21 +1498,31 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Préstamos otorgados",
       description:
-        "Devuelve el reporte de préstamos otorgados del mercado de valores publicado por la CMF (el sistema legacy entrega el reporte completo, sin filtro de fechas). Use esta tool para estadísticas de préstamos del mercado.",
-      inputSchema: z.object({}),
+        "Devuelve el reporte mensual de préstamos otorgados en el mercado de valores publicado por la CMF (XLS oficial), con detalle por entidad. Fije anio (2016-2026) y mes (01-12); si el mes no tiene reporte, la CMF devuelve solo el título y la tool lo indica. Use esta tool para estadísticas de préstamos del mercado.",
+      inputSchema: z.object({
+        anio: anioSchema.optional().describe("Año del reporte en AAAA (2016-2026; default año actual)"),
+        mes: mesSchema.optional().describe("Mes del reporte en MM (default mes actual)"),
+      }),
     },
-    async () => {
+    async ({ anio, mes }) => {
       try {
-        const html = await getLegacy("/institucional/estadisticas/reporte_prestamos.php", {}, env);
-        const filas = htmlTablaAJson(html);
+        const ahora = new Date();
+        const aa = anio ?? String(ahora.getFullYear());
+        const mm = mes ?? String(ahora.getMonth() + 1).padStart(2, "0");
+        const bytes = await postLegacyBinario(
+          "/institucional/estadisticas/informe_prestamos.php",
+          { id_mes: mm, id_anio: aa },
+          env,
+        );
+        const filas = xlsAJson(bytes) as Record<string, unknown>[];
         if (filas.length === 0) {
-          return toolErrorFuente(
-            "Préstamos otorgados",
-            "https://www.cmfchile.cl/institucional/estadisticas/reporte_prestamos.php",
+          return toolOk(
+            `La CMF no publicó reporte de préstamos para ${aa}-${mm} (meses sin reporte devuelven solo el título).`,
+            { anio: aa, mes: mm, filas: [] },
           );
         }
-        const texto = `Préstamos otorgados (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`;
-        return toolOk(texto, { filas: filas.slice(0, 300) });
+        const texto = `Préstamos otorgados ${aa}-${mm} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`;
+        return toolOk(texto, { anio: aa, mes: mm, filas: filas.slice(0, 300) });
       } catch (e) {
         return fromError(e);
       }

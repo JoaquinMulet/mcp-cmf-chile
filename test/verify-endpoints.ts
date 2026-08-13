@@ -54,18 +54,18 @@ const TOOLS: Record<string, ToolDef> = {
   cmf_indicadores_financieros_sa: { args: { sociedades: ["0"], fecha_max: "202512" }, expect: { fecha_max: "string", filas: "array" } },
   cmf_empresa_eeff_nch: { args: { sociedades: ["0"], anio1: "2010", anio2: "2010" }, expect: { filas: "array" } },
   cmf_indicadores_financieros_nch: { args: { sociedades: ["0"], anio1: "2010", anio2: "2010" }, expect: { filas: "array" } },
-  cmf_dividendos: { args: { sociedades: ["0"], anio: "2025" }, expect: { filas: "array" } },
+  cmf_dividendos: { args: { sociedades: ["76215637"], anio: "2025", tipodiv: "0" }, expect: { filas: "array" } },
   cmf_operaciones_capital: { args: { tipo: "reparto", sociedades: ["0"], anio: "2025" }, expect: { tipo: "string", filas: "array" } },
-  cmf_apv: { args: { anio_desde: "2025", anio_hasta: "2025" }, expect: { filas: "array" } },
+  cmf_apv: { args: { anio_desde: "2024", anio_hasta: "2024", mes_desde: "01", mes_hasta: "12" }, expect: { filas: "array" } },
   cmf_comunicaciones_emisores: { args: { offset: 0, limit: 5 }, expect: { comunicaciones: "array", total: "number" } },
   cmf_tomas_control: { args: {} },
   cmf_listados_eeff_ifrs: { args: { tipo_listado: "general" }, expect: { tipo_listado: "string", filas: "array" } },
   cmf_fechas_divulgacion_eeff: { args: { anio: "2026" }, expect: { anio: "string", filas: "array" } },
   cmf_intermediarios_eeff_ifrs: { args: { sociedades: ["0"], anio1: "2025", anio2: "2025" }, expect: { filas: "array" } },
   cmf_intermediarios_indicadores_ifrs: { args: { sociedades: ["0"], anio1: "2025", anio2: "2025" }, expect: { filas: "array" } },
-  cmf_resultados_av_cb: { args: { tipo: "av_cb" }, expect: { tipo: "string", filas: "array" } },
+  cmf_resultados_av_cb: { args: { tipo: "av_cb", anio: "2025", mes: "03" }, expect: { filas: (v: unknown) => Array.isArray(v) && v.length > 0 } },
   cmf_liquidez_intermediarios: { args: { desde: "2025-01-01", hasta: "2026-08-08" }, expect: { filas: "array" } },
-  cmf_prestamos_otorgados: { args: {} },
+  cmf_prestamos_otorgados: { args: { anio: "2025", mes: "12" }, expect: { filas: "array" } },
   cmf_dictamenes: { args: { desde: "2026-01-01", hasta: "2026-12-31" }, expect: { filas: "array" } },
   cmf_sanciones_cursadas: { args: {} },
   cmf_resoluciones_cursadas: { args: { historico: false } },
@@ -87,17 +87,17 @@ const TOOLS: Record<string, ToolDef> = {
   cmf_fondos_inversion_comisiones_maximas: { args: {} },
 
   // ---------- E. Normativa / seguros / xbrl / docs / bancos ----------
-  cmf_normativa_buscar: { args: { tipo: "CIR", desde: "2024-01-01", hasta: "2026-12-31", offset: 0, limit: 5 }, expect: { normas: "array", total: "number" } },
+  cmf_normativa_buscar: { args: { tipo: "CIR", numero: "2343", offset: 0, limit: 5 }, expect: { normas: (v: unknown) => Array.isArray(v) && v.length > 0, total: "number" } },
   cmf_normativa_descargar: { args: { archivo: "/web/compendio/cir/cir_2343_2024.pdf" }, expect: { archivo: "string" } },
   cmf_seguros_eeff: { args: { tipo: "generales", sociedades: ["0"], anio1: "2025", anio2: "2025" }, expect: { tipo: "string", filas: "array" } },
-  cmf_seguros_rentas_vitalicias: { args: { codigo: "com_int_rvp", offset: 0, limit: 5 }, expect: { codigo: "string", filas: "array" } },
-  cmf_seguros_scomp: { args: { offset: 0, limit: 5 } },
+  cmf_seguros_rentas_vitalicias: { args: { codigo: "com_int_rvp", desde: "2025-01-01", hasta: "2025-12-31", offset: 0, limit: 5 }, expect: { filas: "array" } },
+  cmf_seguros_scomp: { args: { informe: "inf1", desde: "2025-01-01", hasta: "2025-12-31", offset: 0, limit: 5 }, expect: { filas: (v: unknown) => Array.isArray(v) && v.length > 0 } },
   cmf_seguros_clasificacion_riesgo: { args: { anio: "2025" }, expect: { anio: "string", filas: "array" } },
-  cmf_seguros_satra: { args: {} },
-  cmf_seguros_siniestros: { args: {} },
+  cmf_seguros_satra: { args: { desde: "2025-01-01", hasta: "2025-12-31", offset: 0, limit: 5 }, expect: { filas: (v: unknown) => Array.isArray(v) && v.length > 0 } },
+  cmf_seguros_siniestros: { args: { anio: "2025", offset: 0, limit: 5 }, expect: { filas: "array" } },
   cmf_seguros_cumplimiento: { args: { anio: "2025", mes: "12" } },
-  cmf_seguros_inversiones_vida: { args: { tipoentidad: "CSVID" } },
-  cmf_seguros_produccion_corredores: { args: { tipoentidad: "CSJUR" } },
+  cmf_seguros_inversiones_vida: { args: { tipoentidad: "CSVID" }, expect: { periodos: (v: unknown) => Array.isArray(v) && v.length > 0 } },
+  cmf_seguros_produccion_corredores: { args: { peri: "202512", seccion: "identifi", offset: 0, limit: 5 }, expect: { filas: (v: unknown) => Array.isArray(v) && v.length > 0 } },
   cmf_seguros_deposito_polizas: { args: { poliza: "POL120260128", limit: 3 }, expect: { total: "number", polizas: "array" }, maxMs: 90000 },
   cmf_seguros_polizas_resoluciones_prohibidas: { args: { limit: 3 }, expect: { total: "number", resoluciones: "array" } },
   cmf_seguros_sic: { args: { desde: "2026-01-01", hasta: "2026-06-30" } },
@@ -110,7 +110,7 @@ const TOOLS: Record<string, ToolDef> = {
   cmf_documento_descargar: { args: { s567: "abcdef0123456789" }, expectError: /HTML|inválido|expirado/i },
   cmf_bancos_tasas: { args: { indice: "4.1" } },
   cmf_bancos_cronologia: { args: { indice: "8.0" } },
-  cmf_bancos_reportes: { args: { reporte: "FIC", indice: "30.1" } },
+  cmf_bancos_reportes: { args: { reporte: "MR1", codUnicoBank: "001", periodo_inicial: "2026-06" }, expect: { filas: (v: unknown) => Array.isArray(v) && v.length > 0 } },
 
   // ---------- Paquetes ----------
   cmf_empresa_paquete: { args: { rut: "90690000", anio_inicio: "2026", anio_fin: "2026", secciones: ["eeff", "memoria"] }, expect: { empresa: "object", arbol: "object", manifest: "array", resumen: "object" }, maxMs: 60000 },
@@ -144,8 +144,8 @@ async function main() {
   const transport = new StreamableHTTPClientTransport("http://localhost/mcp", {
     fetch: (u, i) => handler.fetch(new Request(u, i)),
   });
-  const client = new Client({ name: "verify-all", version: "1" }, { versionNegotiation: { mode: "auto" } });
-  await client.connect(transport);
+  const client = new Client({ name: "verify-all", version: "1" }, { versionNegotiation: { mode: "auto" }, requestTimeout: 180_000 });
+  await client.connect(transport, { timeout: 300_000 });
 
   const reporte: { tool: string; ok: boolean; detalle: string; ms: number }[] = [];
   const tools = await client.listTools();
@@ -170,31 +170,16 @@ async function main() {
   reporte.push({ tool: "tools/list (contrato)", ok: sinDesc === 0 && sinSchema === 0, detalle: `${toolNames.length} tools; sin description: ${sinDesc}; sin schema: ${sinSchema}`, ms: 0 });
 
   // 2. Cada tool del catálogo definido
-  // Tools cuya fuente legacy de la CMF está verificada como caída/migrada (el error
-  // honesto de fuente es el resultado ESPERADO y se reporta como FUENTE, no como PASS):
-  const FUENTE_ESPERADO = new Set([
-    "cmf_normativa_buscar",
-    "cmf_dividendos",
-    "cmf_apv",
-    "cmf_clasificaciones_riesgo",
-    "cmf_seguros_rentas_vitalicias",
-    "cmf_seguros_scomp",
-    "cmf_seguros_satra",
-    "cmf_seguros_siniestros",
-    "cmf_seguros_cumplimiento",
-    "cmf_seguros_inversiones_vida",
-    "cmf_seguros_produccion_corredores",
-    "cmf_bancos_tasas",
-    "cmf_bancos_reportes",
-    "cmf_resultados_av_cb",
-    "cmf_fondos_mutuos_inversiones",
-    "cmf_prestamos_otorgados",
-  ]);
+  // Errores de fuente SOLO se aceptan si la CMF intermitente bloquea (toolErrorFuente
+  // con página oficial); cualquier tool que devuelva isError sin ser de este patrón
+  // cuenta como FAIL. (Tras la investigación js-reverse, todos los sistemas tienen
+  // endpoint vivo; no hay lista de sistemas permanentemente caídos.)
+  const FUENTE_ESPERADO = new Set<string>([]);
   let fuentes = 0;
   for (const [name, def] of Object.entries(TOOLS)) {
     const t0 = Date.now();
     try {
-      const res = await client.callTool({ name, arguments: def.args as Record<string, unknown> });
+      const res = await client.callTool({ name, arguments: def.args as Record<string, unknown> }, { timeout: 300_000 });
       const ms = Date.now() - t0;
       const sc = (res as { structuredContent?: unknown }).structuredContent as Record<string, unknown> | undefined;
       const texto = res.content?.[0]?.text ?? "";
