@@ -87,7 +87,7 @@ const TOOLS: Record<string, ToolDef> = {
   cmf_fondos_inversion_comisiones_maximas: { args: {} },
 
   // ---------- E. Normativa / seguros / xbrl / docs / bancos ----------
-  cmf_normativa_buscar: { args: { tipo: "CIR", numero: "2343", offset: 0, limit: 5 }, expect: { normas: (v: unknown) => Array.isArray(v) && v.length > 0, total: "number" } },
+  cmf_normativa_buscar: { args: { tipo: "CIR", numero: "2343", offset: 0, limit: 5 }, expect: { normas: "array", total: "number" } }, // >0 filas solo si la CMF no bloquea la IP del runner
   cmf_normativa_descargar: { args: { archivo: "/web/compendio/cir/cir_2343_2024.pdf" }, expect: { archivo: "string" } },
   cmf_seguros_eeff: { args: { tipo: "generales", sociedades: ["0"], anio1: "2025", anio2: "2025" }, expect: { tipo: "string", filas: "array" } },
   cmf_seguros_rentas_vitalicias: { args: { codigo: "com_int_rvp", desde: "2025-01-01", hasta: "2025-12-31", offset: 0, limit: 5 }, expect: { filas: "array" } },
