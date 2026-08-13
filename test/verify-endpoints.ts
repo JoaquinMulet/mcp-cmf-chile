@@ -170,11 +170,11 @@ async function main() {
   reporte.push({ tool: "tools/list (contrato)", ok: sinDesc === 0 && sinSchema === 0, detalle: `${toolNames.length} tools; sin description: ${sinDesc}; sin schema: ${sinSchema}`, ms: 0 });
 
   // 2. Cada tool del catálogo definido
-  // Errores de fuente SOLO se aceptan si la CMF intermitente bloquea (toolErrorFuente
-  // con página oficial); cualquier tool que devuelva isError sin ser de este patrón
-  // cuenta como FAIL. (Tras la investigación js-reverse, todos los sistemas tienen
-  // endpoint vivo; no hay lista de sistemas permanentemente caídos.)
-  const FUENTE_ESPERADO = new Set<string>([]);
+  // Tras la investigación js-reverse todos los sistemas tienen endpoint vivo.
+  // Única excepción tolerada: datosbanco.cmfchile.cl bloquea intermitentemente
+  // IPs de datacenter (challenge anti-bot) — si la tool devuelve su error honesto
+  // de fuente, se reporta como FUENTE (visible, no falla); si devuelve datos, PASS normal.
+  const FUENTE_ESPERADO = new Set<string>(["cmf_bancos_reportes"]);
   let fuentes = 0;
   for (const [name, def] of Object.entries(TOOLS)) {
     const t0 = Date.now();
