@@ -145,7 +145,9 @@ export async function fetchCmf(
       throw e;
     }
   }
-  throw ultimoError instanceof Error ? ultimoError : new Error("Fallo de red hacia la CMF");
+  throw ultimoError instanceof Error
+    ? new Error(`La red de la CMF rechazó la conexión tras 3 intentos (algunos hosts, como datosbanco, bloquean IPs de datacenter): ${ultimoError.message}`)
+    : new Error("Fallo de red hacia la CMF");
 }
 
 /** Decodifica el body de una respuesta legacy: UTF-8 si es válido, si no windows-1252. */

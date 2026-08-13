@@ -190,7 +190,7 @@ async function main() {
       } else {
         if (res.isError) {
           const esApiKey = /CMF_API_KEY no configurada/.test(texto) && name.startsWith("cmf_api_");
-          const esFuente = FUENTE_ESPERADO.has(name) && /fuente de la CMF no devolvi[oó]|está caído o ya no se mantiene|requiere un captcha/.test(texto);
+          const esFuente = FUENTE_ESPERADO.has(name) && /fuente de la CMF no devolvi[oó]|rechazó la conexión|fetch failed|está caído o ya no se mantiene|requiere un captcha/.test(texto);
           if (esApiKey) {
             reporte.push({ tool: name, ok: true, detalle: `API_KEY: sin key local (esperado)`, ms });
             continue;
