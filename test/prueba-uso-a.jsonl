@@ -1,0 +1,40 @@
+{"tarea": 1, "tool": "cmf_empresa_por_ticker", "args": {"consulta": "COPEC"}}
+{"tarea": 2, "tool": "cmf_buscar_entidad", "args": {"consulta": "Banco de Chile", "limite": 10}}
+{"tarea": 3, "tool": "cmf_listar_entidades", "args": {"tipoentidad": "RVEMI", "mercado": "V", "estado": "VI", "limit": 500}}
+{"tarea": 4, "tool": "cmf_empresa_info", "args": {"rut": "61808000"}}
+{"tarea": 5, "tool": "cmf_empresa_eeff", "args": {"rut": "90690000", "anio": 2025, "mes": 12, "tipo": "C", "norma": "IFRS", "modo": "markdown", "validar_contable": true}}
+{"tarea": 6, "tool": "cmf_empresa_eeff_historial", "args": {"rut": "90749000"}}
+{"tarea": 7, "tool": "cmf_empresa_hechos", "args": {"rut": "90749000", "desde": "2026-01-01", "hasta": "2026-06-30"}}
+{"tarea": 8, "tool": "cmf_empresa_accionistas", "args": {"rut": "90690000", "anio": 2025, "mes": 12}}
+{"tarea": 9, "tool": "cmf_empresa_directorio", "args": {"rut": "61808000"}}
+{"tarea": 10, "tool": "cmf_empresa_sanciones", "args": {"rut": "90749000", "desde": "2025-01-01", "hasta": "2025-12-31"}}
+{"tarea": 11, "tool": "cmf_empresa_resoluciones", "args": {"rut": "90690000", "desde": "2025-01-01", "hasta": "2025-12-31"}}
+{"tarea": 12, "tool": "cmf_empresa_juntas", "args": {"rut": "90690000", "desde": "2025-01-01", "hasta": "2025-12-31", "tipo": "ordinaria"}}
+{"tarea": 13, "tool": "cmf_empresa_memoria_anual", "args": {"rut": "90749000", "anio": 2025}}
+{"tarea": 14, "tool": "cmf_empresa_asg", "args": {"rut": "90690000", "anio": 2025, "tipo_informe": 1}}
+{"tarea": 15, "tool": "cmf_empresa_eeff_filiales", "args": {"rut": "61808000", "anio": 2025, "mes": 12}}
+{"tarea": 16, "tool": "cmf_empresa_registro_productos", "args": {"rut": "90690000"}}
+{"tarea": 17, "tool": "cmf_hechos_globales", "args": {"mercado": "V", "tipoentidad": "RVEMI", "desde": "2026-08-05", "hasta": "2026-08-10"}}
+{"tarea": 18, "tool": "cmf_sanciones_globales", "args": {"mercado": "V", "desde": "2026-06-01", "hasta": "2026-06-30"}}
+{"tarea": 19, "tool": "cmf_resoluciones_globales", "args": {"mercado": "S", "desde": "2026-06-01", "hasta": "2026-06-30"}}
+{"tarea": 20, "tool": "cmf_comunicaciones_emisores", "args": {"limit": 100}}
+{"tarea": 21, "tool": "cmf_clasificaciones_riesgo", "args": {"emisor": "Aguas Andinas"}}
+{"tarea": 22, "tool": "cmf_eeff_ifrs_sa", "args": {"sociedades": ["0"], "anio1": 2025, "anio2": 2025, "mes1": 12, "mes2": 12}}
+{"tarea": 23, "tool": "cmf_indicadores_financieros_sa", "args": {"fecha_max": "202512"}}
+{"tarea": 24, "tool": "cmf_empresa_eeff_nch", "args": {"sociedades": ["0"], "anio1": 2025, "anio2": 2025, "mes1": 12, "mes2": 12}}
+{"tarea": 25, "tool": "cmf_indicadores_financieros_nch", "args": {"sociedades": ["0"], "anio1": 2025, "anio2": 2025, "mes1": 12, "mes2": 12}}
+{"tarea": 26, "tool": "cmf_dividendos", "args": {"sociedades": ["0"], "anio": 2025}}
+{"tarea": 27, "tool": "cmf_operaciones_capital", "args": {"tipo": "canje", "anio": 2025}}
+{"tarea": 28, "tool": "cmf_apv", "args": {"anio_desde": 2024, "anio_hasta": 2025}}
+{"tarea": 29, "tool": "cmf_tomas_control", "args": {}}
+{"tarea": 30, "tool": "cmf_listados_eeff_ifrs", "args": {"tipo_listado": "general"}}
+{"tarea": 31, "tool": "cmf_fechas_divulgacion_eeff", "args": {"anio": 2026}}
+{"tarea": 32, "tool": "cmf_intermediarios_eeff_ifrs", "args": {"sociedades": ["0"], "anio1": 2025, "anio2": 2025, "mes1": 12, "mes2": 12}}
+{"tarea": 33, "tool": "cmf_intermediarios_indicadores_ifrs", "args": {"sociedades": ["0"], "anio1": 2025, "anio2": 2025, "mes1": 12, "mes2": 12}}
+{"tarea": 34, "tool": "cmf_resultados_av_cb", "args": {"tipo": "av_cb"}}
+{"tarea": 35, "tool": "cmf_liquidez_intermediarios", "args": {"desde": "2026-01-01", "hasta": "2026-07-31"}}
+{"tarea": 36, "tool": "cmf_prestamos_otorgados", "args": {}}
+{"tarea": 37, "tool": "cmf_dictamenes", "args": {"desde": "2026-01-01", "hasta": "2026-12-31"}}
+{"tarea": 38, "tool": "cmf_sanciones_cursadas", "args": {"mercado": "V"}}
+{"tarea": 39, "tool": "cmf_resoluciones_cursadas", "args": {"historico": false}}
+{"tarea": 40, "tool": "cmf_catalogo_entidades", "args": {"nombre": "COPEC", "tipo_entidad": "RVEMI", "estado": "VI"}}

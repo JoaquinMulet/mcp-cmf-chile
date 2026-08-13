@@ -123,7 +123,7 @@ export const gridSchema = z
 
 /** Documentos */
 export const documentoInfoSchema = z
-  .object({ s567: z.string().optional(), disponible: z.boolean().optional() })
+  .object({ s567: z.string().optional(), sin_verificar: z.boolean().optional(), url: z.string().optional() })
   .passthrough();
 
 export const documentoDescargaSchema = z

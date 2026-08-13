@@ -7,7 +7,8 @@ import { fromError, toolOk, resumirTabla } from "../util/errors.js";
 import { barrerPeriodos, conSemafotoGlobal, estimarTiempoS, mb } from "../util/paquete.js";
 import { carpetaEmpresa, extensionDeContentType, rutaUnica, tipoDocumento } from "../util/nombres.js";
 import { construirZip, zipABase64, bytesABase64 } from "../util/zip.js";
-import { anioSchema, mesSchema, rutSchema } from "../util/schemas.js";
+import {
+  anioSchema, mesSchema, rutSchema } from "../util/schemas.js";
 
 const FICHA_BASE = "/institucional/mercados/entidad.php";
 
@@ -121,15 +122,18 @@ export function registrarToolsPaquete(server: McpServer, env: CmfEnv): void {
       outputSchema: paqueteSchema,
       title: "Paquete completo de una empresa (plan de descarga)",
       description:
-        "Arma en UNA llamada el plan completo de descarga de una empresa: árbol de directorio lógico + manifest de documentos (EEFF, hechos, sanciones, resoluciones, memoria, ASG) con nombres de archivo normalizados. Máximo 2 años por llamada (límite del worker); use ventanas de años sucesivas para más historia. No incluye bytes; para descargarlos use cmf_empresa_paquete_documentos.",
+        "Planifica en UNA llamada la descarga completa de una empresa y devuelve el plan: árbol de directorio lógico y manifest de documentos (EEFF, hechos, sanciones, resoluciones, memoria, ASG) con nombres de archivo normalizados. Parámetros clave: rut (ej: 61808000), anio_inicio/anio_fin (máx 2 años por llamada; use ventanas sucesivas para más historia), tipo C/I, norma IFRS/NCH, secciones a incluir (eeff|hechos|sanciones|resoluciones|memoria|asg) e incluir_tablas; los EEFF se barren en cortes trimestrales 03/06/09/12. Use esta tool primero para dimensionar la descarga; no devuelve bytes, para descargar los documentos use cmf_empresa_paquete_documentos con el mismo rango.",
       inputSchema: z.object({
-        rut: rutSchema,
-        anio_inicio: anioSchema.optional(),
-        anio_fin: anioSchema.optional(),
-        tipo: z.enum(["C", "I"]).default("C"),
-        norma: z.enum(["IFRS", "NCH"]).default("IFRS"),
-        secciones: z.array(z.enum(SECCIONES)).default(["eeff", "hechos", "sanciones", "resoluciones", "memoria"]),
-        incluir_tablas: z.boolean().default(false),
+        rut: rutSchema.describe("RUT del emisor, sin dígito verificador (acepta 90749000, 90.749.000, 90749000-0 o 90.749.000-0)"),
+        anio_inicio: anioSchema.optional().describe("Año inicial AAAA del rango (default: año actual - 1). Máx 2 años por llamada"),
+        anio_fin: anioSchema.optional().describe("Año final AAAA del rango (default: año actual). Máx 2 años por llamada"),
+        tipo: z.enum(["C", "I"]).default("C").describe("Tipo de balance: C=Consolidado (default), I=Individual"),
+        norma: z.enum(["IFRS", "NCH"]).default("IFRS").describe("Norma contable: IFRS (default) o NCH (Chilean GAAP)"),
+        secciones: z
+          .array(z.enum(SECCIONES))
+          .default(["eeff", "hechos", "sanciones", "resoluciones", "memoria"])
+          .describe("Secciones a incluir: eeff|hechos|sanciones|resoluciones|memoria|asg (los EEFF se barren en cortes trimestrales 03/06/09/12)"),
+        incluir_tablas: z.boolean().default(false).describe("true = lista hasta 12 tablas por período EEFF (false: solo 5)"),
       }),
     },
     async ({ rut, anio_inicio, anio_fin, tipo, norma, secciones, incluir_tablas }) => {
@@ -355,22 +359,25 @@ export function registrarToolsPaquete(server: McpServer, env: CmfEnv): void {
       outputSchema: paqueteDocumentosSchema,
       title: "Descargar documentos de una empresa (ZIP ordenado)",
       description:
-        "Descarga los documentos de una empresa en un rango (EEFF por período; hechos, sanciones, resoluciones, memoria por año) devolviéndolos como ZIP en base64 con directorio lógico y nombres normalizados (incluye manifiesto.json). Límites por llamada: máx 3 períodos EEFF (los más recientes del rango, o la lista `periodos` AAAAMM) + 2 años para las demás secciones; max_documentos y max_mb agregados. Los tokens firmados se gestionan en el servidor (nunca se exponen).",
+        "Descarga los documentos de una empresa (EEFF por período; hechos, sanciones, resoluciones, memoria por año) y los devuelve como ZIP en base64 con directorio lógico, nombres normalizados y manifiesto.json (cada archivo además en base64, truncado a 4MB). Parámetros clave: rut (ej: 61808000), anio_inicio/anio_fin (máx 2 años por llamada), periodos AAAAMM explícitos (máx 3) o los 3 más recientes del rango, secciones (eeff|hechos|sanciones|resoluciones|memoria), tipo C/I, norma IFRS/NCH, y límites max_documentos (1-24) y max_mb (1-50). Use esta tool para bajar los bytes del plan de cmf_empresa_paquete; los tokens firmados se gestionan en el servidor y nunca se exponen.",
       inputSchema: z.object({
-        rut: rutSchema,
-        anio_inicio: anioSchema.optional(),
-        anio_fin: anioSchema.optional(),
+        rut: rutSchema.describe("RUT del emisor, sin dígito verificador (acepta 90749000, 90.749.000, 90749000-0 o 90.749.000-0)"),
+        anio_inicio: anioSchema.optional().describe("Año inicial AAAA del rango (default: año actual - 1). Máx 2 años por llamada"),
+        anio_fin: anioSchema.optional().describe("Año final AAAA del rango (default: año actual). Máx 2 años por llamada"),
         periodos: z
           .array(z.string().regex(/^\d{6}$/, "Corte en formato AAAAMM"))
           .max(3)
           .optional()
           .describe("Cortes EEFF explícitos AAAAMM (máx 3). Si no se entregan, se usan los 3 períodos más recientes del rango"),
-        secciones: z.array(z.enum(["eeff", "hechos", "sanciones", "resoluciones", "memoria"])).default(["eeff"]),
-        tipo: z.enum(["C", "I"]).default("C"),
-        norma: z.enum(["IFRS", "NCH"]).default("IFRS"),
-        max_documentos: z.number().int().min(1).max(24).default(12),
-        max_mb: z.number().min(1).max(50).default(10),
-        incluir_zip: z.boolean().default(true),
+        secciones: z
+          .array(z.enum(["eeff", "hechos", "sanciones", "resoluciones", "memoria"]))
+          .default(["eeff"])
+          .describe("Secciones a incluir: eeff|hechos|sanciones|resoluciones|memoria (default: solo eeff)"),
+        tipo: z.enum(["C", "I"]).default("C").describe("Tipo de balance: C=Consolidado (default), I=Individual"),
+        norma: z.enum(["IFRS", "NCH"]).default("IFRS").describe("Norma contable: IFRS (default) o NCH (Chilean GAAP)"),
+        max_documentos: z.number().int().min(1).max(24).default(12).describe("Máximo de documentos descargados (1-24, default 12); el resto se omite y se reporta"),
+        max_mb: z.number().min(1).max(50).default(10).describe("Máximo total de MB descargados (1-50, default 10)"),
+        incluir_zip: z.boolean().default(true).describe("true = arma el ZIP en base64 (default); false = solo devuelve los archivos sueltos"),
       }),
     },
     async ({ rut, anio_inicio, anio_fin, periodos, secciones, tipo, norma, max_documentos, max_mb, incluir_zip }) => {
@@ -640,14 +647,15 @@ export function registrarToolsPaquete(server: McpServer, env: CmfEnv): void {
       outputSchema: fondosPaqueteSchema,
       title: "Boletines mensuales del sistema de Fondos Mutuos",
       description:
-        "Una sola llamada con los boletines del sistema de fondos mutuos de un mes: patrimonio/rentabilidad (BPR), costos TAC, comisiones e inversiones. Resumen por sección (use las tools individuales para el detalle completo).",
+        "Devuelve en UNA llamada los boletines mensuales del sistema de fondos mutuos de un mes: patrimonio/rentabilidad (bpr), costos TAC (costos), comisiones e inversiones nacional/extranjera, con total y hasta max_filas filas por sección. Parámetros: anio AAAA (ej: 2025), mes MM (ej: 03) y secciones a incluir (bpr|costos|comisiones|inversiones_nacio|inversiones_inter). Use esta tool para un resumen del mes; para el detalle completo de una sección use las tools individuales de fondos mutuos.",
       inputSchema: z.object({
         anio: anioSchema,
         mes: mesSchema,
         secciones: z
           .array(z.enum(["bpr", "costos", "comisiones", "inversiones_nacio", "inversiones_inter"]))
-          .default(["bpr", "costos", "comisiones"]),
-        max_filas: z.number().int().min(5).max(100).default(20),
+          .default(["bpr", "costos", "comisiones"])
+          .describe("Secciones a incluir: bpr|costos|comisiones|inversiones_nacio|inversiones_inter"),
+        max_filas: z.number().int().min(5).max(100).default(20).describe("Máximo de filas por sección (5-100, default 20)"),
       }),
     },
     async ({ anio, mes, secciones, max_filas }) => {

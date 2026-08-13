@@ -1,6 +1,10 @@
 # Plan: Aplicación de Design Principles y SEP Guidelines de MCP a mcp-cmf-chile
 
-Objetivo: alinear el servidor `mcp-cmf-chile` (84 tools, hosteado en cmf-mcp.kumocloud.cl/mcp) con los 8 Design Principles de MCP y las SEP Guidelines de la comunidad. Fuentes: modelcontextprotocol.io/community/design-principles y /sep-guidelines.
+> ⚠️ DOCUMENTO HISTÓRICO (plan de diseño, no estado actual). Los conteos de tools aquí
+> (84) quedaron obsoletos: el conteo vivo es 86 (verifícalo con `npx tsx test/verify-tools.ts`).
+> El estado actual vive en README.md, docs/SISTEMAS.md y el código.
+
+Objetivo: alinear el servidor `mcp-cmf-chile` (86 tools, hosteado en cmf-mcp.kumocloud.cl/mcp) con los 8 Design Principles de MCP y las SEP Guidelines de la comunidad. Fuentes: modelcontextprotocol.io/community/design-principles y /sep-guidelines.
 
 ## A. Convergence over choice — una sola forma por problema
 

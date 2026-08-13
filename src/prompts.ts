@@ -27,7 +27,7 @@ export function registrarPrompts(server: McpServer): void {
 3. cmf_empresa_eeff: últimos estados financieros (situación financiera, resultados, flujo de efectivo) — explica evolución anual.
 4. cmf_empresa_hechos: hechos esenciales del último año (materias relevantes).
 5. cmf_empresa_sanciones y cmf_empresa_resoluciones: cumplimiento normativo.
-6. cmf_empresa_asg: indicadores ASG si existen.
+6. cmf_empresa_asg: indicadores ASG si existen — prueba los tres tipo_informe (1=Memoria Integrada, 2=SASB, 3=XBRL SASB) y di cuáles existen.
 7. cmf_empresa_memoria_anual: memoria del último año si está disponible.
 
 Entrega un informe estructurado: perfil, salud financiera (indicadores derivados), riesgos (hechos/sanciones), gobernanza y conclusión. Cita siempre el período de los datos. Si una tool no devuelve datos, dilo explícitamente (no inventes).`,
@@ -56,10 +56,11 @@ Entrega un informe estructurado: perfil, salud financiera (indicadores derivados
             type: "text",
             text: `Compara fondos mutuos chilenos a ${mes ?? "12"}/${anio} usando las tools del MCP CMF Chile:
 
-1. cmf_fondos_mutuos_bpr (anio, mes): patrimonio, rentabilidad nominal mensual, partícipes y valor cuota por serie.
-2. cmf_fondos_mutuos_costos (anio, mes): TAC y remuneraciones por serie.
-3. cmf_fondos_mutuos_antecedentes: contexto del sistema.
-4. Si el usuario pide fondos específicos, primero cmf_fondos_mutuos_catalogo para identificarlos.
+1. Si el usuario pide fondos específicos, primero cmf_fondos_mutuos_catalogo para identificarlos: anota el RUN de cada fondo y el RUT de su administradora (rut_admin).
+2. cmf_fondos_mutuos_bpr (anio, mes; admin=rut_admin si buscas una administradora): patrimonio, rentabilidad nominal mensual, partícipes y valor cuota por serie.
+3. cmf_fondos_mutuos_costos (anio, mes; admin=rut_admin): TAC y remuneraciones por serie.
+4. cmf_fondos_mutuos_antecedentes: contexto del sistema.
+5. Si comparas series específicas, filtra por su RUN dentro de las filas devueltas (bpr/costos filtran por administradora, no por RUN).
 
 Entrega: ranking por patrimonio y por rentabilidad, tabla comparativa con costos TAC, y comentario de calidad (datos faltantes señalados explícitamente).`,
           },
@@ -73,7 +74,7 @@ Entrega: ranking por patrimonio y por rentabilidad, tabla comparativa con costos
     {
       title: "Reporte de indicadores económicos",
       description:
-        "Genera un reporte de indicadores económicos oficiales chilenos (UF, UTM, IPC, TMC, dólar) para un período.",
+        "Genera un reporte de indicadores económicos oficiales chilenos (UF, UTM, IPC, TMC, dólar) para un período. Requiere que el servidor tenga configurada la CMF_API_KEY (API oficial v3); si las tools responden 'CMF_API_KEY no configurada', la instancia no puede generar este reporte.",
       argsSchema: z.object({
         anio: z.string().describe("Año (AAAA)"),
         mes: z.string().optional().describe("Mes (01-12)"),

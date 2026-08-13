@@ -15,6 +15,7 @@
 - **Respeto a la CMF**: rate limit 1 req/s por host; cachea lo que puedas; los captchas nunca se resuelven por OCR.
 - **Cobertura**: una tool nueva debe documentarse en `docs/SISTEMAS.md`.
 - **Estilo**: TypeScript estricto, zod/v4 para schemas, `cmf_` prefijo snake_case.
+- **Descripciones TDQS**: toda descripción de tool explica qué devuelve, cómo usar sus parámetros (con ejemplos) y cuándo elegirla frente a sus hermanas. Todo parámetro lleva `.describe()`. Los tests del gate `tdqs.test.ts` lo hacen cumplir.
 - **Tests**: los smoke tests (`npm test`) deben pasar; agrega tests para tools sin red.
 
 ## Estructura

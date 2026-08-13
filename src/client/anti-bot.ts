@@ -14,6 +14,7 @@ export interface CookieJar {
   cookies: Map<string, string>;
   setFromHeaders(headers: Headers): void;
   header(url: URL): string;
+  cabeceraCompleta(): string;
 }
 
 export function crearCookieJar(): CookieJar {
@@ -35,6 +36,10 @@ export function crearCookieJar(): CookieJar {
         if (k.toLowerCase().startsWith("cookiesession") || k.startsWith("csb")) partes.push(`${k}=${v}`);
       }
       return partes.length ? partes.join("; ") : "";
+    },
+    /** Todas las cookies (incluye sesiones PHP como SVS_HE, necesarias para reintentar captchas). */
+    cabeceraCompleta() {
+      return [...cookies.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
     },
   };
 }

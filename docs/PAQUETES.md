@@ -26,7 +26,7 @@ Boletines del sistema de fondos mutuos de un mes en una llamada: BPR (patrimonio
 
 ## `cmf_catalogo_entidades`
 
-Catálogo completo de entidades supervisadas (11.401 registros) con filtros por nombre, tipo de entidad y estado. Cacheado 24h en KV; paginado (nunca devuelve el dump crudo).
+Catálogo completo de entidades supervisadas (~15.000 registros) con filtros por nombre, tipo de entidad y estado. Cacheado 24h en KV; paginado (nunca devuelve el dump crudo).
 
 - **Entrada**: `nombre?`, `tipo_entidad?`, `estado?`, `offset?`, `limit?`
 

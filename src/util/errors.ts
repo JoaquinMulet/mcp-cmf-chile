@@ -27,6 +27,42 @@ export function fromError(e: unknown): CallToolResult {
   return toolError(msg);
 }
 
+/**
+ * Error honesto cuando la fuente legacy de la CMF no devolvió datos parseables.
+ * No dice "no hay datos" (podría ser falso): dice que la fuente no entregó nada,
+ * distingue causas probables y da la página oficial para verificar.
+ */
+export function toolErrorFuente(
+  que: string,
+  paginaOficial: string,
+  extra = "el sistema legacy de la CMF puede estar caído o migrado",
+): CallToolResult {
+  return toolError(
+    `${que}: la fuente de la CMF no devolvió datos parseables (${extra}). ` +
+      `Esto NO significa necesariamente que no existan datos para la consulta. ` +
+      `Verifique directamente en ${paginaOficial} y reintente más tarde si corresponde.`,
+  );
+}
+
+/**
+ * Distingue "sin datos" real (la página trajo su tabla, vacía) de "la fuente no
+ * respondió" (la página no trajo tabla alguna: bloqueo temporal o challenge anti-bot).
+ * Si la página no tiene <table> y no hay filas, reporta error de fuente, nunca "sin datos".
+ */
+export function sinDatosOFuente(
+  html: string,
+  filas: Record<string, unknown>[],
+  que: string,
+  paginaOficial: string,
+  cuandoVacio: () => CallToolResult,
+  cuandoHayDatos: () => CallToolResult,
+): CallToolResult {
+  if (filas.length === 0 && !/<table/i.test(html)) {
+    return toolErrorFuente(que, paginaOficial, "la página de la CMF no trajo la tabla (posible bloqueo temporal o challenge anti-bot)");
+  }
+  return filas.length ? cuandoHayDatos() : cuandoVacio();
+}
+
 /** Resumen de tabla para el texto (primeras N filas). */
 export function resumirTabla<T extends Record<string, unknown>>(
   filas: T[],

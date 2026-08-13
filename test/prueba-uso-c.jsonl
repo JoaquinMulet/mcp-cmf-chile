@@ -1,0 +1,26 @@
+{"tarea": 1, "tool": "cmf_normativa_buscar", "args": {"tipo": "CIR", "numero": "2343"}}
+{"tarea": 2, "tool": "cmf_normativa_descargar", "args": {"archivo": "/web/compendio/cir/cir_2343_2024.pdf"}}
+{"tarea": 3, "tool": "cmf_seguros_eeff", "args": {"tipo": "generales", "anio1": 2025, "anio2": 2025}}
+{"tarea": 4, "tool": "cmf_seguros_rentas_vitalicias", "args": {"codigo": "com_int_rvp"}}
+{"tarea": 5, "tool": "cmf_seguros_scomp", "args": {}}
+{"tarea": 6, "tool": "cmf_seguros_clasificacion_riesgo", "args": {"anio": 2025}}
+{"tarea": 7, "tool": "cmf_seguros_satra", "args": {}}
+{"tarea": 8, "tool": "cmf_seguros_siniestros", "args": {}}
+{"tarea": 9, "tool": "cmf_seguros_cumplimiento", "args": {"anio": 2025, "tipoentidad": "CSVID"}}
+{"tarea": 10, "tool": "cmf_seguros_inversiones_vida", "args": {"tipoentidad": "CSVID"}}
+{"tarea": 11, "tool": "cmf_seguros_produccion_corredores", "args": {"tipoentidad": "CSJUR"}}
+{"tarea": 12, "tool": "cmf_seguros_sic", "args": {"desde": "2026-01-01", "hasta": "2026-06-30"}}
+{"tarea": 13, "tool": "cmf_seguros_deposito_polizas", "args": {"texto": "incendio", "limit": 3}}
+{"tarea": 14, "tool": "cmf_seguros_polizas_resoluciones_prohibidas", "args": {}}
+{"tarea": 15, "tool": "cmf_xbrl_taxonomias", "args": {}}
+{"tarea": 16, "tool": "cmf_xbrl_visor", "args": {"taxonomia": "cl-ci", "fecha": "2021-01-04"}}
+{"tarea": 17, "tool": "cmf_xbrl_consulta", "args": {"nombre": "Juan", "email": "juan@test.cl", "mercado": "V"}, "skip": "destructiva: envía formulario real a la CMF"}
+{"tarea": 18, "tool": "cmf_documento_info", "args": {"s567": "abcdef0123456789"}}
+{"tarea": 19, "tool": "cmf_documento_descargar", "args": {"s567": "abcdef0123456789"}, "skip": "token falso de prueba: la tool devuelve error honesto (página HTML) — cubierto con expectError en verify-endpoints"}
+{"tarea": 20, "tool": "cmf_documento_markdown", "args": {"url": "https://www.cmfchile.cl/institucional/mercados/ver_archivo.php?archivo=/web/compendio/cir/cir_2343_2024.pdf", "max_chars": 2000}}
+{"tarea": 21, "tool": "cmf_bancos_tasas", "args": {"indice": "4.1"}}
+{"tarea": 22, "tool": "cmf_bancos_cronologia", "args": {"indice": "8.0"}}
+{"tarea": 23, "tool": "cmf_bancos_reportes", "args": {"reporte": "FIC", "periodo_inicial": "2026-01", "periodo_final": "2026-06"}}
+{"tarea": 24, "tool": "cmf_empresa_paquete", "args": {"rut": 90690000, "anio_inicio": 2025, "anio_fin": 2025, "tipo": "C", "norma": "IFRS", "secciones": ["eeff", "memoria"]}}
+{"tarea": 25, "tool": "cmf_empresa_paquete_documentos", "args": {"rut": 90690000, "anio_inicio": 2025, "anio_fin": 2025, "secciones": ["hechos"], "max_documentos": 2, "incluir_zip": false}}
+{"tarea": 26, "tool": "cmf_fondos_paquete_mensual", "args": {"anio": 2026, "mes": "01", "secciones": ["bpr", "costos"]}}

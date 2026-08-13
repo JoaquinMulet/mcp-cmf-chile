@@ -177,6 +177,43 @@ export async function getLegacy(
   return texto;
 }
 
+/** GET legacy con cookies explícitas (flujo captcha: reutiliza la sesión PHP de la imagen). */
+export async function getLegacyConCookies(
+  path: string,
+  cookies: string,
+  env: CmfEnv = {},
+): Promise<string> {
+  const url = `https://www.cmfchile.cl${path}`;
+  const res = await fetchCmf(url, { headers: { Cookie: cookies } }, env);
+  return decodificarBody(await res.arrayBuffer());
+}
+
+/** POST form-urlencoded con cookies explícitas (flujo captcha). */
+export async function postLegacyConCookies(
+  path: string,
+  body: Record<string, string | number | string[] | undefined>,
+  cookies: string,
+  env: CmfEnv = {},
+): Promise<string> {
+  const url = `https://www.cmfchile.cl${path}`;
+  const form = new URLSearchParams();
+  for (const [k, v] of Object.entries(body)) {
+    if (v === undefined) continue;
+    if (Array.isArray(v)) v.forEach((x) => form.append(k, String(x)));
+    else form.set(k, String(v));
+  }
+  const res = await fetchCmf(
+    url,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: cookies },
+      body: form.toString(),
+    },
+    env,
+  );
+  return decodificarBody(await res.arrayBuffer());
+}
+
 /** POST form-urlencoded hacia sistemas legacy. */
 export async function postLegacy(
   path: string,

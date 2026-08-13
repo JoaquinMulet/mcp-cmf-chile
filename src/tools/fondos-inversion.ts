@@ -5,7 +5,8 @@ import { getLegacy, postLegacy, type CmfEnv } from "../client/cmf-client.js";
 import { htmlTablaAJson, gridGoogleVisAJson } from "../client/parsers.js";
 import { fromError, toolOk, resumirTabla } from "../util/errors.js";
 import { paginar } from "../util/paginate.js";
-import { anioSchema, mesSchema, offsetSchema, limitSchema } from "../util/schemas.js";
+import {
+  anioSchema, mesSchema, offsetSchema, limitSchema } from "../util/schemas.js";
 
 export function registrarToolsFondosInversion(server: McpServer, env: CmfEnv): void {
   server.registerTool(
@@ -15,7 +16,7 @@ export function registrarToolsFondosInversion(server: McpServer, env: CmfEnv): v
       outputSchema: gridSchema,
       title: "EEFF IFRS de Fondos de Inversión",
       description:
-        "Estados financieros IFRS de fondos de inversión: matriz cuentas × fondos (grid Google Visualization convertido a JSON).",
+        "Devuelve los estados financieros IFRS de fondos de inversión como matriz de cuentas contables × fondos (grid Google Visualization convertido a JSON), desde el sitio de la CMF. Filtre la administradora con admins (RUT; 0 = todas) y los fondos con fondos (array de códigos; ['0'] = todos); defina el rango con anio1/anio2 (AAAA) y, si necesita cortes intermedios, mes1/mes2 (MM; sin mes se usa diciembre). La salida incluye hasta 200 filas y total_filas con el total real; si responde \"Sin resultados\" puede requerir re-solución del anti-bot, reintente. Use esta tool para comparar cuentas IFRS entre fondos; para obtener códigos de fondos use cmf_fondos_inversion_catalogo.",
       inputSchema: z.object({
         admins: z.string().default("0").describe("RUT de la administradora (0=todas)"),
         fondos: z.array(z.string()).default(["0"]).describe("Códigos de fondos (['0']=todos)"),
@@ -60,7 +61,7 @@ export function registrarToolsFondosInversion(server: McpServer, env: CmfEnv): v
       outputSchema: paginadoSchema("fondos"),
       title: "Catálogo de Fondos de Inversión",
       description:
-        "Catálogo de fondos de inversión supervisados por la CMF (búsqueda por nombre o RUT de administradora).",
+        "Devuelve el catálogo de fondos de inversión supervisados por la CMF (RUT, nombre, tipo de entidad, inscripción y estado) con paginación. Busque con consulta (nombre o RUT; sin consulta lista fondos de inversión en general) y recorra el listado con offset y limit (máx 500, default 100); la salida trae total y next_offset para continuar. Use esta tool para identificar códigos/RUT de fondos y administradoras que otras tools requieren, p. ej. cmf_fondos_inversion_eeff_ifrs.",
       inputSchema: z.object({
         consulta: z.string().optional().describe("Nombre o RUT a buscar"),
         offset: offsetSchema,
@@ -92,10 +93,10 @@ export function registrarToolsFondosInversion(server: McpServer, env: CmfEnv): v
       annotations: { readOnlyHint: true, destructiveHint: false },
       outputSchema: filasSchema,
       title: "Comisiones máximas de Fondos de Inversión",
-      description: "Informe de comisiones máximas aplicables a fondos de inversión.",
-      inputSchema: z.object({ anio: anioSchema.optional() }),
+      description: "Devuelve las filas del informe de comisiones máximas aplicables a fondos de inversión que publica la CMF (tabla HTML parseada; hasta 200 filas en filas). El informe es el vigente publicado. Si no hay filas parseables, el informe está disponible como PDF en el sitio de la CMF. Use esta tool para conocer los topes de comisiones; para las comisiones cobradas a fondos de pensiones use cmf_fondos_comisiones_maximas (tipo=fi).",
+      inputSchema: z.object({}),
     },
-    async ({ anio }) => {
+    async () => {
       try {
         const html = await getLegacy(
           "/institucional/estadisticas/valores_fondosinversion_informe_commax.php",

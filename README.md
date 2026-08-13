@@ -1,6 +1,6 @@
 ﻿# MCP para la CMF de Chile 🇨🇱
 
-Servidor **Model Context Protocol** (spec 2026-07-28) con **todos los datos públicos de la Comisión para el Mercado Financiero de Chile (CMF)**: empresas en bolsa, estados financieros (EEFF), hechos esenciales, fondos mutuos, fondos de inversión, normativa, seguros, indicadores económicos y bancos.
+Servidor **Model Context Protocol** (spec 2026-07-28, dual-era: también responde el handshake `initialize` legacy 2025-11-25) con **todos los datos públicos de la Comisión para el Mercado Financiero de Chile (CMF)**: empresas en bolsa, estados financieros (EEFF), hechos esenciales, fondos mutuos, fondos de inversión, normativa, seguros, indicadores económicos y bancos.
 
 **Libre, gratuito y open-source (MIT)** — un aporte a la sociedad chilena: conecta tus agentes de IA a la información oficial del regulador financiero sin costos ni claves.
 
@@ -52,7 +52,7 @@ Usa el adaptador `mcp-remote`:
 
 ## Qué es
 
-Un puente entre los agentes de IA y la información pública del regulador financiero chileno. Con 82 herramientas, el servidor expone:
+Un puente entre los agentes de IA y la información pública del regulador financiero chileno. Con 86 herramientas, el servidor expone:
 
 - **Empresas en bolsa**: búsqueda por nombre/RUT/ticker, estados financieros (EEFF IFRS/NCH con tablas estructuradas), hechos esenciales, accionistas, directorio, sanciones, resoluciones, juntas, memoria anual, indicadores ASG, dividendos, APV, tomas de control e intermediarios.
 - **Fondos mutuos**: catálogo completo (3.400+ fondos), cartera, comisiones, inversiones, patrimonio, rentabilidad, partícipes, costos TAC, cartola diaria y comisiones máximas.
@@ -128,10 +128,21 @@ src/
 
 - La API key de la CMF vive **solo en el servidor**; nunca se expone al modelo.
 - Los datos de la CMF se tratan como **no confiables**: siempre `structuredContent` JSON, nunca HTML crudo.
-- **Captchas** (hechos globales, cartola diaria): se solicitan vía MRTR (`input_required`) con la imagen como resource `cmf://captcha/{id}`; nunca OCR automático.
+- **Captchas** (hechos globales, cartola diaria): al llamar la tool sin código, el servidor descarga la imagen real de la CMF y la sirve como resource `cmf://captcha/{id}`; el agente pide el código al usuario y reintenta con `captcha=<código>` (single-use, TTL 10 min); nunca OCR automático.
 - **Rate limiting** hacia la CMF (1 req/s por host) y respeto a la cuota de la API oficial.
-- Tokens firmados efímeros (ver_sgd) nunca llegan al modelo.
+- Los enlaces firmados de la CMF (`ver_sgd`/`auth`/`send`) son **efímeros**: las tools los consumen y no requieren que el modelo maneje credenciales; no los comparta ni los trate como URLs permanentes.
 - Incluye `CMF_HTTP_TOKEN` (bearer) opcional para quienes desplieguen su instancia privada.
+- El transport Streamable HTTP valida `Origin` (403 si está presente e inválido), exige `MCP-Protocol-Version`, `Mcp-Method`/`Mcp-Name` y `_meta` en cada request, y responde 202 a las notificaciones (lo implementa el SDK de Cloudflare, verificado en CI por `test/verify-proto.ts`).
+
+## Solución de problemas
+
+- **"CMF_API_KEY no configurada"**: las tools `cmf_api_*` (UF, dólar, balances bancarios) usan la API oficial v3, que requiere la key gratuita de la CMF configurada en el servidor. La instancia pública la tiene configurada; si despliegas la tuya, obtén la key en api.cmfchile.cl y defínela como secret `CMF_API_KEY` (en STDIO, variable de entorno).
+- **Captcha**: la imagen vive ligada a la sesión del servidor, así que debe leerse desde el resource `cmf://captcha/{id}` que la propia tool entrega (los hosts que renderizan resources la muestran automáticamente). Si tu cliente no puede mostrar la imagen, no hay forma alternativa de completar la consulta protegida.
+- **"La fuente de la CMF no devolvió datos"**: varios sistemas legacy de la CMF (normativa, dividendos, APV, clasificaciones, SCOMP…) están caídos o migrados en el propio sitio de la CMF. La tool lo dice explícitamente y da la página oficial para verificar; no significa que no existan datos.
+
+## Versionado
+
+Versión actual: `0.1.0` (semver). Cambios *breaking* (renombrar/eliminar tools o parámetros) requieren subir la versión minor/major y se documentan en el changelog del release. Este repositorio acaba de nacer: mientras esté en `0.x`, el contrato puede ajustarse entre releases menores si un parámetro resultó muerto o engañoso (se registra en el release).
 
 ## Contribuir
 

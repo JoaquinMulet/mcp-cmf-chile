@@ -1,0 +1,20 @@
+{"tarea": 1, "tool": "cmf_api_indicador_valor", "args": {"serie": "uf", "anio": 2025, "mes": 12, "dia": 31}}
+{"tarea": 2, "tool": "cmf_api_indicador_serie", "args": {"serie": "uf", "desde": "2025-01", "hasta": "2025-12"}}
+{"tarea": 3, "tool": "cmf_api_balance_institucion", "args": {"anio": 2025, "mes": 12, "institucion": 999}}
+{"tarea": 4, "tool": "cmf_api_resultados_institucion", "args": {"anio": 2025, "mes": 12, "institucion": 999}}
+{"tarea": 5, "tool": "cmf_api_adecuacion_capital", "args": {"anio": 2025, "mes": 12, "institucion": 999, "componente": "indicadores", "indicador": "ire"}}
+{"tarea": 6, "tool": "cmf_api_ficha_institucion", "args": {"institucion": "001", "anio": 2025, "mes": 12}}
+{"tarea": 7, "tool": "cmf_api_accionistas_institucion", "args": {"institucion": "001", "anio": 2025, "mes": 12}}
+{"tarea": 8, "tool": "cmf_api_integrantes_institucion", "args": {"institucion": "001", "anio": 2025, "mes": 12}}
+{"tarea": 9, "tool": "cmf_fondos_mutuos_catalogo", "args": {"nombre": "SECURITY"}}
+{"tarea": 10, "tool": "cmf_fondos_mutuos_cartera", "args": {"anio": 2026, "mes": 1, "cartera": "NACI"}}
+{"tarea": 11, "tool": "cmf_fondos_mutuos_comisiones", "args": {"anio": 2026, "mes": 1}}
+{"tarea": 12, "tool": "cmf_fondos_mutuos_inversiones", "args": {"anio": 2026, "mes": 1, "tipo": "nacio", "consulta": "emisores"}}
+{"tarea": 13, "tool": "cmf_fondos_mutuos_bpr", "args": {"anio": 2026, "mes": 1}}
+{"tarea": 14, "tool": "cmf_fondos_mutuos_costos", "args": {"anio": 2026, "mes": 1}}
+{"tarea": 15, "tool": "cmf_fondos_mutuos_antecedentes", "args": {"anio": 2025}}
+{"tarea": 16, "tool": "cmf_fondos_mutuos_cartola", "args": {"fondo": 8298, "desde": "2026-01-01", "hasta": "2026-01-15"}}
+{"tarea": 17, "tool": "cmf_fondos_comisiones_maximas", "args": {"tipo": "fm", "circular": 1951, "anio": 2026}}
+{"tarea": 18, "tool": "cmf_fondos_inversion_catalogo", "args": {"consulta": "Larrain"}}
+{"tarea": 19, "tool": "cmf_fondos_inversion_eeff_ifrs", "args": {"anio1": 2025, "anio2": 2025}}
+{"tarea": 20, "tool": "cmf_fondos_inversion_comisiones_maximas", "args": {"anio": 2025}}

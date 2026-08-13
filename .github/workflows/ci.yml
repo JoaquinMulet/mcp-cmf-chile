@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Tests (unitarios + smoke + gate TDQS)
+        run: npm test
+      - name: Protocolo Streamable HTTP contra la instancia hosteada
+        run: npx tsx test/verify-proto.ts
+        env:
+          CMF_MCP_URL: ${{ vars.CMF_MCP_URL }}
+      - name: Cliente MCP real contra la instancia hosteada
+        run: npx tsx test/verify-remote.ts
+        env:
+          CMF_MCP_URL: ${{ vars.CMF_MCP_URL }}
+
+  verify-cmf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verificacion exhaustiva contra la CMF real
+        run: npx tsx test/verify-endpoints.ts

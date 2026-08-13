@@ -65,5 +65,5 @@ npm run build
 ## Notas
 
 - **Compatibilidad**: el endpoint sirve clientes MCP 2026-07-28 (stateless) y clientes legacy 2025 (initialize) en el mismo `/mcp`.
-- **Captchas**: las tools `cmf_hechos_globales` y `cmf_fondos_mutuos_cartola` requieren el código captcha de la CMF. En clientes modernos se solicita automáticamente (MRTR); en clientes legacy remotos devuelven un error claro.
+- **Captchas**: las tools `cmf_hechos_globales` y `cmf_fondos_mutuos_cartola` requieren el código captcha de la CMF. Al llamarlas sin código, el servidor descarga la imagen real y responde con un resource `cmf://captcha/{id}`; el agente pide al usuario los 6 caracteres y reintenta con `captcha=<código>` y `captcha_id=<id>` (single-use, TTL 10 min).
 - **Límites**: respeta ~1 req/s hacia la CMF; la API oficial tiene cuota de 10.000 req/mes por key.

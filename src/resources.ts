@@ -136,8 +136,7 @@ export function registrarResources(server: McpServer, env: CmfEnv): void {
   // Skill de uso del servidor (formato Agent Skills, adelanto del SEP-2640 Skills Extension)
   server.registerResource(
     "skill-uso",
-    "cmf://skill/uso",
-    {
+    "cmf://skill/uso",    {
       title: "Skill: cómo usar el MCP de la CMF",
       description: "Instrucciones de uso del servidor MCP de la CMF de Chile (formato Agent Skills: name, description, procedimiento).",
       mimeType: "text/markdown",
@@ -157,7 +156,7 @@ description: Procedimiento para consultar datos públicos de la CMF de Chile (em
 
 1. \`cmf_buscar_entidad\` con nombre, RUT o ticker para obtener el RUT canónico y el tipo de entidad.
 2. \`cmf_empresa_info\` (rut): identificación.
-3. \`cmf_empresa_eeff\` (rut, anio, mes 03/06/09/12, tipo C/I, norma IFRS/NCH): tablas estructuradas del período.
+3. \`cmf_empresa_eeff\` (rut, anio, mes 03/06/09/12, tipo C/I, norma IFRS/NCH): documentos del período; use modo=markdown para leer el PDF auditado convertido a Markdown (el HTML de la CMF no trae las cifras).
 4. \`cmf_empresa_hechos\` (rut, desde, hasta): hechos esenciales.
 5. \`cmf_empresa_sanciones\` y \`cmf_empresa_resoluciones\`: cumplimiento normativo.
 6. \`cmf_empresa_asg\` (rut, anio): indicadores ESG si existen.
@@ -181,7 +180,7 @@ description: Procedimiento para consultar datos públicos de la CMF de Chile (em
 
 ## Reglas
 
-- Fechas en formato YYYY-MM-DD; RUT numérico sin DV.
+- Fechas en formato YYYY-MM-DD; RUT numérico (con o sin DV).
 - \`cmf_hechos_globales\` y \`cmf_fondos_mutuos_cartola\` requieren captcha: si no se entrega, la tool lo solicita.
 - Si una tool devuelve "sin datos", verifique período/norma antes de concluir que la información no existe (el inicio IFRS varía por empresa).
 - No invente enlaces a documentos: los tokens firmados solo se resuelven en el servidor.
@@ -220,11 +219,53 @@ description: Procedimiento para consultar datos públicos de la CMF de Chile (em
         contents: [
           {
             uri: uri.href,
-            text: reg.assetUrl,
-            mimeType: "image/png",
+            blob: reg.imagenBase64,
+            mimeType: reg.contentType,
           },
         ],
       };
     },
+  );
+
+  // Códigos SBIF de instituciones financieras (verificados contra la API oficial v3 de la CMF)
+  server.registerResource(
+    "bancos-codigos",
+    "cmf://bancos/codigos",
+    {
+      title: "Códigos SBIF de instituciones financieras",
+      description: "Mapa código SBIF → nombre de institución financiera (verificado contra la API oficial v3 de la CMF). Use estos códigos en institucion para las tools cmf_api_*.",
+      mimeType: "application/json",
+    },
+    async (uri: URL) => ({
+      contents: [
+        {
+          uri: uri.href,
+          text: JSON.stringify(
+            {
+              nota: "Códigos verificados contra la API oficial v3 de la CMF (ficha institucional). 999 = sistema financiero total.",
+              instituciones: [
+                { codigo: "001", nombre: "Banco de Chile" },
+                { codigo: "009", nombre: "Banco Internacional" },
+                { codigo: "012", nombre: "Banco del Estado de Chile" },
+                { codigo: "014", nombre: "Scotiabank Chile" },
+                { codigo: "016", nombre: "Banco de Crédito e Inversiones" },
+                { codigo: "017", nombre: "Banco do Brasil S.A." },
+                { codigo: "027", nombre: "Corpbanca" },
+                { codigo: "028", nombre: "Banco Bice" },
+                { codigo: "037", nombre: "Banco Santander-Chile" },
+                { codigo: "049", nombre: "Banco Security" },
+                { codigo: "051", nombre: "Banco Falabella" },
+                { codigo: "053", nombre: "Banco Ripley" },
+                { codigo: "055", nombre: "Banco Consorcio" },
+                { codigo: "999", nombre: "Sistema financiero total" },
+              ],
+            },
+            null,
+            2,
+          ),
+          mimeType: "application/json",
+        },
+      ],
+    }),
   );
 }
