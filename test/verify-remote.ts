@@ -4,7 +4,7 @@
  * Uso: npx tsx test/verify-remote.ts   → exit 1 si algún check falla.
  */
 
-const URL_ = process.env.CMF_MCP_URL ?? "https://cmf-mcp.kumocloud.cl/mcp";
+const URL_ = process.env.CMF_MCP_URL || "https://cmf-mcp.kumocloud.cl/mcp";
 const fallos: string[] = [];
 let checks = 0;
 function check(cond: boolean, msg: string): void {

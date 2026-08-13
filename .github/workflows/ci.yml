@@ -22,11 +22,11 @@ jobs:
       - name: Protocolo Streamable HTTP contra la instancia hosteada
         run: npx tsx test/verify-proto.ts
         env:
-          CMF_MCP_URL: ${{ vars.CMF_MCP_URL }}
+          CMF_MCP_URL: ${{ vars.CMF_MCP_URL || 'https://cmf-mcp.kumocloud.cl/mcp' }}
       - name: Cliente MCP real contra la instancia hosteada
         run: npx tsx test/verify-remote.ts
         env:
-          CMF_MCP_URL: ${{ vars.CMF_MCP_URL }}
+          CMF_MCP_URL: ${{ vars.CMF_MCP_URL || 'https://cmf-mcp.kumocloud.cl/mcp' }}
 
   verify-cmf:
     runs-on: ubuntu-latest

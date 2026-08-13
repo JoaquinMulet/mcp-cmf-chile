@@ -195,7 +195,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Estadísticas de Rentas Vitalicias",
       description:
-        "Devuelve estadísticas del mercado de rentas vitalicias previsionales por compañía (grid oficial de la CMF): comisiones de intermediación (com_int_rvp), primas únicas (pri_uni_rvp) y tasas de interés promedio (tas_int_med_rvp). Fije el rango desde/hasta en YYYY-MM-DD (default: año actual completo) y pagine con offset/limit. Use cmf_seguros_scomp para estadísticas agregadas del sistema SCOMP.",
+        "Devuelve estadísticas del mercado de rentas vitalicias previsionales por compañía (grid oficial de la CMF): comisiones de intermediación (com_int_rvp), primas únicas (pri_uni_rvp) y tasas de interés promedio (tas_int_med_rvp). Fije el rango desde/hasta en YYYY-MM-DD (default: año actual completo) y pagine con offset/limit. Use esta tool para estadísticas RVP por compañía; para estadísticas agregadas del sistema SCOMP use cmf_seguros_scomp.",
       inputSchema: z.object({
         codigo: z
           .enum(["com_int_rvp", "pri_uni_rvp", "tas_int_med_rvp"])
@@ -412,7 +412,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Cumplimiento de normativa de seguros",
       description:
-        "Devuelve el estado de cumplimiento de la normativa por compañías de seguros de la CMF (sistema sv_cumplimientos, XLSX oficial). Fije anio en AAAA, mes1/mes2 opcionales en MM (default 12/12) y tipoentidad (CSVID=seguros de vida, CSGEN=seguros generales, R=reaseguradoras). Use esta tool para supervisar cumplimiento; para siniestros no reportados use cmf_seguros_siniestros.",
+        "Devuelve el estado de cumplimiento de la normativa por compañías de seguros de la CMF (sistema sv_cumplimientos, XLSX oficial), con hasta 200 filas. Fije anio en AAAA, mes opcional en MM (default 12) y tipoentidad (CSVID=seguros de vida, default; CSGEN=seguros generales; R=reaseguradoras). Use esta tool para supervisar cumplimiento; para siniestros no reportados use cmf_seguros_siniestros.",
       inputSchema: z.object({
         anio: anioSchema,
         mes: mesSchema.optional().describe("Mes final en MM (default 12)"),
@@ -577,7 +577,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Estadísticas Conoce tu seguro (SIC)",
       description:
-        "Devuelve las estadísticas del sistema 'Conoce tu seguro' (SIC) de la CMF: consultas de usuarios sobre pólizas de seguros en un rango de fechas. Requiere desde y hasta en YYYY-MM-DD (acepta DD/MM/AAAA). Use esta tool para la demanda de información del mercado de seguros; para el registro de pólizas depositadas use cmf_seguros_deposito_polizas.",
+        "Devuelve las estadísticas del sistema 'Conoce tu seguro' (SIC) de la CMF: consultas de usuarios sobre pólizas de seguros en un rango de fechas, con hasta 200 filas. Requiere desde y hasta en YYYY-MM-DD (acepta DD/MM/AAAA). Use esta tool para la demanda de información del mercado de seguros; para el registro de pólizas depositadas use cmf_seguros_deposito_polizas.",
       inputSchema: z.object({ desde: fechaSchema, hasta: fechaSchema }),
     },
     async ({ desde, hasta }) => {
@@ -763,7 +763,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: documentoMarkdownSchema,
       title: "Convertir documento PDF de la CMF a Markdown",
       description:
-        "Descarga un documento firmado de la CMF (EEFF, hechos, sanciones, resoluciones, normas) y lo convierte a Markdown legible para el agente (tablas, encabezados, listas) usando pdf-inspector, sin OCR. Acepta el token s567 (de hechos/sanciones/resoluciones) o una URL de documento de la CMF. Si el PDF es escaneado, lo indica (no hay OCR).",
+        "Descarga un documento firmado de la CMF (EEFF, hechos, sanciones, resoluciones, normas) y lo convierte a Markdown legible para el agente (tablas, encabezados, listas) usando pdf-inspector; los PDFs escaneados se indican porque no hay OCR. Acepte el documento con token (s567 de hechos/sanciones/resoluciones) o url (URL absoluta de la CMF) y recorte la salida con max_chars (default 30000). Use esta tool para leer el contenido de un PDF; para el binario original use cmf_documento_descargar y para inspeccionar solo un token cmf_documento_info.",
       inputSchema: z.object({
         token: z.string().min(10).optional().describe("Token s567 del documento (de hechos/sanciones/resoluciones)"),
         url: z.string().url().optional().describe("URL absoluta de un documento de la CMF (ej: ver_archivo.php del compendio)"),
@@ -971,7 +971,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Cronología bancaria",
       description:
-        "Devuelve la cronología histórica del sistema bancario chileno publicada por la CMF (servlet CronologiaBancaria de la ex SBIF). Use indice para seleccionar el capítulo (default 8.0); si el contenido no es tabular, lo indica. Use esta tool para hitos de la banca chilena; para tasas de interés use cmf_bancos_tasas.",
+        "Devuelve la cronología histórica del sistema bancario chileno publicada por la CMF (servlet CronologiaBancaria de la ex SBIF), con hasta 200 filas. Elija el capítulo con indice (default 8.0); si el contenido no es tabular, la tool lo indica. Use esta tool para hitos de la banca chilena; para tasas de interés use cmf_bancos_tasas.",
       inputSchema: z.object({ indice: z.string().default("8.0").describe("Índice del capítulo de la cronología (default 8.0)") }),
     },
     async ({ indice }) => {
@@ -999,9 +999,9 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Reportes de instituciones financieras (BaseDato)",
       description:
-        "Devuelve reportes del sistema BaseDato de instituciones financieras de la CMF (ex SBIF, host datosbanco.cmfchile.cl): MR1=información contable mensual, MB1=?, ADC=adecuación de capital, ADC2=adecuación (v2), HEC=hechos económicos. Fije codUnicoBank (código SBIF, ej: 001; vea cmf://bancos/codigos), reporte, indice (default 30.1) y período (periodo_inicial AAAA-MM; solo se usa mes y año). Use esta tool para reportes históricos de la banca; para tasas de interés use cmf_bancos_tasas.",
+        "Devuelve reportes del sistema BaseDato de instituciones financieras de la CMF (ex SBIF, host datosbanco.cmfchile.cl): MR1=información contable mensual (default), ADC=adecuación de capital, ADC2=adecuación de capital (v2), HEC=hechos económicos y MB1. Fije codUnicoBank (código SBIF, ej: 001; vea cmf://bancos/codigos), reporte, indice (default 30.1) y período (periodo_inicial AAAA-MM, default período actual; solo se usan mes y año). La salida trae hasta 200 filas; si la CMF devuelve el challenge anti-bot en vez de tablas, la tool lo indica. Use esta tool para reportes históricos de la banca; para tasas de interés use cmf_bancos_tasas.",
       inputSchema: z.object({
-        reporte: z.enum(["MR1", "MB1", "ADC", "ADC2", "HEC"]).default("MR1").describe("Código del reporte (default MR1=información contable mensual)"),
+        reporte: z.enum(["MR1", "MB1", "ADC", "ADC2", "HEC"]).default("MR1").describe("Código del reporte: MR1=información contable mensual (default), ADC=adecuación de capital, ADC2=adecuación (v2), HEC=hechos económicos, MB1"),
         indice: z.string().default("30.1").describe("Índice del reporte (default 30.1)"),
         codUnicoBank: codigoSchema.optional().describe("Código SBIF de la institución (ej: 001=Banco de Chile; default 001)"),
         periodo_inicial: z.string().regex(/^\d{4}-\d{2}$/).optional().describe("Período en AAAA-MM (ej: 2026-06; default período actual)"),

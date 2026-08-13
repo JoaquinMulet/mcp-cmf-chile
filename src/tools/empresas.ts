@@ -42,7 +42,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       annotations: { readOnlyHint: true, destructiveHint: false },
       title: "Buscar empresa por ticker (NEMO)",
       description:
-        "Busca una empresa chilena por su ticker de bolsa (NEMO: COPEC, SQM-B, LTM, BCI…) usando el catálogo de empresas en bolsa del proyecto empresas-cmf-chile (github.com/JoaquinMulet/empresas-cmf-chile). Devuelve el RUT (que puede incluir el dígito verificador), razón social, ISIN, tipo de entidad, norma e inicio IFRS. Ideal para traducir tickers a RUT antes de consultar EEFF, hechos, etc.; las demás tools aceptan el RUT con o sin DV.",
+        "Busca una empresa chilena por su ticker de bolsa usando el catálogo de empresas en bolsa del proyecto empresas-cmf-chile (github.com/JoaquinMulet/empresas-cmf-chile). Identifique la empresa con consulta (NEMO como COPEC, SQM-B o LTM, o nombre parcial) y acote los resultados con limite (1-10, default 5). Devuelve el RUT (que puede incluir el dígito verificador), razón social, ISIN, tipo de entidad, norma e inicio IFRS. Use esta tool para traducir tickers a RUT antes de consultar EEFF o hechos; las demás tools aceptan el RUT con o sin DV.",
       inputSchema: z.object({
         consulta: z.string().min(2).describe("Ticker (NEMO) o nombre de la empresa"),
         term: z.string().optional().describe("Alias legacy de consulta (use consulta)"),
@@ -837,7 +837,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: paginadoSchema("clasificaciones"),
       title: "Clasificaciones de riesgo",
       description:
-        "Devuelve las clasificaciones de riesgo asignadas a emisores e instrumentos por las clasificadoras (XLSX oficial de la CMF). El sistema usa un flujo en 2 pasos: la tool genera el archivo (POST a excel_busqueda_clasificaciones) y descarga el XLSX resultante, que luego se parsea a filas. Filtre opcionalmente por emisor, clasificadora o tipo_instrumento (los filtros se aplican sobre las filas descargadas). Use esta tool para evaluar calidad crediticia de instrumentos; para el historial financiero del emisor use cmf_empresa_eeff.",
+        "Devuelve las clasificaciones de riesgo asignadas a emisores e instrumentos por las clasificadoras (XLSX oficial de la CMF), paginado con offset/limit (máx 500). El sistema usa un flujo en 2 pasos: la tool genera el archivo (POST a excel_busqueda_clasificaciones) y descarga el XLSX resultante, que luego se parsea a filas. Filtre opcionalmente por emisor, clasificadora o tipo_instrumento (los filtros se aplican sobre las filas descargadas). Use esta tool para evaluar calidad crediticia de instrumentos; para el historial financiero del emisor use cmf_empresa_eeff.",
       inputSchema: z.object({
         emisor: z.string().optional().describe("Filtro por nombre o RUT del emisor (texto libre, opcional)"),
         clasificadora: z.string().optional().describe("Filtro por clasificadora (texto libre, opcional)"),
@@ -961,7 +961,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Indicadores financieros IFRS de SA",
       description:
-        "Devuelve los indicadores financieros IFRS calculados de sociedades anónimas (liquidez, endeudamiento, rentabilidad) para un corte. Fije fecha_max en formato AAAAMM (ej: 202512). Use esta tool para comparar ratios entre SA; para EEFF detallados use cmf_eeff_ifrs_sa.",
+        "Devuelve los indicadores financieros IFRS calculados de sociedades anónimas (liquidez, endeudamiento, rentabilidad) para un corte, con hasta 300 filas. Fije fecha_max en formato AAAAMM (ej: 202512). Use esta tool para comparar ratios entre SA; para los EEFF detallados use cmf_eeff_ifrs_sa y para ratios bajo norma local use cmf_indicadores_financieros_nch.",
       inputSchema: z.object({
         fecha_max: z.string().regex(/^\d{6}$/, "AAAAMM").describe("Corte en formato AAAAMM (ej: 202512)"),
       }),
@@ -1233,8 +1233,8 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Tomas de control de emisores",
       description:
-        "Devuelve la información de tomas de control de emisores de valores publicada por la CMF (operación, fechas y sociedades involucradas). Elija el orden del listado con orden (1-5, default 1). Use esta tool para cambios de control accionario; para la composición accionaria actual use cmf_empresa_accionistas.",
-      inputSchema: z.object({ orden: z.number().int().min(1).max(5).optional().describe("Orden del listado (1-5, default 1)") }),
+        "Devuelve la información de tomas de control de emisores de valores publicada por la CMF (operación, fechas y sociedades involucradas), con hasta 300 filas. Elija el criterio de ordenamiento del listado con orden (1-5, default 1). Use esta tool para cambios de control accionario; para la composición accionaria actual use cmf_empresa_accionistas.",
+      inputSchema: z.object({ orden: z.number().int().min(1).max(5).optional().describe("Criterio de ordenamiento del listado (1-5, default 1)") }),
     },
     async ({ orden }) => {
       try {
@@ -1498,7 +1498,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Préstamos otorgados",
       description:
-        "Devuelve el reporte mensual de préstamos otorgados en el mercado de valores publicado por la CMF (XLS oficial), con detalle por entidad. Fije anio (2016-2026) y mes (01-12); si el mes no tiene reporte, la CMF devuelve solo el título y la tool lo indica. Use esta tool para estadísticas de préstamos del mercado.",
+        "Devuelve el reporte mensual de préstamos otorgados en el mercado de valores publicado por la CMF (XLS oficial), con detalle por entidad y hasta 300 filas. Fije anio (2016-2026) y mes (01-12), ambos opcionales (default año y mes actuales); si el mes no tiene reporte, la CMF devuelve solo el título y la tool lo indica. Use esta tool para estadísticas de préstamos del mercado; para reportes de la banca use cmf_bancos_reportes.",
       inputSchema: z.object({
         anio: anioSchema.optional().describe("Año del reporte en AAAA (2016-2026; default año actual)"),
         mes: mesSchema.optional().describe("Mes del reporte en MM (default mes actual)"),
@@ -1536,7 +1536,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Actos y resoluciones publicados (dictámenes)",
       description:
-        "Lista los actos administrativos y resoluciones publicados por la CMF (tabla de publicidad de actos según Ley 19.880, art. 45 y siguientes): tipo de acto, denominación, número, fecha de publicación, medio de comunicación, efectos generales o particulares y vínculo al documento. Consulte años completos con desde/hasta (YYYY-MM-DD; se consulta el año de cada fecha). Use esta tool para resoluciones generales publicadas; para sanciones a un emisor específico use cmf_empresa_sanciones y para resoluciones del mercado cmf_resoluciones_globales.",
+        "Lista los actos administrativos y resoluciones publicados por la CMF (tabla de publicidad de actos según Ley 19.880, art. 45 y siguientes): tipo de acto, denominación, número, fecha de publicación, medio de comunicación, efectos generales o particulares y vínculo al documento. Fije el rango con desde/hasta opcionales en YYYY-MM-DD (default 2000-01-01 al año actual; solo se usa el año de cada fecha); la tool consulta los últimos 5 años del rango y entrega hasta 300 filas. Use esta tool para resoluciones generales publicadas; para sanciones a un emisor específico use cmf_empresa_sanciones y para resoluciones del mercado cmf_resoluciones_globales.",
       inputSchema: z.object({ desde: fechaSchema.optional(), hasta: fechaSchema.optional() }),
     },
     async ({ desde, hasta }) => {

@@ -179,8 +179,8 @@ export function registrarToolsApi(server: McpServer, env: CmfEnv): void {
         anio: anioSchema,
         mes: mesSchema,
         institucion: codigoSchema.describe("Código SBIF de la institución (ej: 001=Banco de Chile, 037=Banco Santander-Chile, 012=Banco Estado; 999=sistema total; vea el resource cmf://bancos/codigos; acepta 999 o '999')"),
-        componente: z.enum(["activos", "limites", "patrimonioefectivo", "indicadores"]).describe("Componente a consultar"),
-        indicador: z.enum(["ire", "irs"]).optional().describe("Indicador (solo si componente=indicadores)"),
+        componente: z.enum(["activos", "limites", "patrimonioefectivo", "indicadores"]).describe("Componente a consultar: activos, limites, patrimonioefectivo o indicadores"),
+        indicador: z.enum(["ire", "irs"]).optional().describe("Indicador a consultar: ire o irs (solo si componente=indicadores)"),
       }),
     },
     async ({ anio, mes, institucion, componente, indicador }) => {

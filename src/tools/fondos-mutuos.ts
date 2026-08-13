@@ -96,7 +96,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
       outputSchema: fondosSchema("filas"),
       title: "Cartera de inversiones de Fondos Mutuos",
       description:
-        "Descarga la cartera de inversiones de fondos mutuos de la CMF para un mes: posiciones por instrumento de cada fondo (columnas con códigos de la Circular 1333). Requiere cartera (NACI=nacional, EXTR=extranjera, OPCI=opciones, FUTU=futuros, OPLA=opciones largo plazo), anio en AAAA y mes en MM. Use esta tool para ver las posiciones que componen cada fondo; para agregados por emisor/país use cmf_fondos_mutuos_inversiones.",
+        "Descarga la cartera de inversiones de fondos mutuos de la CMF para un mes: posiciones por instrumento de cada fondo (columnas con códigos de la Circular 1333). Requiere cartera (NACI=nacional, EXTR=extranjera, OPCI=opciones, FUTU=futuros, OPLA=opciones largo plazo), anio en AAAA y mes en MM; la salida trae total y las primeras 50 filas de ejemplo. Use esta tool para ver las posiciones que componen cada fondo; para agregados por emisor/país use cmf_fondos_mutuos_inversiones.",
       inputSchema: z.object({
         anio: anioSchema,
         mes: mesSchema,
@@ -164,7 +164,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
       outputSchema: fondosSchema("filas"),
       title: "Inversiones de Fondos Mutuos",
       description:
-        "Descarga las inversiones de fondos mutuos de la CMF por período, en instrumentos nacionales o extranjeros, agregadas según el nivel pedido. Requiere anio en AAAA, tipo (nacio=nacionales, inter=extranjeros; default nacio) y consulta (fondos, emisores o pais_transaccion); mes en MM opcional (default 12). Use esta tool para agregados de inversión; para el detalle de la cartera por fondo use cmf_fondos_mutuos_cartera.",
+        "Descarga las inversiones de fondos mutuos de la CMF por período, en instrumentos nacionales o extranjeros, agregadas según el nivel pedido. Requiere anio en AAAA, tipo (nacio=nacionales, inter=extranjeros; default nacio) y consulta (fondos, default; emisores o pais_transaccion); mes en MM opcional (default 12). La salida trae total y las primeras 50 filas de ejemplo. Use esta tool para agregados de inversión; para el detalle de la cartera por fondo use cmf_fondos_mutuos_cartera.",
       inputSchema: z.object({
         anio: anioSchema,
         mes: mesSchema.optional(),

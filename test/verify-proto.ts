@@ -8,7 +8,7 @@
  * validación de headers (-32020), Origin (403), _meta obligatorio (400),
  * subscriptions/listen con ack y subscriptionId, resources/read de recurso inexistente (-32602).
  */
-const URL_ = process.env.CMF_MCP_URL ?? "https://cmf-mcp.kumocloud.cl/mcp";
+const URL_ = process.env.CMF_MCP_URL || "https://cmf-mcp.kumocloud.cl/mcp";
 
 const fallos: string[] = [];
 let checks = 0;

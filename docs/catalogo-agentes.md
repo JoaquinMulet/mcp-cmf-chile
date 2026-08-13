@@ -71,8 +71,8 @@ Límites y notas:
   - anio (REQUERIDO): Año en formato AAAA (acepta 2026 o '2026'). Ej: 2025
   - mes (REQUERIDO): Mes en formato MM (01-12; acepta 3 o '03'). Ej: 03
   - institucion (REQUERIDO): Código SBIF de la institución (ej: 001=Banco de Chile, 037=Banco Santander-Chile, 012=Banco Estado; 999=sistema total; vea el resource cmf://bancos/codigos; acepta 999 o '999')
-  - componente (REQUERIDO) enum=[activos|limites|patrimonioefectivo|indicadores]: Componente a consultar
-  - indicador enum=[ire|irs]: Indicador (solo si componente=indicadores)
+  - componente (REQUERIDO) enum=[activos|limites|patrimonioefectivo|indicadores]: Componente a consultar: activos, limites, patrimonioefectivo o indicadores
+  - indicador enum=[ire|irs]: Indicador a consultar: ire o irs (solo si componente=indicadores)
 - annotations: {"readOnlyHint":true,"destructiveHint":false}
 - outputSchema: {anio, mes, institucion, cuenta, componente, indicador, data}
 
@@ -108,7 +108,7 @@ Límites y notas:
 
 ### cmf_empresa_por_ticker
 - title: Buscar empresa por ticker (NEMO)
-- description: Busca una empresa chilena por su ticker de bolsa (NEMO: COPEC, SQM-B, LTM, BCI…) usando el catálogo de empresas en bolsa del proyecto empresas-cmf-chile (github.com/JoaquinMulet/empresas-cmf-chile). Devuelve el RUT (que puede incluir el dígito verificador), razón social, ISIN, tipo de entidad, norma e inicio IFRS. Ideal para traducir tickers a RUT antes de consultar EEFF, hechos, etc.; las demás tools aceptan el RUT con o sin DV.
+- description: Busca una empresa chilena por su ticker de bolsa usando el catálogo de empresas en bolsa del proyecto empresas-cmf-chile (github.com/JoaquinMulet/empresas-cmf-chile). Identifique la empresa con consulta (NEMO como COPEC, SQM-B o LTM, o nombre parcial) y acote los resultados con limite (1-10, default 5). Devuelve el RUT (que puede incluir el dígito verificador), razón social, ISIN, tipo de entidad, norma e inicio IFRS. Use esta tool para traducir tickers a RUT antes de consultar EEFF o hechos; las demás tools aceptan el RUT con o sin DV.
 - parámetros:
   - consulta (REQUERIDO): Ticker (NEMO) o nombre de la empresa
   - term: Alias legacy de consulta (use consulta)
@@ -315,7 +315,7 @@ Límites y notas:
 
 ### cmf_clasificaciones_riesgo
 - title: Clasificaciones de riesgo
-- description: Devuelve las clasificaciones de riesgo asignadas a emisores e instrumentos por las clasificadoras (XLSX oficial de la CMF). El sistema usa un flujo en 2 pasos: la tool genera el archivo (POST a excel_busqueda_clasificaciones) y descarga el XLSX resultante, que luego se parsea a filas. Filtre opcionalmente por emisor, clasificadora o tipo_instrumento (los filtros se aplican sobre las filas descargadas). Use esta tool para evaluar calidad crediticia de instrumentos; para el historial financiero del emisor use cmf_empresa_eeff.
+- description: Devuelve las clasificaciones de riesgo asignadas a emisores e instrumentos por las clasificadoras (XLSX oficial de la CMF), paginado con offset/limit (máx 500). El sistema usa un flujo en 2 pasos: la tool genera el archivo (POST a excel_busqueda_clasificaciones) y descarga el XLSX resultante, que luego se parsea a filas. Filtre opcionalmente por emisor, clasificadora o tipo_instrumento (los filtros se aplican sobre las filas descargadas). Use esta tool para evaluar calidad crediticia de instrumentos; para el historial financiero del emisor use cmf_empresa_eeff.
 - parámetros:
   - emisor: Filtro por nombre o RUT del emisor (texto libre, opcional)
   - clasificadora: Filtro por clasificadora (texto libre, opcional)
@@ -339,7 +339,7 @@ Límites y notas:
 
 ### cmf_indicadores_financieros_sa
 - title: Indicadores financieros IFRS de SA
-- description: Devuelve los indicadores financieros IFRS calculados de sociedades anónimas (liquidez, endeudamiento, rentabilidad) para un corte. Fije fecha_max en formato AAAAMM (ej: 202512). Use esta tool para comparar ratios entre SA; para EEFF detallados use cmf_eeff_ifrs_sa.
+- description: Devuelve los indicadores financieros IFRS calculados de sociedades anónimas (liquidez, endeudamiento, rentabilidad) para un corte, con hasta 300 filas. Fije fecha_max en formato AAAAMM (ej: 202512). Use esta tool para comparar ratios entre SA; para los EEFF detallados use cmf_eeff_ifrs_sa y para ratios bajo norma local use cmf_indicadores_financieros_nch.
 - parámetros:
   - fecha_max (REQUERIDO): Corte en formato AAAAMM (ej: 202512)
 - annotations: {"readOnlyHint":true,"destructiveHint":false}
@@ -409,9 +409,9 @@ Límites y notas:
 
 ### cmf_tomas_control
 - title: Tomas de control de emisores
-- description: Devuelve la información de tomas de control de emisores de valores publicada por la CMF (operación, fechas y sociedades involucradas). Elija el orden del listado con orden (1-5, default 1). Use esta tool para cambios de control accionario; para la composición accionaria actual use cmf_empresa_accionistas.
+- description: Devuelve la información de tomas de control de emisores de valores publicada por la CMF (operación, fechas y sociedades involucradas), con hasta 300 filas. Elija el criterio de ordenamiento del listado con orden (1-5, default 1). Use esta tool para cambios de control accionario; para la composición accionaria actual use cmf_empresa_accionistas.
 - parámetros:
-  - orden: Orden del listado (1-5, default 1)
+  - orden: Criterio de ordenamiento del listado (1-5, default 1)
 - annotations: {"readOnlyHint":true,"destructiveHint":false}
 - outputSchema: {filas}
 
@@ -477,7 +477,7 @@ Límites y notas:
 
 ### cmf_prestamos_otorgados
 - title: Préstamos otorgados
-- description: Devuelve el reporte mensual de préstamos otorgados en el mercado de valores publicado por la CMF (XLS oficial), con detalle por entidad. Fije anio (2016-2026) y mes (01-12); si el mes no tiene reporte, la CMF devuelve solo el título y la tool lo indica. Use esta tool para estadísticas de préstamos del mercado.
+- description: Devuelve el reporte mensual de préstamos otorgados en el mercado de valores publicado por la CMF (XLS oficial), con detalle por entidad y hasta 300 filas. Fije anio (2016-2026) y mes (01-12), ambos opcionales (default año y mes actuales); si el mes no tiene reporte, la CMF devuelve solo el título y la tool lo indica. Use esta tool para estadísticas de préstamos del mercado; para reportes de la banca use cmf_bancos_reportes.
 - parámetros:
   - anio: Año del reporte en AAAA (2016-2026; default año actual)
   - mes: Mes del reporte en MM (default mes actual)
@@ -486,7 +486,7 @@ Límites y notas:
 
 ### cmf_dictamenes
 - title: Actos y resoluciones publicados (dictámenes)
-- description: Lista los actos administrativos y resoluciones publicados por la CMF (tabla de publicidad de actos según Ley 19.880, art. 45 y siguientes): tipo de acto, denominación, número, fecha de publicación, medio de comunicación, efectos generales o particulares y vínculo al documento. Consulte años completos con desde/hasta (YYYY-MM-DD; se consulta el año de cada fecha). Use esta tool para resoluciones generales publicadas; para sanciones a un emisor específico use cmf_empresa_sanciones y para resoluciones del mercado cmf_resoluciones_globales.
+- description: Lista los actos administrativos y resoluciones publicados por la CMF (tabla de publicidad de actos según Ley 19.880, art. 45 y siguientes): tipo de acto, denominación, número, fecha de publicación, medio de comunicación, efectos generales o particulares y vínculo al documento. Fije el rango con desde/hasta opcionales en YYYY-MM-DD (default 2000-01-01 al año actual; solo se usa el año de cada fecha); la tool consulta los últimos 5 años del rango y entrega hasta 300 filas. Use esta tool para resoluciones generales publicadas; para sanciones a un emisor específico use cmf_empresa_sanciones y para resoluciones del mercado cmf_resoluciones_globales.
 - parámetros:
   - desde: Fecha en formato YYYY-MM-DD (acepta también DD/MM/AAAA). Ej: 2026-01-31
   - hasta: Fecha en formato YYYY-MM-DD (acepta también DD/MM/AAAA). Ej: 2026-01-31
@@ -533,7 +533,7 @@ Límites y notas:
 
 ### cmf_fondos_mutuos_cartera
 - title: Cartera de inversiones de Fondos Mutuos
-- description: Descarga la cartera de inversiones de fondos mutuos de la CMF para un mes: posiciones por instrumento de cada fondo (columnas con códigos de la Circular 1333). Requiere cartera (NACI=nacional, EXTR=extranjera, OPCI=opciones, FUTU=futuros, OPLA=opciones largo plazo), anio en AAAA y mes en MM. Use esta tool para ver las posiciones que componen cada fondo; para agregados por emisor/país use cmf_fondos_mutuos_inversiones.
+- description: Descarga la cartera de inversiones de fondos mutuos de la CMF para un mes: posiciones por instrumento de cada fondo (columnas con códigos de la Circular 1333). Requiere cartera (NACI=nacional, EXTR=extranjera, OPCI=opciones, FUTU=futuros, OPLA=opciones largo plazo), anio en AAAA y mes en MM; la salida trae total y las primeras 50 filas de ejemplo. Use esta tool para ver las posiciones que componen cada fondo; para agregados por emisor/país use cmf_fondos_mutuos_inversiones.
 - parámetros:
   - anio (REQUERIDO): Año en formato AAAA (acepta 2026 o '2026'). Ej: 2025
   - mes (REQUERIDO): Mes en formato MM (01-12; acepta 3 o '03'). Ej: 03
@@ -555,7 +555,7 @@ Límites y notas:
 
 ### cmf_fondos_mutuos_inversiones
 - title: Inversiones de Fondos Mutuos
-- description: Descarga las inversiones de fondos mutuos de la CMF por período, en instrumentos nacionales o extranjeros, agregadas según el nivel pedido. Requiere anio en AAAA, tipo (nacio=nacionales, inter=extranjeros; default nacio) y consulta (fondos, emisores o pais_transaccion); mes en MM opcional (default 12). Use esta tool para agregados de inversión; para el detalle de la cartera por fondo use cmf_fondos_mutuos_cartera.
+- description: Descarga las inversiones de fondos mutuos de la CMF por período, en instrumentos nacionales o extranjeros, agregadas según el nivel pedido. Requiere anio en AAAA, tipo (nacio=nacionales, inter=extranjeros; default nacio) y consulta (fondos, default; emisores o pais_transaccion); mes en MM opcional (default 12). La salida trae total y las primeras 50 filas de ejemplo. Use esta tool para agregados de inversión; para el detalle de la cartera por fondo use cmf_fondos_mutuos_cartera.
 - parámetros:
   - anio (REQUERIDO): Año en formato AAAA (acepta 2026 o '2026'). Ej: 2025
   - mes: Mes en formato MM (01-12; acepta 3 o '03'). Ej: 03
@@ -682,7 +682,7 @@ Límites y notas:
 
 ### cmf_seguros_rentas_vitalicias
 - title: Estadísticas de Rentas Vitalicias
-- description: Devuelve estadísticas del mercado de rentas vitalicias previsionales por compañía (grid oficial de la CMF): comisiones de intermediación (com_int_rvp), primas únicas (pri_uni_rvp) y tasas de interés promedio (tas_int_med_rvp). Fije el rango desde/hasta en YYYY-MM-DD (default: año actual completo) y pagine con offset/limit. Use cmf_seguros_scomp para estadísticas agregadas del sistema SCOMP.
+- description: Devuelve estadísticas del mercado de rentas vitalicias previsionales por compañía (grid oficial de la CMF): comisiones de intermediación (com_int_rvp), primas únicas (pri_uni_rvp) y tasas de interés promedio (tas_int_med_rvp). Fije el rango desde/hasta en YYYY-MM-DD (default: año actual completo) y pagine con offset/limit. Use esta tool para estadísticas RVP por compañía; para estadísticas agregadas del sistema SCOMP use cmf_seguros_scomp.
 - parámetros:
   - codigo (REQUERIDO) enum=[com_int_rvp|pri_uni_rvp|tas_int_med_rvp]: Estadística: com_int_rvp=comisiones de intermediación, pri_uni_rvp=primas únicas, tas_int_med_rvp=tasas de interés promedio
   - desde: Inicio del rango en YYYY-MM-DD (default 01-01 del año actual)
@@ -738,7 +738,7 @@ Límites y notas:
 
 ### cmf_seguros_cumplimiento
 - title: Cumplimiento de normativa de seguros
-- description: Devuelve el estado de cumplimiento de la normativa por compañías de seguros de la CMF (sistema sv_cumplimientos, XLSX oficial). Fije anio en AAAA, mes1/mes2 opcionales en MM (default 12/12) y tipoentidad (CSVID=seguros de vida, CSGEN=seguros generales, R=reaseguradoras). Use esta tool para supervisar cumplimiento; para siniestros no reportados use cmf_seguros_siniestros.
+- description: Devuelve el estado de cumplimiento de la normativa por compañías de seguros de la CMF (sistema sv_cumplimientos, XLSX oficial), con hasta 200 filas. Fije anio en AAAA, mes opcional en MM (default 12) y tipoentidad (CSVID=seguros de vida, default; CSGEN=seguros generales; R=reaseguradoras). Use esta tool para supervisar cumplimiento; para siniestros no reportados use cmf_seguros_siniestros.
 - parámetros:
   - anio (REQUERIDO): Año en formato AAAA (acepta 2026 o '2026'). Ej: 2025
   - mes: Mes final en MM (default 12)
@@ -770,7 +770,7 @@ Límites y notas:
 
 ### cmf_seguros_sic
 - title: Estadísticas Conoce tu seguro (SIC)
-- description: Devuelve las estadísticas del sistema 'Conoce tu seguro' (SIC) de la CMF: consultas de usuarios sobre pólizas de seguros en un rango de fechas. Requiere desde y hasta en YYYY-MM-DD (acepta DD/MM/AAAA). Use esta tool para la demanda de información del mercado de seguros; para el registro de pólizas depositadas use cmf_seguros_deposito_polizas.
+- description: Devuelve las estadísticas del sistema 'Conoce tu seguro' (SIC) de la CMF: consultas de usuarios sobre pólizas de seguros en un rango de fechas, con hasta 200 filas. Requiere desde y hasta en YYYY-MM-DD (acepta DD/MM/AAAA). Use esta tool para la demanda de información del mercado de seguros; para el registro de pólizas depositadas use cmf_seguros_deposito_polizas.
 - parámetros:
   - desde (REQUERIDO): Fecha en formato YYYY-MM-DD (acepta también DD/MM/AAAA). Ej: 2026-01-31
   - hasta (REQUERIDO): Fecha en formato YYYY-MM-DD (acepta también DD/MM/AAAA). Ej: 2026-01-31
@@ -823,7 +823,7 @@ Límites y notas:
 
 ### cmf_documento_markdown
 - title: Convertir documento PDF de la CMF a Markdown
-- description: Descarga un documento firmado de la CMF (EEFF, hechos, sanciones, resoluciones, normas) y lo convierte a Markdown legible para el agente (tablas, encabezados, listas) usando pdf-inspector, sin OCR. Acepta el token s567 (de hechos/sanciones/resoluciones) o una URL de documento de la CMF. Si el PDF es escaneado, lo indica (no hay OCR).
+- description: Descarga un documento firmado de la CMF (EEFF, hechos, sanciones, resoluciones, normas) y lo convierte a Markdown legible para el agente (tablas, encabezados, listas) usando pdf-inspector; los PDFs escaneados se indican porque no hay OCR. Acepte el documento con token (s567 de hechos/sanciones/resoluciones) o url (URL absoluta de la CMF) y recorte la salida con max_chars (default 30000). Use esta tool para leer el contenido de un PDF; para el binario original use cmf_documento_descargar y para inspeccionar solo un token cmf_documento_info.
 - parámetros:
   - token: Token s567 del documento (de hechos/sanciones/resoluciones)
   - url: URL absoluta de un documento de la CMF (ej: ver_archivo.php del compendio)
@@ -868,7 +868,7 @@ Límites y notas:
 
 ### cmf_bancos_cronologia
 - title: Cronología bancaria
-- description: Devuelve la cronología histórica del sistema bancario chileno publicada por la CMF (servlet CronologiaBancaria de la ex SBIF). Use indice para seleccionar el capítulo (default 8.0); si el contenido no es tabular, lo indica. Use esta tool para hitos de la banca chilena; para tasas de interés use cmf_bancos_tasas.
+- description: Devuelve la cronología histórica del sistema bancario chileno publicada por la CMF (servlet CronologiaBancaria de la ex SBIF), con hasta 200 filas. Elija el capítulo con indice (default 8.0); si el contenido no es tabular, la tool lo indica. Use esta tool para hitos de la banca chilena; para tasas de interés use cmf_bancos_tasas.
 - parámetros:
   - indice default="8.0": Índice del capítulo de la cronología (default 8.0)
 - annotations: {"readOnlyHint":true,"destructiveHint":false}
@@ -876,9 +876,9 @@ Límites y notas:
 
 ### cmf_bancos_reportes
 - title: Reportes de instituciones financieras (BaseDato)
-- description: Devuelve reportes del sistema BaseDato de instituciones financieras de la CMF (ex SBIF, host datosbanco.cmfchile.cl): MR1=información contable mensual, MB1=?, ADC=adecuación de capital, ADC2=adecuación (v2), HEC=hechos económicos. Fije codUnicoBank (código SBIF, ej: 001; vea cmf://bancos/codigos), reporte, indice (default 30.1) y período (periodo_inicial AAAA-MM; solo se usa mes y año). Use esta tool para reportes históricos de la banca; para tasas de interés use cmf_bancos_tasas.
+- description: Devuelve reportes del sistema BaseDato de instituciones financieras de la CMF (ex SBIF, host datosbanco.cmfchile.cl): MR1=información contable mensual (default), ADC=adecuación de capital, ADC2=adecuación de capital (v2), HEC=hechos económicos y MB1. Fije codUnicoBank (código SBIF, ej: 001; vea cmf://bancos/codigos), reporte, indice (default 30.1) y período (periodo_inicial AAAA-MM, default período actual; solo se usan mes y año). La salida trae hasta 200 filas; si la CMF devuelve el challenge anti-bot en vez de tablas, la tool lo indica. Use esta tool para reportes históricos de la banca; para tasas de interés use cmf_bancos_tasas.
 - parámetros:
-  - reporte enum=[MR1|MB1|ADC|ADC2|HEC]: Código del reporte (default MR1=información contable mensual)
+  - reporte enum=[MR1|MB1|ADC|ADC2|HEC]: Código del reporte: MR1=información contable mensual (default), ADC=adecuación de capital, ADC2=adecuación (v2), HEC=hechos económicos, MB1
   - indice default="30.1": Índice del reporte (default 30.1)
   - codUnicoBank: Código SBIF de la institución (ej: 001=Banco de Chile; default 001)
   - periodo_inicial: Período en AAAA-MM (ej: 2026-06; default período actual)
