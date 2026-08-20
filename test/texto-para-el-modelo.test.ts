@@ -14,7 +14,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { resumirTabla } from "../src/util/errors.js";
+import { resumirTabla, paginarTexto } from "../src/util/errors.js";
 
 const FILA_CON_URL = {
   codigo: "POL120260128",
@@ -41,18 +41,59 @@ test("resumirTabla no inventa una columna url cuando las filas no la traen", () 
   assert.ok(!texto.includes("cmf_documento_markdown"), "ni la recomendación de lectura");
 });
 
-test("resumirTabla muestra 50 filas por defecto, no 8", () => {
-  const filas = Array.from({ length: 60 }, (_, i) => ({ n: String(i) }));
+test("resumirTabla NO recorta filas: muestra todas las que recibe", () => {
+  // La regla del dueño: el servidor jamás decide qué parte del dato
+  // merece verse. Quien pidió `limit` ya decidió el tamaño de la página.
+  const filas = Array.from({ length: 500 }, (_, i) => ({ n: String(i) }));
   const lineas = resumirTabla(filas, ["n"]).split("\n");
-  // 1 cabecera + 50 filas + 1 aviso de corte
-  assert.equal(lineas.length, 52, `esperaba 52 líneas y llegaron ${lineas.length}`);
+  assert.equal(lineas.length, 501, "1 cabecera + las 500 filas, sin recorte");
+  assert.ok(lineas.includes("499"), "la última fila debe estar presente");
 });
 
-test("el aviso de corte dice con qué offset pedir el resto", () => {
-  const filas = Array.from({ length: 60 }, (_, i) => ({ n: String(i) }));
-  const texto = resumirTabla(filas, ["n"], 50, 100);
-  assert.match(texto, /faltan 10 filas/, "debe decir cuántas faltan");
-  assert.match(texto, /offset=150/, "debe decir el offset siguiente, contando el de esta página");
+test("resumirTabla nunca inventa un aviso de corte", () => {
+  const filas = Array.from({ length: 200 }, (_, i) => ({ n: String(i) }));
+  const texto = resumirTabla(filas, ["n"]);
+  assert.ok(!/filas más|faltan/.test(texto), "no debe hablar de filas omitidas: no omite ninguna");
+});
+
+test("paginarTexto deja leer un documento entero, por grande que sea", () => {
+  // La regla del proyecto: no decidimos por el agente qué parte del
+  // documento le sirve. Un tope duro sin salida hace justo eso.
+  const doc = "x".repeat(250_000);
+  let offset = 0;
+  let leido = 0;
+  let vueltas = 0;
+  for (;;) {
+    const p = paginarTexto(doc, offset, 100_000);
+    leido += p.hasta - p.desde;
+    vueltas += 1;
+    if (p.siguiente === null) break;
+    offset = p.siguiente;
+    assert.ok(vueltas < 10, "no debe entrar en bucle infinito");
+  }
+  assert.equal(leido, doc.length, "recorriendo los tramos se lee el 100% del documento");
+  assert.equal(vueltas, 3, "250 mil caracteres en tramos de 100 mil son 3 vueltas");
+});
+
+test("el aviso de tramo dice el offset siguiente y no miente sobre el total", () => {
+  const p = paginarTexto("y".repeat(1000), 0, 400);
+  assert.match(p.tramo, /tramo 0-400 de 1000/);
+  assert.match(p.tramo, /offset_chars=400/);
+  assert.equal(p.siguiente, 400);
+});
+
+test("el último tramo se marca como fin y no ofrece un offset que no existe", () => {
+  const p = paginarTexto("z".repeat(1000), 800, 400);
+  assert.equal(p.siguiente, null, "no hay tramo siguiente");
+  assert.match(p.tramo, /fin del documento/);
+  assert.ok(!/offset_chars=/.test(p.tramo), "no debe ofrecer continuar cuando ya terminó");
+});
+
+test("un offset más allá del final no rompe ni inventa contenido", () => {
+  const p = paginarTexto("abc", 9999, 100);
+  assert.equal(p.desde, 3);
+  assert.equal(p.hasta, 3);
+  assert.equal(p.siguiente, null);
 });
 
 test("ninguna tool manda al modelo a leer structuredContent", () => {

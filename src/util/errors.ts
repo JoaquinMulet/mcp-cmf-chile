@@ -64,6 +64,38 @@ export function sinDatosOFuente(
 }
 
 /**
+ * Pagina un texto largo (un PDF convertido) sin perder nada.
+ *
+ * Regla del proyecto: **nunca cortamos por nuestro criterio sin dejarle
+ * al agente la forma de leer el resto.** Un tope duro decide por él qué
+ * parte del documento importa, y eso no lo podemos saber nosotros. Por
+ * eso esto pagina en vez de truncar: el aviso dice siempre con qué
+ * `offset_chars` continuar, así que cualquier documento se puede leer
+ * completo, por grande que sea.
+ *
+ * @param texto Texto completo ya convertido.
+ * @param offset Carácter donde empieza el tramo.
+ * @param tamano Tamaño del tramo.
+ * @returns El tramo con su aviso, y los datos de la paginación.
+ */
+export function paginarTexto(
+  texto: string,
+  offset: number,
+  tamano: number,
+): { tramo: string; desde: number; hasta: number; total: number; siguiente: number | null } {
+  const total = texto.length;
+  const desde = Math.min(Math.max(offset, 0), total);
+  const hasta = Math.min(desde + tamano, total);
+  const siguiente = hasta < total ? hasta : null;
+  const aviso = siguiente !== null
+    ? `\n\n...[tramo ${desde}-${hasta} de ${total} caracteres. El documento SIGUE: pida el resto con offset_chars=${hasta}, y suba max_chars si quiere tramos mayores. No se descarta nada.]`
+    : desde > 0
+      ? `\n\n...[fin del documento: caracteres ${desde}-${hasta} de ${total}]`
+      : "";
+  return { tramo: `${texto.slice(desde, hasta)}${aviso}`, desde, hasta, total, siguiente };
+}
+
+/**
  * Resumen de tabla para el bloque de TEXTO de una respuesta MCP.
  *
  * Regla que gobierna esta función: **el bloque de texto es todo lo que ve
@@ -78,16 +110,19 @@ export function sinDatosOFuente(
  * declaró "no puedo acceder al texto de las condiciones" y era cierto
  * para él.
  *
- * @param filas Filas ya paginadas por el llamador.
+ * **El servidor NO recorta filas.** `filas` ya viene paginada por el
+ * llamador con su propio `limit`, así que un segundo corte aquí sería el
+ * servidor decidiendo, por criterio propio, qué parte de lo que el agente
+ * pidió merece verse. Antes había un tope de 8 filas: el agente pedía 100
+ * y recibía 8, sin saber que el recorte era nuestro. Quien decide cuánto
+ * ver es quien llama, con `limit` y `offset`.
+ *
+ * @param filas Filas ya paginadas por el llamador. Se muestran TODAS.
  * @param columnas Columnas a mostrar. `url` se agrega sola si las filas la traen.
- * @param max Tope de filas del texto.
- * @param offset Offset de esta página, para poder indicar el siguiente.
  */
 export function resumirTabla<T extends Record<string, unknown>>(
   filas: T[],
   columnas: string[],
-  max = 50,
-  offset = 0,
 ): string {
   if (filas.length === 0) return "(sin datos)";
   // El enlace es el único camino del agente hacia el documento original,
@@ -96,17 +131,10 @@ export function resumirTabla<T extends Record<string, unknown>>(
   const cols = conUrl && !columnas.includes("url") ? [...columnas, "url"] : columnas;
   const header = cols.join(" | ");
   const body = filas
-    .slice(0, max)
     .map((f) => cols.map((c) => String(f[c] ?? "")).join(" | "))
     .join("\n");
-  const faltan = filas.length - max;
-  // Decir CÓMO pedir el resto. "y N filas más" a secas se lee como un
-  // límite del dato y no como una página, y el agente se rinde.
-  const extra = faltan > 0
-    ? `\n... faltan ${faltan} filas de esta página; pida las siguientes con offset=${offset + max}`
-    : "";
   const comoLeer = conUrl
     ? "\nPara leer el texto de un documento, pase su url a cmf_documento_markdown."
     : "";
-  return `${header}\n${body}${extra}${comoLeer}`;
+  return `${header}\n${body}${comoLeer}`;
 }

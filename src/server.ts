@@ -8,12 +8,44 @@ import { registrarToolsOtros } from "./tools/otros.js";
 import { registrarToolsPaquete } from "./tools/paquete.js";
 import { registrarResources } from "./resources.js";
 import { registrarPrompts } from "./prompts.js";
+import { registrarModoCodigo } from "./tools/code-mode.js";
+import type { Ejecutor } from "./sandbox.js";
 
 /**
  * Factory per-request: crea un McpServer fresco con todas las tools/resources/prompts.
  * Los caches, rate limiters y cookie jars viven en módulos (singletons), no aquí.
  */
-export function createServer(env: CmfEnv = {}): McpServer {
+/**
+ * Guía que la norma MCP deja poner en `server/discover` para el modelo.
+ * En modo código es corta a propósito. el catálogo se descubre con
+ * `cmf_buscar`, no se enumera acá.
+ */
+const INSTRUCCIONES_CODIGO = [
+  "Datos públicos de la Comisión para el Mercado Financiero de Chile (CMF).",
+  "Este servidor tiene 2 herramientas y se usan siempre en el mismo orden.",
+  "1. cmf_buscar. escribe código que filtra el catálogo y devuelve las operaciones que necesitas.",
+  "2. cmf_ejecutar. escribe código que llama esas operaciones, filtra el resultado y devuelve solo lo útil.",
+  "Las operaciones devuelven su JSON completo, sin recortes. El servidor nunca decide qué parte del dato ves, lo decides tú en el código.",
+  "Fechas en formato YYYY-MM-DD. Los RUT se aceptan con o sin dígito verificador.",
+  "Si una consulta viene vacía, revisa el período o la norma antes de concluir que el dato no existe.",
+].join("\n");
+
+/** Cómo expone el servidor sus operaciones. */
+export interface OpcionesServidor {
+  /**
+   * "clasico" = 86 tools, una por operación. Es el contrato histórico.
+   * "codigo" = 2 tools (cmf_buscar, cmf_ejecutar) sobre el mismo registro.
+   * El modo código NO cambia la lista de tools durante la conexión, así que
+   * cumple la norma MCP, que prohíbe que ese conjunto varíe como efecto
+   * secundario de otra petición.
+   */
+  modo?: "clasico" | "codigo";
+  /** Quien corre el código del modelo. Obligatorio en modo código. */
+  ejecutor?: Ejecutor;
+}
+
+export function createServer(env: CmfEnv = {}, opciones: OpcionesServidor = {}): McpServer {
+  const modo = opciones.modo ?? "clasico";
   const server = new McpServer(
     {
       name: "mcp-cmf-chile",
@@ -32,7 +64,7 @@ export function createServer(env: CmfEnv = {}): McpServer {
         "resources/templates/list": { ttlMs: 600_000, cacheScope: "public" },
         "server/discover": { ttlMs: 600_000, cacheScope: "public" },
       },
-      instructions: [
+      instructions: modo === "codigo" ? INSTRUCCIONES_CODIGO : [
         "Servidor MCP con los datos públicos de la Comisión para el Mercado Financiero de Chile (CMF).",
         "Uso recomendado:",
         "1. Para analizar una empresa: cmf_empresa_por_ticker (ticker de bolsa, ej: COPEC, SQM-B; los RUTs provienen del catálogo de empresas en bolsa en github.com/JoaquinMulet/empresas-cmf-chile) o cmf_buscar_entidad (una palabra clave o RUT) para obtener el RUT canónico → cmf_empresa_info → cmf_empresa_eeff_historial (períodos disponibles) → cmf_empresa_eeff (estados financieros IFRS/NCH por período; use modo=markdown para leer el PDF auditado convertido a Markdown) → cmf_empresa_hechos → cmf_empresa_sanciones/resoluciones.",
@@ -50,12 +82,21 @@ export function createServer(env: CmfEnv = {}): McpServer {
     },
   );
 
-  registrarToolsApi(server, env);
-  registrarToolsEmpresas(server, env);
-  registrarToolsFondosMutuos(server, env);
-  registrarToolsFondosInversion(server, env);
-  registrarToolsOtros(server, env);
-  registrarToolsPaquete(server, env);
+  if (modo === "codigo") {
+    if (!opciones.ejecutor) {
+      // Fallo ruidoso. Sin caja aislada no se ejecuta código del modelo,
+      // ni siquiera "provisoriamente": sería ejecución sin frontera.
+      throw new Error("createServer: el modo código exige un ejecutor (caja aislada)");
+    }
+    registrarModoCodigo(server, env, opciones.ejecutor);
+  } else {
+    registrarToolsApi(server, env);
+    registrarToolsEmpresas(server, env);
+    registrarToolsFondosMutuos(server, env);
+    registrarToolsFondosInversion(server, env);
+    registrarToolsOtros(server, env);
+    registrarToolsPaquete(server, env);
+  }
   registrarResources(server, env);
   registrarPrompts(server);
 

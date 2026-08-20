@@ -16,6 +16,13 @@
     "CMF_MAX_ROWS": "500",
     "CMF_UPSTREAM_TIMEOUT_MS": "12000"
   },
+  // Caja aislada donde corre el código que escribe el modelo, en la ruta
+  // /codigo. Se carga un Worker nuevo por programa, con globalOutbound
+  // null (sin salida a internet). Requiere acceso a Worker Loader en la
+  // cuenta; sin el binding, /codigo responde 501 y /  sigue funcionando.
+  "worker_loaders": [
+    { "binding": "CAJA" }
+  ],
   "kv_namespaces": [
     {
       "binding": "CMF_KV",

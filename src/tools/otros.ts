@@ -3,7 +3,7 @@ import * as z from "zod/v4";
 import { normativaDescargaSchema, filasSchema, xbrlVisorSchema, xbrlConsultaSchema, xbrlTaxonomiasSchema, documentoInfoSchema, documentoDescargaSchema, documentoMarkdownSchema } from "../util/schemas-output.js";
 import { getLegacy, postLegacy, getLegacyBinario, fetchCmf, fetchCmfBinario, type CmfEnv } from "../client/cmf-client.js";
 import { htmlTablaAJson, fechaLegacyCompleta, fechaLegacy, xlsAJson } from "../client/parsers.js";
-import { fromError, toolError, toolErrorFuente, toolOk, resumirTabla } from "../util/errors.js";
+import { fromError, toolError, toolErrorFuente, toolOk, resumirTabla, paginarTexto } from "../util/errors.js";
 import { bytesABase64 } from "../util/zip.js";
 import { unzip, type ZipEntrada } from "../util/unzip.js";
 
@@ -763,15 +763,16 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: documentoMarkdownSchema,
       title: "Convertir documento PDF de la CMF a Markdown",
       description:
-        "Descarga un documento firmado de la CMF (EEFF, hechos, sanciones, resoluciones, normas) y lo convierte a Markdown legible para el agente (tablas, encabezados, listas) usando pdf-inspector; los PDFs escaneados se indican porque no hay OCR. Acepte el documento con token (s567 de hechos/sanciones/resoluciones) o url (URL absoluta de la CMF) y recorte la salida con max_chars (default 30000). Use esta tool para leer el contenido de un PDF; para el binario original use cmf_documento_descargar y para inspeccionar solo un token cmf_documento_info.",
+        "Descarga un documento firmado de la CMF (EEFF, hechos, sanciones, resoluciones, normas) y lo convierte a Markdown legible para el agente (tablas, encabezados, listas) usando pdf-inspector; los PDFs escaneados se indican porque no hay OCR. Acepte el documento con token (s567 de hechos/sanciones/resoluciones) o url (URL absoluta de la CMF). El documento se entrega PAGINADO, nunca recortado sin salida: max_chars es el tamaño del tramo (default 30000) y offset_chars el punto donde empieza; si queda más, la respuesta dice con qué offset_chars pedir el tramo siguiente, así que cualquier documento se puede leer entero. Use esta tool para leer el contenido de un PDF; para el binario original use cmf_documento_descargar y para inspeccionar solo un token cmf_documento_info.",
       inputSchema: z.object({
         token: z.string().min(10).optional().describe("Token s567 del documento (de hechos/sanciones/resoluciones)"),
         url: z.string().url().optional().describe("URL absoluta de un documento de la CMF (ej: ver_archivo.php del compendio)"),
-        max_chars: z.number().int().min(1000).max(100000).default(30000).describe("Máximo de caracteres del markdown (recorta el resto)"),
+        max_chars: z.number().int().min(1000).max(100000).default(30000).describe("Tamaño del tramo en caracteres (default 30000)"),
+        offset_chars: z.number().int().min(0).default(0).describe("Carácter donde empieza el tramo; use el que indique la respuesta anterior para seguir leyendo"),
         validar_contable: z.boolean().default(false).describe("true = verifica la cuadratura contable (experimental)"),
       }),
     },
-    async ({ token, url, max_chars, validar_contable }) => {
+    async ({ token, url, max_chars, offset_chars, validar_contable }) => {
       try {
         if (!token && !url) {
           return {
@@ -794,15 +795,13 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         const avisoFusion = textoAviso(procesado);
         const verificacion = validar_contable ? textoVerificacion(procesado) : "";
         const textoMd = procesado.markdown ?? "";
-        const truncado = textoMd.length > max_chars;
-        // `max_chars` es el único recorte. Antes había un segundo corte a
-        // 2000 caracteres en el texto, con un aviso que mandaba al agente
-        // a `structuredContent`, que un modelo NO puede leer. El efecto
-        // era entregar la portada de un PDF y decir que el resto estaba
-        // en un lugar inalcanzable.
-        const textoFinal = truncado
-          ? `${textoMd.slice(0, max_chars)}\n...[truncado en ${max_chars} de ${textoMd.length} caracteres; repita con max_chars mayor (máximo 100000) para leer más]`
-          : textoMd;
+        // Paginado, no truncado. Antes había 2 cortes: uno a `max_chars`
+        // sin salida más allá de 100000, y otro a 2000 caracteres en el
+        // texto que remitía a `structuredContent`, que un modelo no puede
+        // leer. Los 2 decidían por el agente qué parte del documento le
+        // servía. Ahora cualquier documento se lee entero por tramos.
+        const pagina = paginarTexto(textoMd, offset_chars, max_chars);
+        const textoFinal = pagina.tramo;
         const tipoLimpio = pdfType.toLowerCase().replace("textbased", "text-based");
         return toolOk(
           `${verificacion}${avisoFusion}\n\nDocumento convertido a Markdown (tipo: ${tipoLimpio}, ${Math.round(bytes.length / 1024)} KB, ${textoMd.length} caracteres):\n\n${textoFinal}`,
@@ -810,7 +809,10 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
             pdf_type: pdfType,
             tamano_kb: Math.round(bytes.length / 1024),
             markdown: textoFinal,
-            markdown_truncado: truncado,
+            markdown_truncado: pagina.siguiente !== null,
+            offset_chars: pagina.desde,
+            siguiente_offset_chars: pagina.siguiente,
+            total_chars: pagina.total,
             escaneado: pdfType === "Scanned" || pdfType === "ImageBased",
             filas_separadas: procesado.filasSeparadas,
             filas_fusionadas_pendientes: procesado.filasFusionadasPendientes,

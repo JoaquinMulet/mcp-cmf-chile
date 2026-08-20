@@ -4,7 +4,7 @@ import { empresaArraySchema, historialSchema, globalesSchema, paginadoSchema, fi
 import { getLegacy, postLegacy, postLegacyBinario, getLegacyBinario, fetchCmf, fetchCmfBinario, getLegacyConCookies, type CmfEnv } from "../client/cmf-client.js";
 import { gridGoogleVisAJson, htmlTablaAJson, xlsAJson, fechaLegacy, fechaLegacyCompleta, fixMojibake, txtCsvAJson } from "../client/parsers.js";
 import { pedirCaptchaCMF, obtenerCaptcha, ultimoCaptcha, consumirCaptcha } from "../captcha.js";
-import { fromError, toolOk, toolError, toolErrorFuente, sinDatosOFuente, resumirTabla } from "../util/errors.js";
+import { fromError, toolOk, toolError, toolErrorFuente, sinDatosOFuente, resumirTabla, paginarTexto } from "../util/errors.js";
 import { paginar } from "../util/paginate.js";
 import { bytesABase64 } from "../util/zip.js";
 import { pdfAMarkdown } from "../pdf.js";
@@ -274,7 +274,8 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         tipo: tipoBalanceSchema,
         norma: tipoNormaContableSchema,
         modo: z.enum(["documentos", "markdown"]).default("documentos").describe("documentos = lista de PDFs del período; markdown = PDF auditado convertido a Markdown"),
-        max_chars: z.number().int().min(1000).max(100000).default(30000).describe("Máximo de caracteres del markdown (modo markdown)"),
+        max_chars: z.number().int().min(1000).max(100000).default(30000).describe("Tamaño del tramo en caracteres (modo markdown, default 30000)"),
+        offset_chars: z.number().int().min(0).default(0).describe("Carácter donde empieza el tramo; use el que indique la respuesta anterior para seguir leyendo"),
         validar_contable: z.boolean().default(false).describe("true = verifica la cuadratura contable (experimental: puede dar falsos negativos en algunos formatos)"),
       }),
       outputSchema: z.object({
@@ -291,7 +292,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         verificacion_contable: z.record(z.string(), z.unknown()).optional(),
       }),
     },
-    async ({ rut, query, anio, mes, tipo, norma, modo, max_chars, validar_contable }) => {
+    async ({ rut, query, anio, mes, tipo, norma, modo, max_chars, offset_chars, validar_contable }) => {
         const rutFinal = rut ?? query;
         if (!rutFinal) {
           return { content: [{ type: "text", text: "Indique un RUT (acepta 90749000, 90.749.000, 90749000-0 o 90.749.000-0) o use query como alias." }], isError: true };
@@ -344,14 +345,12 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const avisoFusion = textoAviso(procesado);
         const verificacion = validar_contable ? textoVerificacion(procesado) : "";
         const textoMd = procesado.markdown ?? "";
-        const truncado = textoMd.length > max_chars;
-        // `max_chars` es el único recorte. El corte a 1500 caracteres que
-        // había antes remitía a `structuredContent`, que un modelo no
-        // puede leer, así que entregaba la portada del PDF auditado y
-        // nada más.
-        const textoFinal = truncado
-          ? `${textoMd.slice(0, max_chars)}\n...[truncado en ${max_chars} de ${textoMd.length} caracteres; repita con max_chars mayor (máximo 100000) para leer más]`
-          : textoMd;
+        // Paginado, no truncado. El corte a 1500 caracteres que había
+        // antes remitía a `structuredContent`, que un modelo no puede
+        // leer, así que entregaba la portada del PDF auditado y nada más.
+        const pagina = paginarTexto(textoMd, offset_chars, max_chars);
+        const truncado = pagina.siguiente !== null;
+        const textoFinal = pagina.tramo;
         const texto = `${verificacion}${avisoFusion}\n\nEEFF ${rutFinal} período ${periodo} (${tipo === "C" ? "Consolidado" : "Individual"}, ${norma}) — PDF auditado convertido a Markdown (${pdfType}, ${Math.round(bytes.length / 1024)} KB, ${textoMd.length} caracteres):\n\n${textoFinal}`;
         return toolOk(texto, {
           ...base,
