@@ -127,7 +127,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         const chunk = 0x8000;
         for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
         return toolOk(
-          `Norma descargada (${Math.round(tamano / 1024)} KB). El contenido base64 está en structuredContent.base64; para leerla como texto use cmf_documento_markdown con la URL ${urlPdf}.`,
+          `Norma descargada (${Math.round(tamano / 1024)} KB). Para LEERLA como texto use cmf_documento_markdown con la URL ${urlPdf}. El binario en base64 queda disponible para llamadores programáticos.`,
           { archivo, tamano_kb: Math.round(tamano / 1024), formato: "pdf", base64: btoa(bin), url: urlPdf },
         );
       } catch (e) {
@@ -795,10 +795,17 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         const verificacion = validar_contable ? textoVerificacion(procesado) : "";
         const textoMd = procesado.markdown ?? "";
         const truncado = textoMd.length > max_chars;
-        const textoFinal = truncado ? `${textoMd.slice(0, max_chars)}\n...[truncado: ${textoMd.length - max_chars} caracteres]` : textoMd;
+        // `max_chars` es el único recorte. Antes había un segundo corte a
+        // 2000 caracteres en el texto, con un aviso que mandaba al agente
+        // a `structuredContent`, que un modelo NO puede leer. El efecto
+        // era entregar la portada de un PDF y decir que el resto estaba
+        // en un lugar inalcanzable.
+        const textoFinal = truncado
+          ? `${textoMd.slice(0, max_chars)}\n...[truncado en ${max_chars} de ${textoMd.length} caracteres; repita con max_chars mayor (máximo 100000) para leer más]`
+          : textoMd;
         const tipoLimpio = pdfType.toLowerCase().replace("textbased", "text-based");
         return toolOk(
-          `${verificacion}${avisoFusion}\n\nDocumento convertido a Markdown (tipo: ${tipoLimpio}, ${Math.round(bytes.length / 1024)} KB, ${textoMd.length} caracteres):\n\n${textoFinal.slice(0, 2000)}${textoFinal.length > 2000 ? `\n...[preview recortado; el markdown completo está en structuredContent]` : ""}`,
+          `${verificacion}${avisoFusion}\n\nDocumento convertido a Markdown (tipo: ${tipoLimpio}, ${Math.round(bytes.length / 1024)} KB, ${textoMd.length} caracteres):\n\n${textoFinal}`,
           {
             pdf_type: pdfType,
             tamano_kb: Math.round(bytes.length / 1024),

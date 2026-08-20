@@ -345,8 +345,14 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const verificacion = validar_contable ? textoVerificacion(procesado) : "";
         const textoMd = procesado.markdown ?? "";
         const truncado = textoMd.length > max_chars;
-        const textoFinal = truncado ? `${textoMd.slice(0, max_chars)}\n...[truncado: ${textoMd.length - max_chars} caracteres]` : textoMd;
-        const texto = `${verificacion}${avisoFusion}\n\nEEFF ${rutFinal} período ${periodo} (${tipo === "C" ? "Consolidado" : "Individual"}, ${norma}) — PDF auditado convertido a Markdown (${pdfType}, ${Math.round(bytes.length / 1024)} KB, ${textoMd.length} caracteres):\n\n${textoFinal.slice(0, 1500)}${textoFinal.length > 1500 ? "\n...[preview; markdown completo en structuredContent]" : ""}`;
+        // `max_chars` es el único recorte. El corte a 1500 caracteres que
+        // había antes remitía a `structuredContent`, que un modelo no
+        // puede leer, así que entregaba la portada del PDF auditado y
+        // nada más.
+        const textoFinal = truncado
+          ? `${textoMd.slice(0, max_chars)}\n...[truncado en ${max_chars} de ${textoMd.length} caracteres; repita con max_chars mayor (máximo 100000) para leer más]`
+          : textoMd;
+        const texto = `${verificacion}${avisoFusion}\n\nEEFF ${rutFinal} período ${periodo} (${tipo === "C" ? "Consolidado" : "Individual"}, ${norma}) — PDF auditado convertido a Markdown (${pdfType}, ${Math.round(bytes.length / 1024)} KB, ${textoMd.length} caracteres):\n\n${textoFinal}`;
         return toolOk(texto, {
           ...base,
           pdf_type: pdfType,

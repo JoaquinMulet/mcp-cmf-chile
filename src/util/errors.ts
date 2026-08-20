@@ -63,18 +63,50 @@ export function sinDatosOFuente(
   return filas.length ? cuandoHayDatos() : cuandoVacio();
 }
 
-/** Resumen de tabla para el texto (primeras N filas). */
+/**
+ * Resumen de tabla para el bloque de TEXTO de una respuesta MCP.
+ *
+ * Regla que gobierna esta función: **el bloque de texto es todo lo que ve
+ * un modelo.** `structuredContent` sobrevive para quien llama por
+ * programa, no para el agente. Lo que no esté aquí, para el agente no
+ * existe.
+ *
+ * Dos defectos reales que esto corrige (20 de agosto de 2026). Un informe
+ * sobre pólizas vehiculares quedó con pendientes porque el enlace al
+ * documento viajaba solo en el JSON estructurado, y porque el texto
+ * cortaba en 8 filas de las 100 que el llamador había pedido. El agente
+ * declaró "no puedo acceder al texto de las condiciones" y era cierto
+ * para él.
+ *
+ * @param filas Filas ya paginadas por el llamador.
+ * @param columnas Columnas a mostrar. `url` se agrega sola si las filas la traen.
+ * @param max Tope de filas del texto.
+ * @param offset Offset de esta página, para poder indicar el siguiente.
+ */
 export function resumirTabla<T extends Record<string, unknown>>(
   filas: T[],
   columnas: string[],
-  max = 8,
+  max = 50,
+  offset = 0,
 ): string {
   if (filas.length === 0) return "(sin datos)";
-  const header = columnas.join(" | ");
+  // El enlace es el único camino del agente hacia el documento original,
+  // así que nunca se omite cuando la fila lo trae.
+  const conUrl = filas.some((f) => typeof f["url"] === "string" && f["url"] !== "");
+  const cols = conUrl && !columnas.includes("url") ? [...columnas, "url"] : columnas;
+  const header = cols.join(" | ");
   const body = filas
     .slice(0, max)
-    .map((f) => columnas.map((c) => String(f[c] ?? "")).join(" | "))
+    .map((f) => cols.map((c) => String(f[c] ?? "")).join(" | "))
     .join("\n");
-  const extra = filas.length > max ? `\n... y ${filas.length - max} filas más` : "";
-  return `${header}\n${body}${extra}`;
+  const faltan = filas.length - max;
+  // Decir CÓMO pedir el resto. "y N filas más" a secas se lee como un
+  // límite del dato y no como una página, y el agente se rinde.
+  const extra = faltan > 0
+    ? `\n... faltan ${faltan} filas de esta página; pida las siguientes con offset=${offset + max}`
+    : "";
+  const comoLeer = conUrl
+    ? "\nPara leer el texto de un documento, pase su url a cmf_documento_markdown."
+    : "";
+  return `${header}\n${body}${extra}${comoLeer}`;
 }
