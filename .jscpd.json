@@ -1,0 +1,7 @@
+{
+  "//": "Duplicacion de CODIGO, no de datos. La carpeta de evidencia guarda HTML capturado del sitio de la CMF para las pruebas, y ese HTML se repite entre paginas porque asi lo publica el regulador. Contarlo daba 31,92 por ciento de duplicacion y tapaba por completo la duplicacion real del codigo, que es 4,43. Un informe que mide lo que no puedo arreglar no me sirve para arreglar nada.",
+  "format": ["typescript"],
+  "ignore": ["**/node_modules/**", "**/dist/**", "**/evidencia/**", "**/*.html", "**/*.json"],
+  "minTokens": 50,
+  "absolute": false
+}
