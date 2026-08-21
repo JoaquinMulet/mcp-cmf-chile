@@ -1,0 +1,49 @@
+name: Seguridad
+
+# Dos analisis que las pruebas no hacen, y que son distintos entre si.
+#
+# CodeQL sigue el CAMINO de un dato desde donde entra hasta donde se usa,
+# y por eso encuentra inyecciones y fugas que ninguna prueba unitaria ve.
+# npm audit no mira nuestro codigo, mira el de terceros.
+#
+# El repositorio es publico, asi que los dos son gratis en GitHub.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    # Lunes a las 6 de la mañana UTC. Una vulnerabilidad publicada el
+    # miercoles no espera a que alguien haga el proximo commit.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  codeql:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          queries: security-and-quality
+      - uses: github/codeql-action/analyze@v3
+
+  dependencias:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Solo las que llegan al Worker desplegado. Una vulnerabilidad en
+      # una herramienta de desarrollo no es lo mismo que una en produccion,
+      # y mezclarlas hace que nadie mire ninguna de las dos.
+      - name: Vulnerabilidades conocidas en dependencias de produccion
+        run: npm audit --omit=dev --audit-level=high

@@ -1,0 +1,26 @@
+# Actualizaciones de dependencias, revisadas por una persona.
+#
+# Por que existe. npm audit dice si HOY hay una vulnerabilidad conocida.
+# No dice nada del dia en que se publique la proxima. Dependabot abre la
+# propuesta de cambio el mismo dia, y el CI la prueba antes de que nadie
+# la mire. Sin esto, una libreria se queda vieja en silencio.
+#
+# Semanal y no diario a proposito. una cola de propuestas que nadie
+# alcanza a revisar se vuelve ruido, y el ruido se ignora entero.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Las de desarrollo van juntas. Ninguna llega al Worker desplegado,
+      # asi que revisarlas una por una no compra seguridad.
+      desarrollo:
+        dependency-type: development
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
