@@ -65,7 +65,12 @@ export function construirProxyCmf(
     get: (_t, nombre) => {
       const clave = String(nombre);
       const fn = operaciones[clave];
-      if (fn) return (args: Record<string, unknown>) => fn(args ?? {});
+      if (fn) {
+        // Mismo viaje por JSON que en producción, para que las pruebas
+        // midan la semántica real del borde y no una más permisiva.
+        return async (args: Record<string, unknown>) =>
+          JSON.parse(JSON.stringify(await fn(args ?? {})) ?? "null");
+      }
       if (!hayAlguna) {
         // Caso de cmf_buscar. no hay red acá, y hay que decir por qué.
         return () => {
@@ -114,7 +119,7 @@ export default {
       getOwnPropertyDescriptor: (_, n) =>
         nombres.has(String(n)) ? { configurable: true, enumerable: true, value: 1 } : undefined,
       get: (_, n) => (nombres.has(String(n))
-        ? (args) => env.PUENTE.llamar(String(n), args ?? {})
+        ? async (args) => JSON.parse(await env.PUENTE.llamar(String(n), args ?? {}))
         : undefined),
     });
     try {
@@ -137,35 +142,53 @@ export default {
  * @param cargador Binding `worker_loaders` del entorno.
  * @param fechaCompatibilidad La misma del wrangler, para que el runtime calce.
  */
-export function ejecutorDeWorker(cargador: WorkerLoaderLike, fechaCompatibilidad: string): Ejecutor {
+export function ejecutorDeWorker(
+  cargador: WorkerLoaderLike,
+  fechaCompatibilidad: string,
+  crearPuente: () => unknown,
+): Ejecutor {
   return {
     async correr(codigo, prestamos) {
-      // Puente RPC: la ÚNICA puerta del programa hacia el mundo.
-      const puente = {
-        async llamar(nombre: string, args: Record<string, unknown>) {
-          const fn = prestamos.cmf[nombre];
-          if (!fn) throw new Error(`La operación "${nombre}" no existe. Búscala primero con cmf_buscar.`);
-          return await fn(args);
-        },
-      };
+      // El puente es la ÚNICA puerta del programa hacia el mundo, y tiene
+      // que ser un stub de WorkerEntrypoint. Los valores de `env` viajan
+      // serializados al aislado; un objeto con métodos no sobrevive ese
+      // viaje, y un stub sí, porque va por referencia. Lo crea quien tiene
+      // el `ctx` de la petición, así que llega inyectado.
       const stub = cargador.get(null, () => ({
         compatibilityDate: fechaCompatibilidad,
         mainModule: "programa.js",
         modules: { "programa.js": moduloDelPrograma(codigo) },
-        env: { CATALOGO: prestamos.catalogo, PUENTE: puente, NOMBRES: Object.keys(prestamos.cmf) },
+        env: {
+          CATALOGO: prestamos.catalogo,
+          PUENTE: crearPuente(),
+          NOMBRES: Object.keys(prestamos.cmf),
+        },
         // Sin salida a internet. Esta línea es la garantía de seguridad.
         globalOutbound: null,
         limits: LIMITES,
       }));
-      const respuesta = await stub.fetch("https://caja.invalid/");
+      // El stub no se llama directo: expone el Worker por su entrypoint.
+      const entrada = stub.getEntrypoint(undefined, { limits: LIMITES });
+      const respuesta = await entrada.fetch("https://caja.invalid/");
       return (await respuesta.json()) as Resultado;
     },
   };
 }
 
-/** Forma mínima del binding, para no depender de los tipos experimentales. */
+/**
+ * Forma mínima del binding, para no depender de los tipos experimentales.
+ * El stub NO se llama directo. hay que pedirle su entrypoint primero.
+ */
 export interface WorkerLoaderLike {
-  get(nombre: string | null, getCode: () => unknown): { fetch(url: string): Promise<Response> };
+  get(
+    nombre: string | null,
+    getCode: () => unknown,
+  ): {
+    getEntrypoint(
+      nombre?: string,
+      opciones?: { limits?: { cpuMs?: number; subRequests?: number } },
+    ): { fetch(url: string): Promise<Response> };
+  };
 }
 
 /**

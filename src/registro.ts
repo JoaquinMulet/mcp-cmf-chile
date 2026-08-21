@@ -33,8 +33,46 @@ export interface Operacion {
   descripcion: string;
   /** Nombres de los parámetros que acepta. */
   params: string[];
+  /**
+   * Aplica el esquema de entrada a los argumentos, igual que hace MCP en
+   * el modo clásico. Devuelve los argumentos ya validados y con sus
+   * valores por defecto puestos.
+   */
+  prepararArgs: (args: Record<string, unknown>) => Record<string, unknown>;
   /** Ejecuta la operación y devuelve el resultado MCP crudo. */
   ejecutar: (args: Record<string, unknown>) => Promise<unknown>;
+}
+
+/** Esquema zod visto por lo poco que necesitamos de él. */
+interface EsquemaEntrada {
+  shape?: Record<string, unknown>;
+  parse?: (valor: unknown) => Record<string, unknown>;
+}
+
+/**
+ * Construye el validador de entrada de una operación.
+ *
+ * Esto NO es un adorno. En el modo clásico, MCP parsea los argumentos con
+ * el esquema antes de llamar al handler, y ahí es donde se aplican los
+ * valores por defecto (por ejemplo `limit` y `offset`). Un camino que
+ * llame el handler crudo recibe esos campos en `undefined` y devuelve
+ * resultados distintos para la misma consulta. Los 2 caminos tienen que
+ * pasar por la misma puerta.
+ */
+function validadorDe(nombre: string, esquema: EsquemaEntrada | undefined, params: string[]) {
+  return (args: Record<string, unknown>): Record<string, unknown> => {
+    if (typeof esquema?.parse !== "function") return args;
+    try {
+      return esquema.parse(args ?? {});
+    } catch (e) {
+      const detalle = (e as { issues?: Array<{ path?: unknown[]; message?: string }> }).issues
+        ?.map((i) => `${(i.path ?? []).join(".") || "(raíz)"}: ${i.message ?? ""}`)
+        .join("; ");
+      throw new Error(
+        `Argumentos inválidos para ${nombre}. ${detalle || String(e)}. Parámetros que acepta: ${params.join(", ")}.`,
+      );
+    }
+  };
 }
 
 /** Saca los nombres de los campos de un esquema zod, sin romperse si cambia. */
@@ -61,12 +99,15 @@ export function construirRegistro(env: CmfEnv = {}): Map<string, Operacion> {
       if (operaciones.has(nombre)) {
         throw new Error(`registro: la operación "${nombre}" está declarada dos veces`);
       }
+      const params = nombresDeParams(meta.inputSchema);
+      const prepararArgs = validadorDe(nombre, meta.inputSchema as EsquemaEntrada | undefined, params);
       operaciones.set(nombre, {
         nombre,
         nombreTool,
         descripcion: meta.description ?? "",
-        params: nombresDeParams(meta.inputSchema),
-        ejecutar: (args) => handler(args),
+        params,
+        prepararArgs,
+        ejecutar: (args) => handler(prepararArgs(args ?? {})),
       });
       return undefined as never;
     },

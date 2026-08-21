@@ -40,8 +40,14 @@ export function datoDeOperacion(nombre: string, crudo: unknown): unknown {
   return r?.structuredContent !== undefined ? r.structuredContent : texto;
 }
 
-/** Arma los préstamos que la caja le entrega al programa del modelo. */
-function prestamosDe(operaciones: Map<string, Operacion>): Prestamos {
+/**
+ * Arma los préstamos que la caja le entrega al programa del modelo.
+ *
+ * Se exporta porque el puente del Worker necesita EXACTAMENTE el mismo
+ * mapa de operaciones. Si cada lado armara el suyo, un día dejarían de
+ * coincidir y el programa vería nombres que el puente no sabe llamar.
+ */
+export function prestamosDe(operaciones: Map<string, Operacion>): Prestamos {
   const cmf: Prestamos["cmf"] = {};
   for (const op of operaciones.values()) {
     cmf[op.nombre] = async (args) => datoDeOperacion(op.nombre, await op.ejecutar(args ?? {}));

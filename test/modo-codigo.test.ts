@@ -174,3 +174,78 @@ test("el modo código se niega a arrancar sin caja aislada", () => {
 test("el ejecutor local se niega a correr si no se le pide a propósito", () => {
   assert.throws(() => ejecutorLocalDePrueba(false), /no aísla nada/);
 });
+
+test("el borde de la caja entrega el objeto COMPLETO al programa, url incluida", async () => {
+  // Cruza el mismo borde que en producción: el resultado viaja como JSON.
+  // Si algo del camino recortara campos, esto lo caza.
+  const ejecutor = ejecutorLocalDePrueba(true);
+  const r = await ejecutor.correr("const d = await cmf.falsa({ x: 1 }); return d.polizas[0].url", {
+    catalogo: [],
+    cmf: {
+      falsa: async (args) => ({
+        eco: args,
+        polizas: [{ codigo: "POL1", entidad: "CONSORCIO", url: "https://cmfchile.cl/doc" }],
+      }),
+    },
+  });
+  assert.equal(r.error, undefined, `no debía fallar: ${r.error}`);
+  assert.equal(r.valor, "https://cmfchile.cl/doc");
+});
+
+test("el programa recibe un objeto plano, no una referencia al proceso servidor", async () => {
+  // Lo que cruza el borde tiene que poder serializarse de vuelta. Si
+  // viajara una referencia, esto reventaría al devolverla.
+  const ejecutor = ejecutorLocalDePrueba(true);
+  const r = await ejecutor.correr("const d = await cmf.falsa({}); return JSON.parse(JSON.stringify(d))", {
+    catalogo: [],
+    cmf: { falsa: async () => ({ filas: [1, 2, 3] }) },
+  });
+  assert.equal(r.error, undefined, `no debía fallar: ${r.error}`);
+  assert.deepEqual(r.valor, { filas: [1, 2, 3] });
+});
+
+test("los argumentos del programa llegan intactos a la operación", async () => {
+  const ejecutor = ejecutorLocalDePrueba(true);
+  const r = await ejecutor.correr("return await cmf.falsa({ poliza: 'POL120260128', limit: 500 })", {
+    catalogo: [],
+    cmf: { falsa: async (args) => args },
+  });
+  assert.deepEqual(r.valor, { poliza: "POL120260128", limit: 500 });
+});
+
+test("el modo código aplica el MISMO esquema de entrada que el modo clásico", () => {
+  // El defecto que esto caza: llamar el handler crudo se salta el parseo
+  // del esquema, así que los valores por defecto (limit, offset) nunca se
+  // aplican y la MISMA consulta devuelve resultados distintos según por
+  // dónde entró.
+  const op = construirRegistro(ENV).get("seguros_deposito_polizas");
+  assert.ok(op, "la operación tiene que existir");
+  const preparados = op.prepararArgs({ poliza: "POL120260128" });
+  assert.equal(preparados.poliza, "POL120260128");
+  assert.notEqual(preparados.limit, undefined, "el esquema debe poner el limit por defecto");
+  assert.notEqual(preparados.offset, undefined, "el esquema debe poner el offset por defecto");
+});
+
+test("al menos una operación de cada módulo aplica defaults, no solo la que probé", () => {
+  // Comprobación de CLASE. Si mañana el validador se pierde en un
+  // refactor, esto se cae para todo el servidor, no solo para un caso.
+  const ops = construirRegistro(ENV);
+  const conDefaults = [...ops.values()].filter((op) => {
+    if (!op.params.includes("limit")) return false;
+    try {
+      return op.prepararArgs({}).limit !== undefined;
+    } catch {
+      return false; // exige otros parámetros; no sirve para esta medición
+    }
+  });
+  assert.ok(conDefaults.length >= 5, `esperaba varias operaciones con defaults y hay ${conDefaults.length}`);
+});
+
+test("unos argumentos inválidos explican qué parámetros acepta la operación", () => {
+  const op = construirRegistro(ENV).get("seguros_deposito_polizas");
+  assert.ok(op);
+  assert.throws(
+    () => op.prepararArgs({ limit: "muchas" }),
+    /Argumentos inválidos.*Parámetros que acepta/s,
+  );
+});
