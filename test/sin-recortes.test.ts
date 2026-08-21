@@ -122,3 +122,57 @@ test("el aviso de la última página informa el tramo cuando venías paginando",
   assert.match(aviso, /101 a 120 de 120/);
   assert.equal(avisoDeTramo(20, { offset: 0, total: 20, next_offset: null }, "cmf_prueba"), "");
 });
+
+/**
+ * Campos donde un `.max()` significa que el SERVIDOR decide cuánto dato
+ * mereces. La regla del dueño, del 21 de agosto de 2026, es que el MCP
+ * entrega toda la información disponible y el agente decide qué hacer
+ * con ella.
+ */
+const CAMPOS_SIN_TECHO = ["limit", "max_chars", "max_entradas"];
+
+/** Devuelve el campo con techo que hay en esta línea, si lo hay. */
+function techoEnLinea(linea: string): string | undefined {
+  if (!/\.max\(/.test(linea)) return undefined;
+  return CAMPOS_SIN_TECHO.find((campo) => new RegExp(`\\b${campo}\\s*[:=]`).test(linea));
+}
+
+test("ningún campo de tamaño lleva un techo elegido por el servidor", () => {
+  // Subí estos números 6 veces antes de entender que el arreglo no era
+  // otro número. 8, 500 y 5000 filas. 2.000, 30.000, 100.000 y 2.000.000
+  // caracteres. Esta comprobación existe para que no vuelva a pasar.
+  const culpables: string[] = [];
+  const fuentes = [
+    ...ARCHIVOS.map((f) => join(DIR, f)),
+    join(DIR, "..", "util", "schemas.ts"),
+    join(DIR, "..", "util", "tramos.ts"),
+  ];
+  for (const archivo of fuentes) {
+    readFileSync(archivo, "utf-8").split("\n").forEach((linea, i) => {
+      const campo = techoEnLinea(linea);
+      if (campo !== undefined) culpables.push(`${archivo.split(/[\\/]/).pop()}:${i + 1} (${campo})`);
+    });
+  }
+  assert.deepEqual(culpables, [], `estos campos todavía ponen techo: ${culpables.join(" | ")}`);
+});
+
+test("y ese detector SÍ puede fallar", () => {
+  // La prueba de la prueba, sobre la MISMA función que usa el control de
+  // arriba. Duplicar la lógica acá habría dejado pasar un detector roto,
+  // que es exactamente lo que pasó cuando un escape se perdió al editar.
+  assert.equal(techoEnLinea("limit: z.number().int().min(1).max(5000).default(100),"), "limit");
+  assert.equal(techoEnLinea("max_chars: z.number().max(100000).default(30000),"), "max_chars");
+  assert.equal(techoEnLinea("limit: z.number().int().min(1).default(100),"), undefined);
+  assert.equal(techoEnLinea("anio: z.string().max(4),"), undefined, "otros campos sí pueden acotarse");
+});
+
+test("el valor por DEFECTO se conserva, que no es lo mismo que un techo", () => {
+  // Un default protege a quien no pide nada, sobre todo en modo clásico,
+  // donde el texto sí entra al contexto del modelo. Un techo le prohíbe
+  // pedir más a quien sí sabe lo que quiere. Solo lo segundo está mal.
+  const ops = construirRegistro({ CMF_RATE_LIMIT_MS: "0" });
+  const doc = ops.get("documento_markdown");
+  assert.ok(doc);
+  assert.equal(doc.prepararArgs({ url: "https://x" }).max_chars, 30000);
+  assert.equal(doc.prepararArgs({ url: "https://x", max_chars: 9_000_000 }).max_chars, 9_000_000);
+});

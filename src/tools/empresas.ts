@@ -284,7 +284,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         tipo: tipoBalanceSchema,
         norma: tipoNormaContableSchema,
         modo: z.enum(["documentos", "markdown"]).default("documentos").describe("documentos = lista de PDFs del período; markdown = PDF auditado convertido a Markdown"),
-        max_chars: z.number().int().min(1000).max(2_000_000).default(30000).describe("Tamaño del tramo en caracteres (modo markdown, default 30000, máximo 2000000). En modo código puedes pedir el documento entero de una vez. Ej: 200000"),
+        max_chars: z.number().int().min(1000).default(30000).describe("Tamaño del tramo en caracteres (modo markdown). Sin máximo: pide el documento entero de una vez. Por defecto 30000. Ej: 1000000"),
         offset_chars: z.number().int().min(0).default(0).describe("Carácter donde empieza el tramo; use el que indique la respuesta anterior para seguir leyendo"),
         validar_contable: z.boolean().default(false).describe("true = verifica la cuadratura contable (experimental: puede dar falsos negativos en algunos formatos)"),
       }),

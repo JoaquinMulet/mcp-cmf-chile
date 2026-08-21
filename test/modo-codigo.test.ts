@@ -398,13 +398,16 @@ test("el texto le devuelve al modelo lo parcial cuando hubo error", async () => 
   assert.match(texto, /POL1/, "el dato guardado tiene que volver, no solo su conteo");
 });
 
-test("un documento entero cabe en una sola llamada", () => {
-  // El tope de 100000 venía del modo clásico, donde el texto entraba al
-  // contexto del modelo. En modo código el documento se queda dentro del
-  // programa, así que pedirlo entero es lo correcto y lo barato.
+test("un documento se pide entero, sin techo que el servidor elija", () => {
+  // La regla del dueño del 21 de agosto de 2026. el servidor entrega
+  // TODA la información disponible y el agente decide qué hacer con
+  // ella. Yo había subido este número 4 veces (2.000, 30.000, 100.000,
+  // 2.000.000) y cada vez era un número mío, nunca la causa.
   const op = construirRegistro(ENV).get("documento_markdown");
   assert.ok(op);
-  assert.equal(op.prepararArgs({ url: "https://x", max_chars: 150000 }).max_chars, 150000);
-  assert.equal(op.prepararArgs({ url: "https://x" }).max_chars, 30000, "el default no cambia");
-  assert.throws(() => op.prepararArgs({ url: "https://x", max_chars: 5_000_000 }), /Argumentos inválidos/);
+  assert.equal(op.prepararArgs({ url: "https://x", max_chars: 5_000_000 }).max_chars, 5_000_000);
+  assert.equal(op.prepararArgs({ url: "https://x", max_chars: 99_000_000 }).max_chars, 99_000_000);
+  assert.equal(op.prepararArgs({ url: "https://x" }).max_chars, 30000,
+    "el DEFECTO se conserva, porque en modo clásico el texto entra al contexto del modelo");
 });
+

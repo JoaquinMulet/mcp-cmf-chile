@@ -30,8 +30,10 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { toolOk } from "./errors.js";
 import { paginar } from "./paginate.js";
 
-/** Techo de filas por respuesta. Alto a propósito: el que pide, manda. */
-const LIMITE_MAXIMO = 5000;
+// Sin techo de filas a propósito. El servidor no decide cuántas
+// filas mereces; entrega lo que pidas y lo que la fuente tenga.
+// El valor por DEFECTO sí existe, y es el histórico de cada tool,
+// para que quien no pide nada reciba lo de siempre.
 
 /**
  * Campos de paginación para el `inputSchema` de una tool que devuelve filas.
@@ -50,10 +52,9 @@ export function paginacion(porDefecto: number) {
       .number()
       .int()
       .min(1)
-      .max(LIMITE_MAXIMO)
       .default(porDefecto)
       .describe(
-        `Cuántas filas devolver (máximo ${LIMITE_MAXIMO}, por defecto ${porDefecto}). La respuesta trae total y next_offset para pedir el resto. Ej: ${porDefecto}`,
+        `Cuántas filas devolver. Sin máximo: pide todas las que necesites y el servidor entrega lo que la fuente tenga. Por defecto ${porDefecto}. La respuesta trae total y next_offset. Ej: ${porDefecto}`,
       ),
   };
 }
@@ -102,5 +103,5 @@ export function avisoDeTramo(
       ? `\n\n[Filas ${paginado.offset + 1} a ${paginado.offset + mostradas} de ${paginado.total}. No quedan más.]`
       : "";
   }
-  return `\n\n[Mostrando ${mostradas} filas de ${paginado.total}. Para las siguientes, llama ${tool} con offset=${paginado.next_offset}. Para traer más de una vez, sube limit (máximo ${LIMITE_MAXIMO}).]`;
+  return `\n\n[Mostrando ${mostradas} filas de ${paginado.total}. Para las siguientes, llama ${tool} con offset=${paginado.next_offset}. Para traer todo de una vez, sube limit, que no tiene máximo.]`;
 }

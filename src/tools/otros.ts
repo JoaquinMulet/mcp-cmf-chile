@@ -465,7 +465,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       inputSchema: z.object({
         tipoentidad: z.enum(["CSVID", "CSGEN"]).default("CSVID").describe("Tipo de entidad: CSVID=seguros de vida (default), CSGEN=seguros generales"),
         peri: z.string().regex(/^\d{6}$/, "AAAAMM").optional().describe("Período AAAAMM (ej: 202512); sin él, la tool lista los períodos disponibles"),
-        max_entradas: z.number().int().min(1).max(500).default(10).describe("Máximo de entradas a describir (default 10)"),
+        max_entradas: z.number().int().min(1).default(10).describe("Cuántas entradas describir. Sin máximo. Por defecto 10"),
         incluir_zip: z.boolean().default(false).describe("true = incluye el ZIP completo en base64 (zip_base64; puede ser ~16MB)"),
       }),
     },
@@ -764,7 +764,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       inputSchema: z.object({
         token: z.string().min(10).optional().describe("Token s567 del documento (de hechos/sanciones/resoluciones)"),
         url: z.string().url().optional().describe("URL absoluta de un documento de la CMF (ej: ver_archivo.php del compendio)"),
-        max_chars: z.number().int().min(1000).max(2_000_000).default(30000).describe("Tamaño del tramo en caracteres (default 30000, máximo 2000000). En modo código puedes pedir el documento entero de una vez, porque el texto se queda dentro de tu programa y no entra a tu contexto. Ej: 200000"),
+        max_chars: z.number().int().min(1000).default(30000).describe("Tamaño del tramo en caracteres. Sin máximo: pide el documento entero de una vez con un número grande y el servidor lo entrega completo. Por defecto 30000, que es lo prudente cuando el texto entra al contexto del modelo; en modo código el texto se queda dentro de tu programa, así que pídelo entero. Ej: 1000000"),
         offset_chars: z.number().int().min(0).default(0).describe("Carácter donde empieza el tramo; use el que indique la respuesta anterior para seguir leyendo"),
         validar_contable: z.boolean().default(false).describe("true = verifica la cuadratura contable (experimental)"),
       }),
