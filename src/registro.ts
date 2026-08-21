@@ -90,7 +90,7 @@ function validadorDe(nombre: string, esquema: EsquemaEntrada | undefined, params
 }
 
 /** Un parámetro de una operación, con lo que hay que saber para usarlo. */
-export interface Param {
+interface Param {
   nombre: string;
   /** El `.describe()` del esquema zod. Trae enums, formatos y defaults. */
   descripcion: string;

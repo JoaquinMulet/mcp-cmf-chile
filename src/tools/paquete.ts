@@ -37,7 +37,7 @@ async function historialEEFF(env: CmfEnv, rut: string): Promise<{ anios: string[
   return { anios, inicioIfrs: aviso?.[1], modalidad: aviso?.[2]?.trim() };
 }
 
-export interface DocumentoEEFF {
+interface DocumentoEEFF {
   nombre: string;
   url: string;
   indice: number;

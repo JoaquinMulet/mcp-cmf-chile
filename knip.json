@@ -1,0 +1,6 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": ["test/**/*.test.ts", "test/verify-*.ts", "herramientas/*.mjs"],
+  "project": ["src/**/*.ts", "test/**/*.ts", "herramientas/*.mjs"],
+  "ignoreDependencies": ["cloudflare", "yauzl"]
+}

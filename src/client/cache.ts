@@ -5,7 +5,7 @@ interface Entrada<T> {
   expiraEn: number;
 }
 
-export class CacheLRU<T> {
+class CacheLRU<T> {
   private mapa = new Map<string, Entrada<T>>();
   constructor(
     private max = 200,

@@ -51,13 +51,13 @@ export function fixMojibake(s: string): string {
 }
 
 /** Celda de tabla: texto visible + enlace del primer <a> (si existe), para no perder los href al limpiar etiquetas. */
-export interface CeldaTabla {
+interface CeldaTabla {
   texto: string;
   enlace: string;
 }
 
 /** Fila de tabla: celdas + si todas vienen de <th> (encabezado, nunca es dato). */
-export interface FilaTabla {
+interface FilaTabla {
   celdas: CeldaTabla[];
   esHeader: boolean;
 }

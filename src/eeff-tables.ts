@@ -8,9 +8,9 @@
  * 5) Cuadratura contable (identidades del balance).
  */
 
-export type EstadoVerificacion = "cuadra" | "no_cuadra" | "no_verificado";
+type EstadoVerificacion = "cuadra" | "no_cuadra" | "no_verificado";
 
-export interface VerificacionIdentidad {
+interface VerificacionIdentidad {
   /** "cuadra": identidad se cumple; "no_cuadra": hay diferencia real;
    *  "no_verificado": falta una fila clave (puede estar fusionada o con otro nombre). */
   estado: EstadoVerificacion;
@@ -19,7 +19,7 @@ export interface VerificacionIdentidad {
   diferencia: number | null;
 }
 
-export interface CuadraturaResult {
+interface CuadraturaResult {
   activos: VerificacionIdentidad;
   balance: VerificacionIdentidad;
   patrimonio: VerificacionIdentidad;

@@ -25,7 +25,7 @@ export interface Prestamos {
 }
 
 /** Lo que la caja devuelve. */
-export interface Resultado {
+interface Resultado {
   /** Lo que el código retornó, ya en JSON. */
   valor: unknown;
   /** Lo que el código imprimió con console.log, en orden. */

@@ -14,7 +14,7 @@ export interface CmfEnv {
   CMF_UPSTREAM_TIMEOUT_MS?: string;
 }
 
-export const HOSTS_ALLOWLIST = new Set([
+const HOSTS_ALLOWLIST = new Set([
   "www.cmfchile.cl",
   "api.sbif.cl",
   "best-cmf.cl",
@@ -36,7 +36,7 @@ const configDefault = {
   upstreamTimeoutMs: 12000,
 };
 
-export function config(env: CmfEnv) {
+function config(env: CmfEnv) {
   return {
     rateLimitMs: env.CMF_RATE_LIMIT_MS ? parseInt(env.CMF_RATE_LIMIT_MS, 10) : configDefault.rateLimitMs,
     cacheTtlS: env.CMF_CACHE_TTL_S ? parseInt(env.CMF_CACHE_TTL_S, 10) : configDefault.cacheTtlS,
