@@ -47,7 +47,9 @@ export function registrarToolsFondosInversion(server: McpServer, env: CmfEnv): v
         return toolOkTabla({
           titulo: `EEFF IFRS FI ${anio1}-${mes1 ?? "12"} → ${anio2}-${mes2 ?? "12"}, ${Math.max(0, columnas.length - 1)} fondos`,
           vacio: "Sin resultados de EEFF IFRS FI (puede requerir re-solución del anti-bot; reintente).",
-          base: { columnas },
+          // total_filas lo declara el outputSchema de esta tool, asi que
+          // sacarlo rompe su contrato. Lo caza verify-endpoints, no la suite.
+          base: { columnas, total_filas: filas.length },
           campo: "filas",
           filas,
           offset,
