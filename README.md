@@ -29,9 +29,12 @@ modelo, unos 37 mil tokens medidos. En modo código hay 2 herramientas y
 el modelo escribe JavaScript, con un costo fijo de unos 736 tokens. Es
 un 98 por ciento menos, y no crece si mañana hay 200 operaciones.
 
-Elige el modo al conectarte. La norma MCP prohíbe que el conjunto de
-herramientas cambie dentro de una conexión, así que cada ruta mantiene
-el suyo y nada se mueve bajo los pies del cliente.
+Elige el modo al conectarte. Son 2 servidores MCP distintos, cada uno
+en su propio endpoint y con su propio `serverInfo`, no un servidor que
+cambia de forma. La norma dice que el conjunto de herramientas "MUST NOT
+vary per-connection or as a side effect of other requests on the
+connection", así que un servidor cuyo conjunto dependiera de por dónde
+entró el cliente no cumpliría. El conjunto de cada endpoint es fijo.
 
 ### opencode (`opencode.json`)
 

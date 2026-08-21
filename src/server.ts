@@ -35,9 +35,15 @@ export interface OpcionesServidor {
   /**
    * "clasico" = 86 tools, una por operación. Es el contrato histórico.
    * "codigo" = 2 tools (cmf_buscar, cmf_ejecutar) sobre el mismo registro.
-   * El modo código NO cambia la lista de tools durante la conexión, así que
-   * cumple la norma MCP, que prohíbe que ese conjunto varíe como efecto
-   * secundario de otra petición.
+   *
+   * Los 2 modos son 2 SERVIDORES MCP distintos, cada uno en su propio
+   * endpoint, no un servidor que cambia de forma. La norma dice que el
+   * conjunto de tools "MUST NOT vary per-connection or as a side effect
+   * of other requests on the connection", o sea que prohíbe las 2 cosas,
+   * variar entre conexiones y variar dentro de una. Un servidor cuyo
+   * conjunto dependiera de por dónde entró el cliente violaría la
+   * primera mitad. Por eso cada endpoint es su propio servidor, con su
+   * propio `serverInfo`, y el conjunto de cada uno es fijo para siempre.
    */
   modo?: "clasico" | "codigo";
   /** Quien corre el código del modelo. Obligatorio en modo código. */
@@ -48,7 +54,9 @@ export function createServer(env: CmfEnv = {}, opciones: OpcionesServidor = {}):
   const modo = opciones.modo ?? "clasico";
   const server = new McpServer(
     {
-      name: "mcp-cmf-chile",
+      // La identidad distingue las 2 superficies. Si compartieran nombre,
+      // la lectura de "son 2 servidores" sería solo prosa nuestra.
+      name: modo === "codigo" ? "mcp-cmf-chile-codigo" : "mcp-cmf-chile",
       version: "0.1.0",
     },
     {

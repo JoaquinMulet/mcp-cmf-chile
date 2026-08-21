@@ -53,6 +53,16 @@ function prestamosDelEntorno(env: CmfEnv): Prestamos {
  */
 export class PuenteCmf extends WorkerEntrypoint<CmfEnv> {
   async llamar(nombre: string, args: Record<string, unknown>): Promise<string> {
+    // La lista permitida viaja en los props del stub y se hace cumplir
+    // ACA. No sirve filtrar el mapa que se le pasa al programa, porque
+    // el programa tiene `env` en su alcance y puede llamar al puente
+    // directo. Este es el único punto que el hijo no puede rodear, así
+    // que es donde va a vivir la curación por corredora.
+    const props = (this.ctx as { props?: { permitidas?: string[] } }).props;
+    const permitidas = props?.permitidas;
+    if (!Array.isArray(permitidas) || !permitidas.includes(nombre)) {
+      throw new Error(`La operación "${nombre}" no está disponible por esta vía.`);
+    }
     const { cmf } = prestamosDelEntorno(this.env);
     const fn = cmf[nombre];
     if (!fn) {
@@ -105,7 +115,9 @@ export default {
       const url = new URL(request.url);
       url.pathname = ruta.slice(0, -"/codigo".length) || "/mcp";
       const peticion = new Request(url, request);
-      const ejecutor = ejecutorDeWorker(caja, FECHA_COMPATIBILIDAD, () => ctx.exports.PuenteCmf({}));
+      const ejecutor = ejecutorDeWorker(caja, FECHA_COMPATIBILIDAD, (permitidas) =>
+        ctx.exports.PuenteCmf({ props: { permitidas } }),
+      );
       return createMcpHandler(() => createServer(conf, { modo: "codigo", ejecutor }))(peticion, env, ctx);
     }
 

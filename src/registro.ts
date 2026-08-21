@@ -31,8 +31,8 @@ export interface Operacion {
   nombreTool: string;
   /** Descripción completa, la misma que ve el modelo en modo clásico. */
   descripcion: string;
-  /** Nombres de los parámetros que acepta. */
-  params: string[];
+  /** Parámetros que acepta, con su descripción. */
+  params: Param[];
   /**
    * Aplica el esquema de entrada a los argumentos, igual que hace MCP en
    * el modo clásico. Devuelve los argumentos ya validados y con sus
@@ -59,7 +59,7 @@ interface EsquemaEntrada {
  * resultados distintos para la misma consulta. Los 2 caminos tienen que
  * pasar por la misma puerta.
  */
-function validadorDe(nombre: string, esquema: EsquemaEntrada | undefined, params: string[]) {
+function validadorDe(nombre: string, esquema: EsquemaEntrada | undefined, params: Param[]) {
   return (args: Record<string, unknown>): Record<string, unknown> => {
     if (typeof esquema?.parse !== "function") return args;
     try {
@@ -69,16 +69,40 @@ function validadorDe(nombre: string, esquema: EsquemaEntrada | undefined, params
         ?.map((i) => `${(i.path ?? []).join(".") || "(raíz)"}: ${i.message ?? ""}`)
         .join("; ");
       throw new Error(
-        `Argumentos inválidos para ${nombre}. ${detalle || String(e)}. Parámetros que acepta: ${params.join(", ")}.`,
+        `Argumentos inválidos para ${nombre}. ${detalle || String(e)}. Parámetros que acepta: ${params.map((p) => p.nombre).join(", ")}.`,
       );
     }
   };
 }
 
-/** Saca los nombres de los campos de un esquema zod, sin romperse si cambia. */
-function nombresDeParams(inputSchema: unknown): string[] {
+/** Un parámetro de una operación, con lo que hay que saber para usarlo. */
+export interface Param {
+  nombre: string;
+  /** El `.describe()` del esquema zod. Trae enums, formatos y defaults. */
+  descripcion: string;
+}
+
+/**
+ * Saca los parámetros de un esquema zod con su descripción.
+ *
+ * La descripción viaja porque el catálogo NO entra al contexto del modelo.
+ * Vive dentro de la caja y el modelo lo filtra con código, así que la
+ * información de más ahí es gratis. Sin esto el modelo ve `["cartera"]` y
+ * no tiene cómo saber que es un enum de 5 valores.
+ */
+function paramsDe(inputSchema: unknown): Param[] {
   const forma = (inputSchema as { shape?: Record<string, unknown> } | undefined)?.shape;
-  return forma ? Object.keys(forma) : [];
+  if (!forma) return [];
+  return Object.entries(forma).map(([nombre, campo]) => ({
+    nombre,
+    descripcion: descripcionDeCampo(campo),
+  }));
+}
+
+/** Lee el `.describe()` de un campo zod, sin romperse si zod cambia por dentro. */
+function descripcionDeCampo(campo: unknown): string {
+  const c = campo as { description?: string; def?: { description?: string } } | undefined;
+  return c?.description ?? c?.def?.description ?? "";
 }
 
 /**
@@ -99,7 +123,7 @@ export function construirRegistro(env: CmfEnv = {}): Map<string, Operacion> {
       if (operaciones.has(nombre)) {
         throw new Error(`registro: la operación "${nombre}" está declarada dos veces`);
       }
-      const params = nombresDeParams(meta.inputSchema);
+      const params = paramsDe(meta.inputSchema);
       const prepararArgs = validadorDe(nombre, meta.inputSchema as EsquemaEntrada | undefined, params);
       operaciones.set(nombre, {
         nombre,
@@ -129,16 +153,24 @@ export function construirRegistro(env: CmfEnv = {}): Map<string, Operacion> {
 /** Una entrada del catálogo, que es lo que el modelo filtra con código. */
 export interface EntradaCatalogo {
   nombre: string;
+  /** Primera frase, para listar barato. */
   resumen: string;
-  params: string[];
+  /**
+   * Descripción COMPLETA. Incluye la frase final de casi todas las
+   * operaciones que dice cuándo usar esta y cuándo usar su hermana, que
+   * es justo lo que evita elegir mal.
+   */
+  detalle: string;
+  params: Param[];
 }
 
 /**
  * Deriva el catálogo del registro. **No se escribe a mano nunca.**
  *
- * El resumen es la primera frase de la descripción. La descripción
- * completa queda disponible con `detalle`, para que el modelo pueda
- * pedirla solo de las operaciones que le interesan.
+ * Cada entrada lleva el resumen (primera frase) y el `detalle` completo.
+ * Las 2 cosas, porque el catálogo NO entra al contexto del modelo. vive
+ * dentro de la caja y el modelo se lleva solo lo que su código devuelva.
+ * Un catálogo pobre lo obliga a adivinar; uno completo no le cuesta nada.
  * @param operaciones Registro construido con `construirRegistro`.
  */
 export function derivarCatalogo(operaciones: Map<string, Operacion>): EntradaCatalogo[] {
@@ -146,6 +178,7 @@ export function derivarCatalogo(operaciones: Map<string, Operacion>): EntradaCat
     .map((op) => ({
       nombre: op.nombre,
       resumen: primeraFrase(op.descripcion),
+      detalle: op.descripcion,
       params: op.params,
     }))
     .sort((a, b) => a.nombre.localeCompare(b.nombre));
@@ -154,6 +187,8 @@ export function derivarCatalogo(operaciones: Map<string, Operacion>): EntradaCat
 /** Primera frase de un texto, para que el catálogo quepa en poco espacio. */
 export function primeraFrase(texto: string): string {
   const limpio = texto.replace(/\s+/g, " ").trim();
-  const corte = limpio.search(/\.\s|\. *$/);
+  // Un punto solo cierra la frase si lo sigue un espacio y una mayúscula,
+  // o si es el final. Así "Ley 19.880, art. 45" no parte la frase en 2.
+  const corte = limpio.search(/\.(?=\s+[A-ZÁÉÍÓÚÑ¿¡(])|\. *$/);
   return corte > 0 ? limpio.slice(0, corte + 1) : limpio;
 }

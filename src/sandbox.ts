@@ -113,6 +113,17 @@ export default {
     const nombres = new Set(env.NOMBRES);
     // Mismo criterio que en el ejecutor local: el proxy no miente sobre
     // qué operaciones existen.
+    if (!env.PUENTE) {
+      // Esta rama es cmf_buscar. No hay puente que llamar.
+      const sinRed = () => { throw new Error("Esta herramienta solo filtra el catálogo, no llama operaciones. Usa cmf_ejecutar para llamarlas."); };
+      const cmf = new Proxy({}, { get: () => sinRed, has: () => false, ownKeys: () => [] });
+      try {
+        const valor = await (async () => { ${codigo} })();
+        return Response.json({ valor: valor ?? null, registros });
+      } catch (e) {
+        return Response.json({ valor: null, registros, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
     const cmf = new Proxy({}, {
       has: (_, n) => nombres.has(String(n)),
       ownKeys: () => [...nombres],
@@ -145,10 +156,11 @@ export default {
 export function ejecutorDeWorker(
   cargador: WorkerLoaderLike,
   fechaCompatibilidad: string,
-  crearPuente: () => unknown,
+  crearPuente: (permitidas: string[]) => unknown,
 ): Ejecutor {
   return {
     async correr(codigo, prestamos) {
+      const permitidas = Object.keys(prestamos.cmf);
       // El puente es la ÚNICA puerta del programa hacia el mundo, y tiene
       // que ser un stub de WorkerEntrypoint. Los valores de `env` viajan
       // serializados al aislado; un objeto con métodos no sobrevive ese
@@ -158,10 +170,20 @@ export function ejecutorDeWorker(
         compatibilityDate: fechaCompatibilidad,
         mainModule: "programa.js",
         modules: { "programa.js": moduloDelPrograma(codigo) },
+        // El puente NO se inyecta si no hay operaciones permitidas, y
+        // cuando se inyecta lleva su lista adentro.
+        //
+        // Esto no es redundancia. El código del modelo se inserta dentro
+        // de la función `fetch(peticion, env)` del módulo, así que `env`
+        // queda en su alcance léxico y el proxy `cmf` es una comodidad,
+        // nunca una valla. Verificado contra el despliegue el 20 de
+        // agosto de 2026. `cmf_buscar`, que se documenta sin red,
+        // alcanzaba las 86 operaciones con `env.PUENTE.llamar(...)`.
+        // La única frontera real es la que vive del lado del servidor.
         env: {
           CATALOGO: prestamos.catalogo,
-          PUENTE: crearPuente(),
-          NOMBRES: Object.keys(prestamos.cmf),
+          NOMBRES: permitidas,
+          ...(permitidas.length > 0 ? { PUENTE: crearPuente(permitidas) } : {}),
         },
         // Sin salida a internet. Esta línea es la garantía de seguridad.
         globalOutbound: null,

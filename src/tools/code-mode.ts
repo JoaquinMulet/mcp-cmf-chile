@@ -91,7 +91,15 @@ const DESC_EJECUTAR = [
   "Ejemplo. const r = await cmf.seguros_deposito_polizas({ texto: 'vehiculos motorizados', limit: 500 });",
   "return r.polizas.filter(p => /VEHICULOS MOTORIZADOS/i.test(p.texto)).map(p => ({ codigo: p.codigo, entidad: p.entidad, url: p.url }))",
   "",
-  "Para leer un PDF. const d = await cmf.documento_markdown({ url }); return d.markdown.slice(0, 20000)",
+  "Para leer un PDF entero, recórrelo por tramos y filtra dentro de la caja.",
+  "  let off = 0, hallazgos = []",
+  "  while (off !== null) {",
+  "    const d = await cmf.documento_markdown({ url, offset_chars: off })",
+  "    hallazgos.push(...d.markdown.split('\n').filter(l => /deducible/i.test(l)))",
+  "    off = d.siguiente_offset_chars",
+  "  }",
+  "  return { total_chars: hallazgos.length, hallazgos: hallazgos.slice(0, 20) }",
+  "Nunca cortes con slice sin mirar siguiente_offset_chars. perderías el resto sin saberlo.",
   "",
   "Filtra ANTES de devolver. Devolver todo desperdicia tu contexto; devolver de menos te obliga a repetir la llamada.",
 ].join("\n");
@@ -131,7 +139,14 @@ export function registrarModoCodigo(server: McpServer, env: CmfEnv, ejecutor: Ej
   server.registerTool(
     "cmf_ejecutar",
     {
-      annotations: { readOnlyHint: true, destructiveHint: false },
+      // `readOnlyHint` va en false a propósito. El cuerpo lo escribe el
+      // modelo, y entre las 86 operaciones hay algunas que SI escriben
+      // estado del servidor (el registro de captchas en KV, por ejemplo,
+      // que además es de un solo uso). Una tool que corre código
+      // arbitrario no puede prometer lectura pura para toda invocación
+      // posible. `openWorldHint` se deja en su default true, que es lo
+      // honesto para un servidor que sale a cmfchile.cl.
+      annotations: { readOnlyHint: false, destructiveHint: false },
       title: "Ejecutar operaciones de la CMF con código",
       description: DESC_EJECUTAR,
       inputSchema: z.object({

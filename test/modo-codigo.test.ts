@@ -231,7 +231,7 @@ test("al menos una operación de cada módulo aplica defaults, no solo la que pr
   // refactor, esto se cae para todo el servidor, no solo para un caso.
   const ops = construirRegistro(ENV);
   const conDefaults = [...ops.values()].filter((op) => {
-    if (!op.params.includes("limit")) return false;
+    if (!op.params.some((p) => p.nombre === "limit")) return false;
     try {
       return op.prepararArgs({}).limit !== undefined;
     } catch {
@@ -248,4 +248,55 @@ test("unos argumentos inválidos explican qué parámetros acepta la operación"
     () => op.prepararArgs({ limit: "muchas" }),
     /Argumentos inválidos.*Parámetros que acepta/s,
   );
+});
+
+test("el catálogo lleva la descripción COMPLETA, no solo la primera frase", () => {
+  // El catálogo vive dentro de la caja y nunca entra al contexto del
+  // modelo, así que recortarlo no ahorra nada y sí le quita la frase que
+  // dice cuándo usar una operación y cuándo su hermana.
+  const catalogo = derivarCatalogo(construirRegistro(ENV));
+  const conGuia = catalogo.filter((e) => /use\s+cmf_/i.test(e.detalle));
+  assert.ok(conGuia.length >= 50, `esperaba muchas entradas con guía y hay ${conGuia.length}`);
+  const perdidas = conGuia.filter((e) => !/use\s+cmf_/i.test(e.resumen) && e.detalle === e.resumen);
+  assert.deepEqual(perdidas, [], "ninguna entrada puede perder su guía");
+});
+
+test("cada parámetro del catálogo lleva su descripción", () => {
+  // Sin esto el modelo ve ["cartera"] y no sabe que es un enum de 5 valores.
+  const catalogo = derivarCatalogo(construirRegistro(ENV));
+  const conParams = catalogo.filter((e) => e.params.length > 0);
+  const conDescripcion = conParams.filter((e) => e.params.some((p) => p.descripcion.length > 0));
+  assert.ok(
+    conDescripcion.length >= conParams.length * 0.9,
+    `solo ${conDescripcion.length} de ${conParams.length} operaciones describen sus parámetros`,
+  );
+});
+
+test("primeraFrase no corta en una abreviatura", () => {
+  assert.equal(
+    primeraFrase("Actos publicados segun Ley 19.880, art. 45 y siguientes. Segunda frase."),
+    "Actos publicados segun Ley 19.880, art. 45 y siguientes.",
+  );
+});
+
+test("cmf_ejecutar NO se declara de solo lectura", async () => {
+  // Corre código que el modelo escribe, y entre las 86 operaciones hay
+  // algunas que escriben estado del servidor. Prometer lectura pura
+  // sería mentirle al cliente que confía en la anotación.
+  const { cliente, cerrar } = await clienteEnModoCodigo();
+  const { tools } = await cliente.listTools();
+  const ejecutar = tools.find((t: { name: string }) => t.name === "cmf_ejecutar");
+  const buscar = tools.find((t: { name: string }) => t.name === "cmf_buscar");
+  await cerrar();
+  assert.equal(ejecutar?.annotations?.readOnlyHint, false);
+  assert.equal(buscar?.annotations?.readOnlyHint, true, "buscar sí es de solo lectura, no tiene red");
+});
+
+test("las 2 superficies se identifican distinto", () => {
+  // Son 2 servidores MCP, no uno que cambia de forma. Si compartieran
+  // identidad, esa lectura sería solo prosa.
+  const codigo = createServer(ENV, { modo: "codigo", ejecutor: ejecutorLocalDePrueba(true) });
+  const clasico = createServer(ENV);
+  const nombre = (s: unknown) => (s as { server: { _serverInfo: { name: string } } }).server._serverInfo.name;
+  assert.notEqual(nombre(codigo), nombre(clasico));
 });
