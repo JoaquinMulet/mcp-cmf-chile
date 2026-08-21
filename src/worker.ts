@@ -10,8 +10,13 @@ import pdfWasm from "../node_modules/@firecrawl/pdf-inspector-wasm/pdf_inspector
 /** Debe coincidir con `compatibility_date` de wrangler.jsonc. */
 const FECHA_COMPATIBILIDAD = "2026-07-28";
 
+/** Cuota por IP. Devuelve `success: false` cuando se pasó del techo. */
+interface Cuota {
+  limit(opciones: { key: string }): Promise<{ success: boolean }>;
+}
+
 /** Entorno del Worker, con el binding de la caja aislada si existe. */
-type EntornoWorker = CmfEnv & { CAJA?: WorkerLoaderLike };
+type EntornoWorker = CmfEnv & { CAJA?: WorkerLoaderLike; CUOTA_CODIGO?: Cuota };
 
 /** Tipos mínimos de Workers (sin depender de @cloudflare/workers-types). */
 interface ExecutionContext {
@@ -73,12 +78,32 @@ export class PuenteCmf extends WorkerEntrypoint<CmfEnv> {
 }
 
 /**
+ * Aplica la cuota por IP de la ruta que ejecuta código.
+ *
+ * Devuelve una respuesta 429 cuando hay que cortar, o `undefined` para
+ * seguir. Si el binding no existe (despliegue viejo o desarrollo local),
+ * deja pasar. Es una protección de abuso, no un control de acceso, así
+ * que fallar abierto acá no abre nada que no estuviera abierto.
+ */
+async function revisarCuota(request: Request, env: EntornoWorker): Promise<Response | undefined> {
+  const cuota = env.CUOTA_CODIGO;
+  if (!cuota) return undefined;
+  const ip = request.headers.get("cf-connecting-ip") ?? "sin-ip";
+  const { success } = await cuota.limit({ key: ip });
+  if (success) return undefined;
+  return new Response(
+    "Demasiados programas por minuto desde esta dirección. El modo código admite 30 por minuto. Espera un momento y reintenta.",
+    { status: 429, headers: { "retry-after": "60" } },
+  );
+}
+
+/**
  * Worker Cloudflare: MCP server stateless (spec 2026-07-28 + compatibilidad legacy).
  * Patrón oficial de Cloudflare (ver docs handler-api): factory per-request, nunca
  * exportar el callable directo (wrangler lo trataría como WorkerEntrypoint).
  */
 export default {
-  fetch(request: Request, env: EntornoWorker, ctx: ExecutionContext) {
+  async fetch(request: Request, env: EntornoWorker, ctx: ExecutionContext) {
     // Auth opcional: si CMF_HTTP_TOKEN está definido, exigir bearer
     const token = env.CMF_HTTP_TOKEN;
     if (token) {
@@ -94,13 +119,19 @@ export default {
     //   /codigo    2 tools (cmf_buscar, cmf_ejecutar). Costo de contexto
     //              fijo, y el servidor deja de recortar por criterio propio.
     //
-    // Van en rutas distintas a propósito. La norma MCP exige que el
-    // conjunto de tools no varíe dentro de una conexión, así que cada
-    // cliente elige su superficie al conectarse y nada cambia bajo sus pies.
+    // Van en rutas distintas a propósito. Son 2 servidores MCP, cada uno
+    // en su endpoint, porque la norma prohíbe que el conjunto de tools
+    // varíe entre conexiones del mismo servidor.
     const ruta = new URL(request.url).pathname.replace(/\/+$/, "");
     const conf: CmfEnv = { ...env, __pdfModule: pdfWasm };
 
     if (ruta.endsWith("/codigo")) {
+      // Cuota por IP. El servidor no lleva clave a propósito, es libre y
+      // gratuito, pero esta ruta ejecuta código y sin techo una sola IP
+      // puede usar la cuenta como cómputo propio. El límite se aplica
+      // ANTES de tocar la caja.
+      const respuestaCuota = await revisarCuota(request, env);
+      if (respuestaCuota) return respuestaCuota;
       const caja = env.CAJA;
       if (!caja) {
         // Fallo ruidoso. Sin caja aislada NO se ejecuta código del modelo.

@@ -87,12 +87,20 @@ test("el modo código expone SOLO 2 tools", async () => {
 
 test("las 2 tools caben en el presupuesto de contexto", async () => {
   // El punto entero del rediseño. Si esto crece, el rediseño se perdió.
+  //
+  // El techo se subió a propósito de 1500 a 2000 el 20 de agosto de 2026,
+  // cuando las descripciones ganaron la estrategia de bajar el universo
+  // una vez en vez de adivinar búsquedas. Costó unos 785 tokens y cambió
+  // un barrido que expiraba, con 85 resultados, por uno de 2 llamadas con
+  // 444. Sigue siendo 24 veces menos que los 36.900 del modo clásico.
+  // Esta prueba no existe para prohibir el crecimiento, existe para que
+  // crecer sea una decisión y no un descuido.
   const { cliente, cerrar } = await clienteEnModoCodigo();
   const { tools } = await cliente.listTools();
   const caracteres = JSON.stringify(tools).length;
   const tokensAprox = Math.round(caracteres / 3.5);
   await cerrar();
-  assert.ok(tokensAprox < 1500, `las 2 tools cuestan ~${tokensAprox} tokens y el techo es 1500`);
+  assert.ok(tokensAprox < 2000, `las 2 tools cuestan ~${tokensAprox} tokens y el techo es 2000`);
 });
 
 test("cmf_buscar filtra el catálogo y devuelve solo lo pedido", async () => {

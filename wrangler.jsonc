@@ -23,6 +23,18 @@
   "worker_loaders": [
     { "binding": "CAJA" }
   ],
+  // Cuota por IP para la ruta /codigo, que es la unica que ejecuta
+  // codigo. El servidor es libre y gratuito a proposito, asi que no
+  // lleva clave; lo que si lleva es un techo que impide que una sola
+  // IP use la cuenta como computo propio. 30 programas por minuto es
+  // holgado para un agente trabajando y corto para un abuso.
+  "ratelimits": [
+    {
+      "name": "CUOTA_CODIGO",
+      "namespace_id": "2001",
+      "simple": { "limit": 30, "period": 60 }
+    }
+  ],
   "kv_namespaces": [
     {
       "binding": "CMF_KV",

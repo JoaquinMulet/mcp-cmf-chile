@@ -77,9 +77,32 @@ const CONTRATO = [
   "Nada de cercos de markdown. Manda el código pelado.",
 ];
 
+const ESTRATEGIA = [
+  "REGLA DE ORO. si vas a buscar varias veces sobre la misma fuente, BAJA EL UNIVERSO UNA VEZ y filtra en tu código.",
+  "Cada búsqueda por texto es una consulta nueva al sitio de la CMF y tarda más de 1 segundo. Adivinar 20 términos",
+  "cuesta 20 consultas, se queda sin tiempo, y encima solo encuentra lo que las palabras que se te ocurrieron alcanzan.",
+  "Casi todas las operaciones aceptan limit y offset y devuelven total, así que puedes traer el listado completo.",
+  "",
+  "Así se hace un barrido exhaustivo de verdad, con 2 llamadas en vez de 20.",
+  "  let todas = [], off = 0;",
+  "  while (off !== null) {",
+  "    const r = await cmf.seguros_deposito_polizas({ limit: 5000, offset: off });",
+  "    todas.push(...r.polizas); off = r.next_offset;",
+  "  }",
+  "  const vocab = /vehiculo|automovil|motorizad|colision|perdida total/i;",
+  "  const hit = todas.filter(p => vocab.test(JSON.stringify(p)));",
+  "  return { universo: todas.length, encontradas: hit.length, aseguradoras: [...new Set(hit.map(p => p.entidad))] }",
+  "",
+  "Medido el 20 de agosto de 2026. el registro de pólizas tiene 5.956 filas, y ese barrido encuentra 444 pólizas",
+  "vehiculares de 30 aseguradoras. Buscando por texto con 6 términos se encuentran 85 y unas pocas compañías.",
+  "Y cuando no sepas los nombres de los campos de una fila, mira Object.keys(r.polizas[0]) antes de filtrar.",
+];
+
 const PRESUPUESTO = [
-  "Presupuesto de un programa. hasta 60 llamadas a la CMF, 10 segundos de CPU, y menos de 60 segundos de reloj,",
-  "que en la práctica son unas 15 llamadas porque cada una tarda 1 segundo o más.",
+  "Presupuesto de un programa. hasta 60 llamadas a la CMF y 10 segundos de CPU propios.",
+  "El reloj lo pone quien te llama, entre 60 y 180 segundos según el cliente, y cada llamada a la CMF tarda",
+  "más de 1 segundo, así que un programa seguro hace 15 llamadas o menos. Si necesitas más, no adivines más",
+  "términos. baja el universo con limit y offset, que son muchas menos llamadas para muchos más datos.",
   "Si necesitas más, parte el trabajo en varias llamadas a esta herramienta y devuelve el offset al que llegaste.",
   "Usa console.log antes de cada llamada. Si el programa muere, los registros son lo único que sobrevive.",
 ];
@@ -110,8 +133,7 @@ const DESC_EJECUTAR = [
   "",
   ...PRESUPUESTO,
   "",
-  "Ejemplo. const r = await cmf.seguros_deposito_polizas({ texto: 'vehiculos motorizados', limit: 500 });",
-  "return r.polizas.map(p => ({ codigo: p.codigo, entidad: p.entidad, url: p.url }))",
+  ...ESTRATEGIA,
   "",
   "Para leer un PDF entero, recórrelo por tramos y filtra adentro.",
   "  let off = 0, hallazgos = [];",

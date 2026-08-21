@@ -852,12 +852,17 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
     },
     async ({ poliza, desde, hasta, norma, tema, texto, offset, limit, exportar }) => {
       try {
-        if (!exportar && !texto && !tema && !poliza) {
-          return {
-            content: [{ type: "text", text: "El registro completo de pólizas tiene ~7.000 registros y es muy pesado. Use un filtro (texto, tema o poliza) o exportar=true para la base completa en XLSX." }],
-            isError: true,
-          };
-        }
+        // El registro completo SÍ se puede pedir. Antes se negaba porque
+        // 7.000 filas eran demasiado para una respuesta, y esa razón se
+        // acabó cuando la tool ganó offset y limit. Recorrer el registro
+        // entero y filtrarlo con el vocabulario propio es mejor que
+        // adivinar 20 búsquedas por texto, y el 20 de agosto de 2026 un
+        // agente se quedó sin tiempo justamente por hacer lo segundo.
+        //
+        // Lo único que se conserva es el aviso, y solo cuando el llamador
+        // no acotó nada. no es una negación, es una respuesta con datos y
+        // una recomendación al lado.
+        const sinFiltro = !exportar && !texto && !tema && !poliza;
         const f1 = desde ? fechaLegacy(desde) : { dd: "01", mm: "01", aa: "2009" };
         const f2 = hasta ? fechaLegacy(hasta) : { dd: "31", mm: "12", aa: "2100" };
         const params = {
@@ -887,7 +892,13 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         const textoOut = paginadas.length
           ? `Pólizas depositadas (total ${paginado.total}):\n${resumirTabla(paginadas, ["codigo", "fecha", "entidad", "texto"])}`
           : "Sin pólizas que coincidan con los filtros.";
-        return toolOk(textoOut, { total: paginado.total, next_offset: paginado.next_offset, polizas: paginadas });
+        const nota = sinFiltro
+          ? "\n\n[Pediste el registro completo. Son unas 7.000 pólizas, así que recórrelo con offset y filtra tú con el vocabulario que necesites. Sale más barato que adivinar búsquedas por texto, porque cada búsqueda es una consulta nueva al sitio de la CMF.]"
+          : "";
+        return toolOk(
+          textoOut + nota + avisoDeTramo(paginadas.length, paginado, "cmf_seguros_deposito_polizas"),
+          { total: paginado.total, next_offset: paginado.next_offset, polizas: paginadas },
+        );
       } catch (e) {
         if (e instanceof DOMException && e.name === "AbortError") {
           return {
