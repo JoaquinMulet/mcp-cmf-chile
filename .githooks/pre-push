@@ -20,3 +20,6 @@ echo "[pre-push] verificacion exhaustiva contra la CMF real (unos 4 minutos)..."
 npx tsx test/verify-endpoints.ts
 
 echo "[pre-push] verde. Esto es lo mismo que va a correr el CI."
+
+echo "[pre-push] trinquete de calidad..."
+node herramientas/trinquete.mjs

@@ -21,7 +21,10 @@
     "deploy": "wrangler deploy",
     "ci": "npm run build && npm test && npx tsx test/verify-endpoints.ts",
     "verificar-desplegado": "npx tsx test/verify-proto.ts && npx tsx test/verify-remote.ts",
-    "preparar-hooks": "git config core.hooksPath .githooks"
+    "preparar-hooks": "git config core.hooksPath .githooks",
+    "limpieza": "node herramientas/oportunidades.mjs",
+    "trinquete": "node herramientas/trinquete.mjs",
+    "lint": "biome lint src test"
   },
   "engines": {
     "node": ">=20"
