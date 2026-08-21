@@ -14,6 +14,7 @@ function decodificarLatin1(bytes: ArrayBuffer): string {
 import { pdfAMarkdown } from "../pdf.js";
 import { procesarTablasEEFF, textoVerificacion, textoAviso } from "../eeff-tables.js";
 import { paginar } from "../util/paginate.js";
+import { avisoDeTramo, paginacion, toolOkPaginado } from "../util/tramos.js";
 import {
   anioSchema, codigoSchema, fechaSchema, mesSchema, offsetSchema, limitSchema, rutSchema, tipoNormaSchema } from "../util/schemas.js";
 
@@ -26,7 +27,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       annotations: { readOnlyHint: true, destructiveHint: false },
       title: "Buscar normativa",
       description:
-        "Busca normas de la CMF (circulares CIR, oficios OFC, normas de carácter general NCG) por NÚMERO en el buscador legacy (verificado: solo devuelve resultados por número; las búsquedas por fechas sin número no funcionan en el sistema de la CMF). Use tipo (CIR/OFC/NCG/ALL) y numero (ej: 2343); los filtros desde/hasta y materia se envían pero el sistema legacy los ignora. Para descargar el PDF use cmf_normativa_descargar con la ruta del compendio.",
+        "Busca normas de la CMF (circulares CIR, oficios OFC, normas de carácter general NCG) por NÚMERO en el buscador legacy (verificado: solo devuelve resultados por número; las búsquedas por fechas sin número no funcionan en el sistema de la CMF). Use tipo (CIR/OFC/NCG/ALL) y numero (ej: 2343); los filtros desde/hasta y materia se envían pero el sistema legacy los ignora. Para descargar el PDF use cmf_normativa_descargar con la ruta del compendio. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         tipo: tipoNormaSchema.default("ALL"),
         numero: z.string().optional().describe("Número de la norma"),
@@ -87,7 +88,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         const texto = normas.length
           ? `Normativa ${tipo} (total ${paginado.total}):\n${resumirTabla(normas, Object.keys(normas[0] ?? {}).slice(0, 5))}`
           : "Sin normas que coincidan. Si esperabas resultados, el buscador de la CMF puede estar caído (verifica en cmfchile.cl).";
-        return toolOk(texto, { normas, total: paginado.total, next_offset: paginado.next_offset });
+        return toolOk(texto + avisoDeTramo(normas.length, paginado, "cmf_normativa_buscar"), { normas, total: paginado.total, next_offset: paginado.next_offset });
       } catch (e) {
         return fromError(e);
       }
@@ -101,19 +102,18 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: normativaDescargaSchema,
       title: "Descargar norma (PDF)",
       description:
-        "Descarga el PDF de una norma del compendio de la CMF y lo devuelve en base64 si es pequeño (<4MB) o con la URL directa si es más grande. Requiere la ruta exacta del archivo dentro del compendio (ej: /web/compendio/cir/cir_2343_2024.pdf). Si la respuesta no es un PDF directo (puede requerir autenticación), lo indica. Use esta tool cuando conozca la ruta del documento; para encontrar normas use cmf_normativa_buscar; para leer el PDF como texto use cmf_documento_markdown con la URL.",
+        "Descarga el PDF de una norma del compendio de la CMF y lo devuelve en base64 si es pequeño (<4MB) o con la URL directa si es más grande. Requiere la ruta exacta del archivo dentro del compendio (ej: /web/compendio/cir/cir_2343_2024.pdf). Si la respuesta no es un PDF directo (puede requerir autenticación), lo indica. Use esta tool cuando conozca la ruta del documento; para encontrar normas use cmf_normativa_buscar; para leer el PDF como texto use cmf_documento_markdown con la URL. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
-        archivo: z.string().describe("Ruta del archivo del compendio (ej: /web/compendio/cir/cir_2343_2024.pdf)"),
-      }),
+        archivo: z.string().describe("Ruta del archivo del compendio (ej: /web/compendio/cir/cir_2343_2024.pdf)"), ...paginacion(50) }),
     },
-    async ({ archivo }) => {
+    async ({ archivo, offset, limit }) => {
       try {
         const bytes = await getLegacyBinario("/institucional/mercados/ver_archivo.php", { archivo }, env);
         const esPdf = bytes.length > 5 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46;
         if (!esPdf) {
           const texto = new TextDecoder("windows-1252").decode(bytes);
           const filas = htmlTablaAJson(texto);
-          return toolOk(`El archivo no es un PDF directo (${bytes.length} bytes); puede requerir autenticación.`, { filas: filas.slice(0, 50) });
+          return toolOkPaginado(`El archivo no es un PDF directo (${bytes.length} bytes); puede requerir autenticación.`, {  }, "filas", filas, offset, limit, "cmf_normativa_descargar");
         }
         const tamano = bytes.length;
         const urlPdf = `https://www.cmfchile.cl/institucional/mercados/ver_archivo.php?archivo=${encodeURIComponent(archivo)}`;
@@ -145,17 +145,16 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "EEFF de compañías de seguros",
       description:
-        "Devuelve los estados financieros (FECU) de compañías de seguros generales o de vida de la CMF para un rango de períodos. Requiere anio1/anio2 en AAAA (rango de años); mes1/mes2 en MM opcionales (default 12). Filtre por tipo (generales o vida; default generales) y sociedades (array de códigos de compañía; ['0']=todas). Use esta tool para balances de aseguradoras; para su clasificación de riesgo use cmf_seguros_clasificacion_riesgo.",
+        "Devuelve los estados financieros (FECU) de compañías de seguros generales o de vida de la CMF para un rango de períodos. Requiere anio1/anio2 en AAAA (rango de años); mes1/mes2 en MM opcionales (default 12). Filtre por tipo (generales o vida; default generales) y sociedades (array de códigos de compañía; ['0']=todas). Use esta tool para balances de aseguradoras; para su clasificación de riesgo use cmf_seguros_clasificacion_riesgo. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         tipo: z.enum(["generales", "vida"]).default("generales").describe("Segmento de seguros: generales o vida (default generales)"),
         sociedades: z.array(z.string()).default(["0"]).describe("Códigos de compañías (array; ['0']=todas)"),
         anio1: anioSchema,
         anio2: anioSchema,
         mes1: mesSchema.optional(),
-        mes2: mesSchema.optional(),
-      }),
+        mes2: mesSchema.optional(), ...paginacion(300) }),
     },
-    async ({ tipo, sociedades, anio1, anio2, mes1, mes2 }) => {
+    async ({ tipo, sociedades, anio1, anio2, mes1, mes2, offset, limit }) => {
       try {
         const path =
           tipo === "generales"
@@ -181,7 +180,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `EEFF seguros ${tipo} ${anio1}-${anio2} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
           : "Sin resultados de EEFF de seguros.";
-        return toolOk(texto, { tipo, filas: filas.slice(0, 300) });
+        return toolOkPaginado(texto, { tipo }, "filas", filas, offset, limit, "cmf_seguros_eeff");
       } catch (e) {
         return fromError(e);
       }
@@ -195,7 +194,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Estadísticas de Rentas Vitalicias",
       description:
-        "Devuelve estadísticas del mercado de rentas vitalicias previsionales por compañía (grid oficial de la CMF): comisiones de intermediación (com_int_rvp), primas únicas (pri_uni_rvp) y tasas de interés promedio (tas_int_med_rvp). Fije el rango desde/hasta en YYYY-MM-DD (default: año actual completo) y pagine con offset/limit. Use esta tool para estadísticas RVP por compañía; para estadísticas agregadas del sistema SCOMP use cmf_seguros_scomp.",
+        "Devuelve estadísticas del mercado de rentas vitalicias previsionales por compañía (grid oficial de la CMF): comisiones de intermediación (com_int_rvp), primas únicas (pri_uni_rvp) y tasas de interés promedio (tas_int_med_rvp). Fije el rango desde/hasta en YYYY-MM-DD (default: año actual completo) y pagine con offset/limit. Use esta tool para estadísticas RVP por compañía; para estadísticas agregadas del sistema SCOMP use cmf_seguros_scomp. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         codigo: z
           .enum(["com_int_rvp", "pri_uni_rvp", "tas_int_med_rvp"])
@@ -229,7 +228,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `RVP ${codigo} ${aaaaIni}-${mmIni} a ${aaaaFin}-${mmFin} (total ${paginado.total}):\n${resumirTabla(paginadas, Object.keys(paginadas[0] ?? {}).slice(0, 6))}`
           : `Sin estadísticas RVP ${codigo} para el rango (la CMF no devolvió filas).`;
-        return toolOk(texto, { codigo, filas: paginadas, total: paginado.total });
+        return toolOk(texto + avisoDeTramo(paginadas.length, paginado, "cmf_seguros_rentas_vitalicias"), {  codigo, filas: paginadas, total: paginado.total, next_offset: paginado.next_offset });
       } catch (e) {
         return fromError(e);
       }
@@ -243,7 +242,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Estadísticas SCOMP",
       description:
-        "Devuelve las estadísticas del SCOMP (Sistema de Consultas y Ofertas del Mercado de Pensiones) publicadas por la CMF. Elija el informe (solicitudes=inf1, certificados emitidos=inf22, aceptaciones según vía=inf28), el rango desde/hasta en YYYY-MM-DD y la granularidad (D=día, M=mes, A=año). Use esta tool para el mercado de pensiones a nivel sistema; para estadísticas por compañía use cmf_seguros_rentas_vitalicias.",
+        "Devuelve las estadísticas del SCOMP (Sistema de Consultas y Ofertas del Mercado de Pensiones) publicadas por la CMF. Elija el informe (solicitudes=inf1, certificados emitidos=inf22, aceptaciones según vía=inf28), el rango desde/hasta en YYYY-MM-DD y la granularidad (D=día, M=mes, A=año). Use esta tool para el mercado de pensiones a nivel sistema; para estadísticas por compañía use cmf_seguros_rentas_vitalicias. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         informe: z.enum(["inf1", "inf22", "inf28"]).default("inf1").describe("Informe: inf1=solicitudes de oferta ingresadas, inf22=certificados de ofertas emitidos, inf28=aceptaciones según vía de ingreso (default inf1)"),
         desde: fechaSchema,
@@ -279,7 +278,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `SCOMP ${informe} (total ${paginado.total}):\n${resumirTabla(paginadas, Object.keys(paginadas[0] ?? {}).slice(0, 6))}`
           : `Sin estadísticas SCOMP ${informe} para el rango.`;
-        return toolOk(texto, { informe, filas: paginadas, total: paginado.total });
+        return toolOk(texto + avisoDeTramo(paginadas.length, paginado, "cmf_seguros_scomp"), {  informe, filas: paginadas, total: paginado.total, next_offset: paginado.next_offset });
       } catch (e) {
         return fromError(e);
       }
@@ -293,10 +292,10 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Clasificación de riesgo de seguros (RGCRI)",
       description:
-        "Devuelve la clasificación de riesgo de las compañías de seguros (RGCRI) publicada por la CMF, con las reseñas de las clasificadoras por período. Filtre por anio en AAAA y mes en MM (opcional; default 12). Use esta tool para evaluar la solvencia de aseguradoras; para sus estados financieros use cmf_seguros_eeff.",
-      inputSchema: z.object({ anio: anioSchema, mes: mesSchema.optional() }),
+        "Devuelve la clasificación de riesgo de las compañías de seguros (RGCRI) publicada por la CMF, con las reseñas de las clasificadoras por período. Filtre por anio en AAAA y mes en MM (opcional; default 12). Use esta tool para evaluar la solvencia de aseguradoras; para sus estados financieros use cmf_seguros_eeff. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+      inputSchema: z.object({ anio: anioSchema, mes: mesSchema.optional(), ...paginacion(200) }),
     },
-    async ({ anio, mes }) => {
+    async ({ anio, mes, offset, limit }) => {
       try {
         const html = await getLegacy(
           "/institucional/estadisticas/merc_seguros/rgcri/seg_rgcri_inf1.php",
@@ -307,7 +306,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `RGCRI ${anio}-${mes ?? "12"} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
           : "Sin clasificaciones de riesgo para el período.";
-        return toolOk(texto, { anio, filas: filas.slice(0, 200) });
+        return toolOkPaginado(texto, { anio }, "filas", filas, offset, limit, "cmf_seguros_clasificacion_riesgo");
       } catch (e) {
         return fromError(e);
       }
@@ -321,7 +320,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Transacciones Art. 12 Ley 18.045",
       description:
-        "Devuelve las transacciones de compañías de seguros informadas conforme al artículo 12 de la Ley 18.045 (Ley de Mercado de Valores), publicadas por la CMF, filtrables por sociedad (RUT) y rango de fechas. Fije desde/hasta en YYYY-MM-DD y soc opcional (RUT sin DV; omitir = todas). Use esta tool para transacciones del mercado de seguros; para los estados financieros de aseguradoras use cmf_seguros_eeff.",
+        "Devuelve las transacciones de compañías de seguros informadas conforme al artículo 12 de la Ley 18.045 (Ley de Mercado de Valores), publicadas por la CMF, filtrables por sociedad (RUT) y rango de fechas. Fije desde/hasta en YYYY-MM-DD y soc opcional (RUT sin DV; omitir = todas). Use esta tool para transacciones del mercado de seguros; para los estados financieros de aseguradoras use cmf_seguros_eeff. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         soc: rutSchema.optional().describe("RUT de la sociedad (sin DV; omitir = todas)"),
         desde: fechaSchema,
@@ -356,7 +355,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `Transacciones Art. 12 (total ${paginado.total}):\n${resumirTabla(paginadas, Object.keys(paginadas[0] ?? {}).slice(0, 6))}`
           : `Sin transacciones Art. 12 para el rango.`;
-        return toolOk(texto, { filas: paginadas, total: paginado.total });
+        return toolOk(texto + avisoDeTramo(paginadas.length, paginado, "cmf_seguros_satra"), {  filas: paginadas, total: paginado.total, next_offset: paginado.next_offset });
       } catch (e) {
         return fromError(e);
       }
@@ -370,7 +369,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Siniestros detectados no reportados",
       description:
-        "Devuelve los siniestros detectados por la CMF que no fueron reportados por las compañías de seguros dentro del plazo, por año. Fije anio en AAAA y pagine con offset/limit. Use esta tool para fiscalización de aseguradoras; para el cumplimiento normativo general use cmf_seguros_cumplimiento.",
+        "Devuelve los siniestros detectados por la CMF que no fueron reportados por las compañías de seguros dentro del plazo, por año. Fije anio en AAAA y pagine con offset/limit. Use esta tool para fiscalización de aseguradoras; para el cumplimiento normativo general use cmf_seguros_cumplimiento. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         anio: anioSchema.optional().describe("Año del listado en AAAA (default año actual)"),
         offset: offsetSchema,
@@ -398,7 +397,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `Siniestros no reportados ${aa} (total ${paginado.total}):\n${resumirTabla(paginadas, Object.keys(paginadas[0] ?? {}).slice(0, 6))}`
           : `Sin siniestros no reportados para ${aa}.`;
-        return toolOk(texto, { anio: aa, filas: paginadas, total: paginado.total });
+        return toolOk(texto + avisoDeTramo(paginadas.length, paginado, "cmf_seguros_siniestros"), {  anio: aa, filas: paginadas, total: paginado.total, next_offset: paginado.next_offset });
       } catch (e) {
         return fromError(e);
       }
@@ -412,14 +411,13 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Cumplimiento de normativa de seguros",
       description:
-        "Devuelve el estado de cumplimiento de la normativa por compañías de seguros de la CMF (sistema sv_cumplimientos, XLSX oficial), con hasta 200 filas. Fije anio en AAAA, mes opcional en MM (default 12) y tipoentidad (CSVID=seguros de vida, default; CSGEN=seguros generales; R=reaseguradoras). Use esta tool para supervisar cumplimiento; para siniestros no reportados use cmf_seguros_siniestros.",
+        "Devuelve el estado de cumplimiento de la normativa por compañías de seguros de la CMF (sistema sv_cumplimientos, XLSX oficial), con hasta 200 filas. Fije anio en AAAA, mes opcional en MM (default 12) y tipoentidad (CSVID=seguros de vida, default; CSGEN=seguros generales; R=reaseguradoras). Use esta tool para supervisar cumplimiento; para siniestros no reportados use cmf_seguros_siniestros. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         anio: anioSchema,
         mes: mesSchema.optional().describe("Mes final en MM (default 12)"),
-        tipoentidad: z.string().optional().describe("Tipo de entidad: CSVID=seguros de vida (default), CSGEN=seguros generales, R=reaseguradoras"),
-      }),
+        tipoentidad: z.string().optional().describe("Tipo de entidad: CSVID=seguros de vida (default), CSGEN=seguros generales, R=reaseguradoras"), ...paginacion(200) }),
     },
-    async ({ anio, mes, tipoentidad }) => {
+    async ({ anio, mes, tipoentidad, offset, limit }) => {
       try {
         const tiposociedad = tipoentidad === "CSGEN" ? "G" : tipoentidad === "R" ? "R" : "A";
         const bytes = await getLegacyBinario(
@@ -449,7 +447,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
           );
         }
         const texto = `Cumplimiento ${anio}-${mes ?? "12"} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`;
-        return toolOk(texto, { anio, filas: filas.slice(0, 200) });
+        return toolOkPaginado(texto, { anio }, "filas", filas, offset, limit, "cmf_seguros_cumplimiento");
       } catch (e) {
         return fromError(e);
       }
@@ -524,7 +522,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Producción de corredores de seguros",
       description:
-        "Devuelve la producción de corredores de seguros publicada por la CMF (sistema ISPRO) para un período AAAAMM: descarga el ZIP oficial y parsea los archivos de ancho fijo (identifi=catálogo de corredores, prodramo=producción por ramo, intercia=producción por compañía). Fije peri en AAAAMM (ej: 202512; los períodos disponibles van del año 2017 al actual, corte diciembre) y elija sección. Use esta tool para la intermediación del mercado de seguros; para la cartera de las compañías use cmf_seguros_inversiones_vida.",
+        "Devuelve la producción de corredores de seguros publicada por la CMF (sistema ISPRO) para un período AAAAMM: descarga el ZIP oficial y parsea los archivos de ancho fijo (identifi=catálogo de corredores, prodramo=producción por ramo, intercia=producción por compañía). Fije peri en AAAAMM (ej: 202512; los períodos disponibles van del año 2017 al actual, corte diciembre) y elija sección. Use esta tool para la intermediación del mercado de seguros; para la cartera de las compañías use cmf_seguros_inversiones_vida. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         peri: z.string().regex(/^\d{6}$/, "AAAAMM").describe("Período AAAAMM (ej: 202512)"),
         seccion: z.enum(["identifi", "prodramo", "intercia"]).default("identifi").describe("Sección: identifi=catálogo de corredores (default), prodramo=producción por ramo, intercia=producción por compañía"),
@@ -563,7 +561,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         });
         const { filas: paginadas, paginado } = paginar(filas, offset, limit);
         const texto = `ISPRO ${seccion} ${peri} (${filas.length} filas; cabecera del archivo: ${lineas[0]?.slice(0, 80)}):\n${resumirTabla(paginadas, Object.keys(paginadas[0] ?? {}))}`;
-        return toolOk(texto, { peri, seccion, filas: paginadas, total: paginado.total });
+        return toolOk(texto + avisoDeTramo(paginadas.length, paginado, "cmf_seguros_produccion_corredores"), {  peri, seccion, filas: paginadas, total: paginado.total, next_offset: paginado.next_offset });
       } catch (e) {
         return fromError(e);
       }
@@ -577,10 +575,10 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Estadísticas Conoce tu seguro (SIC)",
       description:
-        "Devuelve las estadísticas del sistema 'Conoce tu seguro' (SIC) de la CMF: consultas de usuarios sobre pólizas de seguros en un rango de fechas, con hasta 200 filas. Requiere desde y hasta en YYYY-MM-DD (acepta DD/MM/AAAA). Use esta tool para la demanda de información del mercado de seguros; para el registro de pólizas depositadas use cmf_seguros_deposito_polizas.",
-      inputSchema: z.object({ desde: fechaSchema, hasta: fechaSchema }),
+        "Devuelve las estadísticas del sistema 'Conoce tu seguro' (SIC) de la CMF: consultas de usuarios sobre pólizas de seguros en un rango de fechas, con hasta 200 filas. Requiere desde y hasta en YYYY-MM-DD (acepta DD/MM/AAAA). Use esta tool para la demanda de información del mercado de seguros; para el registro de pólizas depositadas use cmf_seguros_deposito_polizas. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+      inputSchema: z.object({ desde: fechaSchema, hasta: fechaSchema, ...paginacion(200) }),
     },
-    async ({ desde, hasta }) => {
+    async ({ desde, hasta, offset, limit }) => {
       try {
         const html = await getLegacy(
           "/institucional/estadisticas/sic/index.php",
@@ -591,7 +589,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `Estadísticas SIC (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
           : "Sin estadísticas SIC.";
-        return toolOk(texto, { desde, hasta, filas: filas.slice(0, 200) });
+        return toolOkPaginado(texto, { desde, hasta }, "filas", filas, offset, limit, "cmf_seguros_sic");
       } catch (e) {
         return fromError(e);
       }
@@ -626,13 +624,12 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: xbrlVisorSchema,
       title: "Visor de taxonomía XBRL",
       description:
-        "Navega la estructura de una taxonomía XBRL de la CMF: etiquetas y conceptos según taxonomía y fecha de versión. Requiere taxonomia (cl-ci, cl-cc, cl-bs, cl-ei, cl-hb o cl-hs) y fecha de versión en YYYY-MM-DD (ej: 2021-01-04). Use esta tool para explorar el detalle de una taxonomía; para listar las disponibles use cmf_xbrl_taxonomias.",
+        "Navega la estructura de una taxonomía XBRL de la CMF: etiquetas y conceptos según taxonomía y fecha de versión. Requiere taxonomia (cl-ci, cl-cc, cl-bs, cl-ei, cl-hb o cl-hs) y fecha de versión en YYYY-MM-DD (ej: 2021-01-04). Use esta tool para explorar el detalle de una taxonomía; para listar las disponibles use cmf_xbrl_taxonomias. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         taxonomia: z.enum(["cl-ci", "cl-cc", "cl-bs", "cl-ei", "cl-hb", "cl-hs"]).describe("Taxonomía a navegar: cl-ci, cl-cc, cl-bs, cl-ei, cl-hb o cl-hs"),
-        fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("Fecha de versión (ej: 2021-01-04)"),
-      }),
+        fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("Fecha de versión (ej: 2021-01-04)"), ...paginacion(200) }),
     },
-    async ({ taxonomia, fecha }) => {
+    async ({ taxonomia, fecha, offset, limit }) => {
       try {
         const html = await getLegacy(
           `/institucional/estadisticas/xbrl_intranet/prototipo/displaytaxonomia/${taxonomia}_shell_${fecha}.html`,
@@ -643,7 +640,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `Taxonomía ${taxonomia} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 4))}`
           : `Visor de ${taxonomia} cargado (${html.length} bytes); estructura no tabular.`;
-        return toolOk(texto, { taxonomia, fecha, filas: filas.slice(0, 200) });
+        return toolOkPaginado(texto, { taxonomia, fecha }, "filas", filas, offset, limit, "cmf_xbrl_visor");
       } catch (e) {
         return fromError(e);
       }
@@ -833,7 +830,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       annotations: { readOnlyHint: true, destructiveHint: false },
       title: "Registro de Depósito de Pólizas (seguros)",
       description:
-        "Busca en el Registro de Depósito de Pólizas de la CMF (mercado de seguros): pólizas y cláusulas depositadas por compañías de seguros, con código, fecha de depósito, aseguradora, texto depositado, temas y norma (NCG 124/349). Sin filtros devuelve el registro completo (~7.000 pólizas) — use filtros o paginación. Con exportar=true descarga el exportador XLSX oficial de la base.",
+        "Busca en el Registro de Depósito de Pólizas de la CMF (mercado de seguros): pólizas y cláusulas depositadas por compañías de seguros, con código, fecha de depósito, aseguradora, texto depositado, temas y norma (NCG 124/349). Sin filtros devuelve el registro completo (~7.000 pólizas) — use filtros o paginación. Con exportar=true descarga el exportador XLSX oficial de la base. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         poliza: z.string().optional().describe("Código de póliza (ej: POL107024)"),
         desde: fechaSchema.optional(),
@@ -880,7 +877,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
           const textoOut = paginadas.length
             ? `Exportador de pólizas depositadas (total ${paginado.total}):\n${resumirTabla(paginadas, ["Codigo", "Fecha", "Entidad", "Texto depositado", "Temas"])}`
             : "Sin pólizas en el exportador para los filtros.";
-          return toolOk(textoOut, { total: paginado.total, filas: paginadas, exportador: "xlsx" });
+          return toolOk(textoOut + avisoDeTramo(paginadas.length, paginado, "cmf_seguros_deposito_polizas"), {  total: paginado.total, filas: paginadas, exportador: "xlsx", next_offset: paginado.next_offset });
         }
         const html = await getLegacy("/institucional/inc/seguros_deposito_consulta2.php", params, envLento);
         const filas = htmlTablaAJson(html, ["codigo", "fecha", "entidad", "texto", "polizas", "temas", "resolucion"]).filter(
@@ -909,7 +906,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       annotations: { readOnlyHint: true, destructiveHint: false },
       title: "Resoluciones que prohíben depósito de pólizas",
       description:
-        "Devuelve las resoluciones de la CMF que prohíben a una aseguradora depositar pólizas (registro desde abril de 2009), con número, fecha, póliza afectada, materia y archivo. Sin filtros; use offset/limit para paginar. Use esta tool para saber qué aseguradoras tienen restringido el depósito; para buscar pólizas depositadas use cmf_seguros_deposito_polizas.",
+        "Devuelve las resoluciones de la CMF que prohíben a una aseguradora depositar pólizas (registro desde abril de 2009), con número, fecha, póliza afectada, materia y archivo. Sin filtros; use offset/limit para paginar. Use esta tool para saber qué aseguradoras tienen restringido el depósito; para buscar pólizas depositadas use cmf_seguros_deposito_polizas. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({ offset: offsetSchema, limit: limitSchema }),
       outputSchema: z.object({
         total: z.number().describe("Total de resoluciones de prohibición"),
@@ -943,13 +940,12 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Buscador de tasas bancarias",
       description:
-        "Devuelve las tasas de interés de instituciones financieras chilenas publicadas por la CMF (servlet InfoFinanciera de la ex SBIF, host tasas.cmfchile.cl). El índice 4.2.1 trae las tasas de interés corriente y máxima convencional por segmento para una fecha; otros índices: 4.2.2=certificados de tasas (por año) y 4.2.3=tasas por período (POST). Use esta tool para tasas bancarias; para reportes de instituciones use cmf_bancos_reportes.",
+        "Devuelve las tasas de interés de instituciones financieras chilenas publicadas por la CMF (servlet InfoFinanciera de la ex SBIF, host tasas.cmfchile.cl). El índice 4.2.1 trae las tasas de interés corriente y máxima convencional por segmento para una fecha; otros índices: 4.2.2=certificados de tasas (por año) y 4.2.3=tasas por período (POST). Use esta tool para tasas bancarias; para reportes de instituciones use cmf_bancos_reportes. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         indice: z.string().default("4.2.1").describe("Índice del reporte (default 4.2.1=tasas por fecha)"),
-        fecha: fechaSchema.optional().describe("Fecha de las tasas en YYYY-MM-DD (default hoy)"),
-      }),
+        fecha: fechaSchema.optional().describe("Fecha de las tasas en YYYY-MM-DD (default hoy)"), ...paginacion(200) }),
     },
-    async ({ indice, fecha }) => {
+    async ({ indice, fecha, offset, limit }) => {
       try {
         const f = fecha ? fechaLegacy(fecha) : (() => { const d = new Date(); return { dd: String(d.getDate()).padStart(2, "0"), mm: String(d.getMonth() + 1).padStart(2, "0"), aa: String(d.getFullYear()) }; })();
         const url = `https://tasas.cmfchile.cl/sbifweb/servlet/InfoFinanciera?indice=${indice}&FECHA=${f.dd}/${f.mm}/${f.aa}`;
@@ -966,7 +962,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `Tasas (${filas.length} filas, índice ${indice}, fecha ${f.dd}/${f.mm}/${f.aa}):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
           : `El índice ${indice} no devolvió tablas parseables (puede ser un formulario o un PDF).`;
-        return toolOk(texto, { indice, fecha: `${f.aa}-${f.mm}-${f.dd}`, filas: filas.slice(0, 200) });
+        return toolOkPaginado(texto, { indice, fecha: `${f.aa}-${f.mm}-${f.dd}` }, "filas", filas, offset, limit, "cmf_bancos_tasas");
       } catch (e) {
         return fromError(e);
       }
@@ -980,10 +976,10 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Cronología bancaria",
       description:
-        "Devuelve la cronología histórica del sistema bancario chileno publicada por la CMF (servlet CronologiaBancaria de la ex SBIF), con hasta 200 filas. Elija el capítulo con indice (default 8.0); si el contenido no es tabular, la tool lo indica. Use esta tool para hitos de la banca chilena; para tasas de interés use cmf_bancos_tasas.",
-      inputSchema: z.object({ indice: z.string().default("8.0").describe("Índice del capítulo de la cronología (default 8.0)") }),
+        "Devuelve la cronología histórica del sistema bancario chileno publicada por la CMF (servlet CronologiaBancaria de la ex SBIF), con hasta 200 filas. Elija el capítulo con indice (default 8.0); si el contenido no es tabular, la tool lo indica. Use esta tool para hitos de la banca chilena; para tasas de interés use cmf_bancos_tasas. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+      inputSchema: z.object({ indice: z.string().default("8.0").describe("Índice del capítulo de la cronología (default 8.0)"), ...paginacion(200) }),
     },
-    async ({ indice }) => {
+    async ({ indice, offset, limit }) => {
       try {
         const html = await getLegacy(
           "/sbifweb/servlet/CronologiaBancaria",
@@ -994,7 +990,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `Cronología bancaria (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 5))}`
           : "Cronología cargada; contenido no tabular.";
-        return toolOk(texto, { indice, filas: filas.slice(0, 200) });
+        return toolOkPaginado(texto, { indice }, "filas", filas, offset, limit, "cmf_bancos_cronologia");
       } catch (e) {
         return fromError(e);
       }
@@ -1008,15 +1004,14 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Reportes de instituciones financieras (BaseDato)",
       description:
-        "Devuelve reportes del sistema BaseDato de instituciones financieras de la CMF (ex SBIF, host datosbanco.cmfchile.cl): MR1=información contable mensual (default), ADC=adecuación de capital, ADC2=adecuación de capital (v2), HEC=hechos económicos y MB1. Fije codUnicoBank (código SBIF, ej: 001; vea cmf://bancos/codigos), reporte, indice (default 30.1) y período (periodo_inicial AAAA-MM, default período actual; solo se usan mes y año). La salida trae hasta 200 filas; si la CMF devuelve el challenge anti-bot en vez de tablas, la tool lo indica. Use esta tool para reportes históricos de la banca; para tasas de interés use cmf_bancos_tasas.",
+        "Devuelve reportes del sistema BaseDato de instituciones financieras de la CMF (ex SBIF, host datosbanco.cmfchile.cl): MR1=información contable mensual (default), ADC=adecuación de capital, ADC2=adecuación de capital (v2), HEC=hechos económicos y MB1. Fije codUnicoBank (código SBIF, ej: 001; vea cmf://bancos/codigos), reporte, indice (default 30.1) y período (periodo_inicial AAAA-MM, default período actual; solo se usan mes y año). La salida trae hasta 200 filas; si la CMF devuelve el challenge anti-bot en vez de tablas, la tool lo indica. Use esta tool para reportes históricos de la banca; para tasas de interés use cmf_bancos_tasas. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         reporte: z.enum(["MR1", "MB1", "ADC", "ADC2", "HEC"]).default("MR1").describe("Código del reporte: MR1=información contable mensual (default), ADC=adecuación de capital, ADC2=adecuación (v2), HEC=hechos económicos, MB1"),
         indice: z.string().default("30.1").describe("Índice del reporte (default 30.1)"),
         codUnicoBank: codigoSchema.optional().describe("Código SBIF de la institución (ej: 001=Banco de Chile; default 001)"),
-        periodo_inicial: z.string().regex(/^\d{4}-\d{2}$/).optional().describe("Período en AAAA-MM (ej: 2026-06; default período actual)"),
-      }),
+        periodo_inicial: z.string().regex(/^\d{4}-\d{2}$/).optional().describe("Período en AAAA-MM (ej: 2026-06; default período actual)"), ...paginacion(200) }),
     },
-    async ({ reporte, indice, codUnicoBank, periodo_inicial }) => {
+    async ({ reporte, indice, codUnicoBank, periodo_inicial, offset, limit }) => {
       try {
         const ahora = new Date();
         const per = periodo_inicial ?? `${ahora.getFullYear()}-${String(ahora.getMonth() + 1).padStart(2, "0")}`;
@@ -1034,7 +1029,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `Reporte ${reporte} ${per} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
           : `El reporte ${reporte} no devolvió tablas parseables para ${per}.`;
-        return toolOk(texto, { reporte, indice, periodo: per, filas: filas.slice(0, 200) });
+        return toolOkPaginado(texto, { reporte, indice, periodo: per }, "filas", filas, offset, limit, "cmf_bancos_reportes");
       } catch (e) {
         return fromError(e);
       }

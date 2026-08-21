@@ -4,6 +4,7 @@ import { apiSerieSchema, apiPeriodoSchema } from "../util/schemas-output.js";
 import { apiV3, type CmfEnv } from "../client/cmf-client.js";
 import { fromError, toolError, toolOk } from "../util/errors.js";
 import { anioSchema, mesSchema, serieIndicadorSchema, diaSchema, codigoSchema } from "../util/schemas.js";
+import { paginacion, toolOkPaginado } from "../util/tramos.js";
 
 /** Tools de la API oficial v3 (api.sbif.cl). Requieren CMF_API_KEY en el entorno del servidor. */
 
@@ -69,14 +70,13 @@ export function registrarToolsApi(server: McpServer, env: CmfEnv): void {
       outputSchema: apiSerieSchema,
       title: "Serie histórica de indicador",
       description:
-        "Devuelve la serie histórica mensual de un indicador económico (UF, dólar, euro, TAB, UTM, IPC, TIP, TMC) en un rango de períodos, desde la API oficial v3 de la CMF. Defina el rango con desde/hasta en AAAA o AAAA-MM (ej: desde=2023-01, hasta=2024-12; el día se ignora); si algún extremo no trae mes, la consulta se hace por año completo. La salida incluye total y hasta 100 registros; \"Sin registros\" indica que el rango no tiene datos, verifique el período. Requiere la API key oficial configurada en el servidor (CMF_API_KEY). Use esta tool para evoluciones históricas; para un valor puntual use cmf_api_indicador_valor.",
+        "Devuelve la serie histórica mensual de un indicador económico (UF, dólar, euro, TAB, UTM, IPC, TIP, TMC) en un rango de períodos, desde la API oficial v3 de la CMF. Defina el rango con desde/hasta en AAAA o AAAA-MM (ej: desde=2023-01, hasta=2024-12; el día se ignora); si algún extremo no trae mes, la consulta se hace por año completo. La salida incluye total y hasta 100 registros; \"Sin registros\" indica que el rango no tiene datos, verifique el período. Requiere la API key oficial configurada en el servidor (CMF_API_KEY). Use esta tool para evoluciones históricas; para un valor puntual use cmf_api_indicador_valor. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         serie: serieIndicadorSchema.describe("Indicador a consultar: uf, dolar, euro, tab, utm, ipc, tip o tmc. Ej: uf"),
         desde: z.coerce.string().transform((v) => v.slice(0, 7)).pipe(z.string().regex(/^\d{4}(-\d{2})?$/, "AAAA o AAAA-MM")).describe("Inicio del rango en AAAA o AAAA-MM. Ej: 2023-01"),
-        hasta: z.coerce.string().transform((v) => v.slice(0, 7)).pipe(z.string().regex(/^\d{4}(-\d{2})?$/, "AAAA o AAAA-MM")).describe("Fin del rango en AAAA o AAAA-MM. Ej: 2024-12"),
-      }),
+        hasta: z.coerce.string().transform((v) => v.slice(0, 7)).pipe(z.string().regex(/^\d{4}(-\d{2})?$/, "AAAA o AAAA-MM")).describe("Fin del rango en AAAA o AAAA-MM. Ej: 2024-12"), ...paginacion(100) }),
     },
-    async ({ serie, desde, hasta }) => {
+    async ({ serie, desde, hasta, offset, limit }) => {
       try {
         const [a1, m1] = desde.split("-");
         const [a2, m2] = hasta.split("-");
@@ -100,7 +100,7 @@ export function registrarToolsApi(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `Serie ${nombreSerie(serie)} ${desde} → ${hasta}: ${filas.length} registros. Ejemplo: ${JSON.stringify(filas[0])}`
           : `Sin registros para ${serie} entre ${desde} y ${hasta}.`;
-        return toolOk(texto, { serie, desde, hasta, total: filas.length, registros: filas.slice(0, 100) });
+        return toolOkPaginado(texto, { serie, desde, hasta }, "registros", filas, offset, limit, "cmf_api_indicador_serie");
       } catch (e) {
         return fromError(e);
       }

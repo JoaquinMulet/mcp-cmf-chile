@@ -87,9 +87,9 @@ export const limitSchema = z
   .number()
   .int()
   .min(1)
-  .max(500)
+  .max(5000)
   .default(100)
-  .describe("Límite de filas (máx 500)");
+  .describe("Cuántas filas devolver (máximo 5000, por defecto 100). La respuesta trae total y next_offset para pedir el resto. Ej: 100");
 
 export const carteraSchema = z
   .enum(["NACI", "EXTR", "OPCI", "FUTU", "OPLA"])

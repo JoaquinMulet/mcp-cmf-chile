@@ -9,6 +9,7 @@ import { paginar } from "../util/paginate.js";
 import { bytesABase64 } from "../util/zip.js";
 import { pdfAMarkdown } from "../pdf.js";
 import { procesarTablasEEFF, textoVerificacion, textoAviso } from "../eeff-tables.js";
+import { avisoDeTramo, paginacion, toolOkPaginado } from "../util/tramos.js";
 import {
   anioSchema,
   enumTolerante,
@@ -183,7 +184,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const texto = resultados.length
           ? `Resultados para "${consultaFinal}"${intentoAlternativo} (${paginado.total}):\n${resumirTabla(resultados, ["rut", "nombre", "tipo_entidad", "estado"])}`
           : `Sin resultados para "${consultaFinal}". El buscador de la CMF acepta una sola palabra (prefijo) o un RUT numérico; pruebe con una palabra clave (ej: "SANTANDER") o con cmf_catalogo_entidades para búsquedas filtradas.`;
-        return toolOk(texto, { resultados, total: paginado.total });
+        return toolOk(texto + avisoDeTramo(resultados.length, paginado, "cmf_buscar_entidad"), { resultados, total: paginado.total, next_offset: paginado.next_offset });
       } catch (e) {
         return fromError(e);
       }
@@ -196,7 +197,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       annotations: { readOnlyHint: true, destructiveHint: false },
       title: "Listar entidades por tipo",
       description:
-        "Lista las entidades supervisadas de un tipo (tipoentidad, ej: RVEMI=emisores de valores) y mercado, paginado con offset/limit (máx 500). Filtre por estado=VI (vigentes, default) o NV y mercado=V (default), O u S. Use esta tool para enumerar un segmento completo; para buscar por nombre o RUT use cmf_buscar_entidad y para el catálogo completo cmf_catalogo_entidades.",
+        "Lista las entidades supervisadas de un tipo (tipoentidad, ej: RVEMI=emisores de valores) y mercado, paginado con offset/limit (máx 5000). Filtre por estado=VI (vigentes, default) o NV y mercado=V (default), O u S. Use esta tool para enumerar un segmento completo; para buscar por nombre o RUT use cmf_buscar_entidad y para el catálogo completo cmf_catalogo_entidades. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         tipoentidad: tipoEntidadSchema,
         mercado: mercadoSchema.optional().describe("Mercado: V=valores (default), O=otros, S=seguros"),
@@ -222,7 +223,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const filas = htmlTablaAJson(html, ["rut", "nombre", "estado"]);
         const { filas: entidades, paginado } = paginar(filas, offset, limit);
         const texto = `Entidades ${tipoentidad} (total ${paginado.total}):\n${resumirTabla(entidades, ["rut", "nombre", "estado"])}`;
-        return toolOk(texto, { entidades, total: paginado.total, next_offset: paginado.next_offset });
+        return toolOk(texto + avisoDeTramo(entidades.length, paginado, "cmf_listar_entidades"), { entidades, total: paginado.total, next_offset: paginado.next_offset });
       } catch (e) {
         return fromError(e);
       }
@@ -238,10 +239,10 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: empresaArraySchema("datos"),
       title: "Identificación de empresa",
       description:
-        "Devuelve los datos de identificación de un emisor (razón social, RUT, inscripción y actividad) desde la ficha de la CMF. Identifique el emisor por rut (numérico; se acepta con o sin DV, ej: 61808000). Use esta tool para confirmar identidad y estado de una empresa; para cifras use cmf_empresa_eeff y para gobierno corporativo cmf_empresa_directorio.",
-      inputSchema: z.object({ rut: rutSchema }),
+        "Devuelve los datos de identificación de un emisor (razón social, RUT, inscripción y actividad) desde la ficha de la CMF. Identifique el emisor por rut (numérico; se acepta con o sin DV, ej: 61808000). Use esta tool para confirmar identidad y estado de una empresa; para cifras use cmf_empresa_eeff y para gobierno corporativo cmf_empresa_directorio. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+      inputSchema: z.object({ rut: rutSchema, ...paginacion(50) }),
     },
-    async ({ rut }) => {
+    async ({ rut, offset, limit }) => {
       try {
         const html = await getLegacy(fichaUrl(rut, 1), {}, env);
         const filas = htmlTablaAJson(html);
@@ -250,8 +251,17 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
           filas,
           `Identificación de la empresa ${rut}`,
           `https://www.cmfchile.cl/institucional/mercados/entidad.php?mercado=V&rut=${rut}&pestania=1`,
-          () => toolOk(`Sin datos de identificación para RUT ${rut}.`, { rut, datos: [] }),
-          () => toolOk(`Ficha identificación RUT ${rut}:\n${resumirTabla(filas.slice(0, 3), Object.keys(filas[0]))}`, { rut, datos: filas.slice(0, 50) }),
+          () => toolOk(`Sin datos de identificación para RUT ${rut}.`, { rut, total: 0, next_offset: null, datos: [] }),
+          () =>
+            toolOkPaginado(
+              `Ficha identificación RUT ${rut}:\n${resumirTabla(filas.slice(0, 3), Object.keys(filas[0]))}`,
+              { rut },
+              "datos",
+              filas,
+              offset,
+              limit,
+              "cmf_empresa_info",
+            ),
         );
       } catch (e) {
         return fromError(e);
@@ -409,7 +419,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       annotations: { readOnlyHint: true, destructiveHint: false },
       title: "Hechos esenciales de empresa",
       description:
-        "Devuelve los hechos esenciales publicados por un emisor (fecha/hora, número, materia y enlace al documento) en un rango de fechas. Identifique el emisor por rut (numérico; se acepta con o sin DV); fije desde/hasta en YYYY-MM-DD y pagine con offset/limit (máx 500). Use esta tool para hechos de un emisor específico; para el flujo de todo el mercado use cmf_hechos_globales (requiere captcha).",
+        "Devuelve los hechos esenciales publicados por un emisor (fecha/hora, número, materia y enlace al documento) en un rango de fechas. Identifique el emisor por rut (numérico; se acepta con o sin DV); fije desde/hasta en YYYY-MM-DD y pagine con offset/limit (máx 5000). Use esta tool para hechos de un emisor específico; para el flujo de todo el mercado use cmf_hechos_globales (requiere captcha). Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         rut: rutSchema,
         desde: fechaSchema,
@@ -443,7 +453,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const texto = hechos.length
           ? `Hechos esenciales ${rut} (${desde} → ${hasta}, total ${paginado.total}):\n${resumirTabla(hechos, ["fecha_hora", "numero", "materia"])}`
           : `Sin hechos esenciales para ${rut} en el período.`;
-        return toolOk(texto, { hechos, total: paginado.total, next_offset: paginado.next_offset });
+        return toolOk(texto + avisoDeTramo(hechos.length, paginado, "cmf_empresa_hechos"), { hechos, total: paginado.total, next_offset: paginado.next_offset });
       } catch (e) {
         return fromError(e);
       }
@@ -457,17 +467,17 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: empresaArraySchema("accionistas"),
       title: "12 mayores accionistas",
       description:
-        "Devuelve los 12 mayores accionistas de un emisor (nombre, RUT y participación) para un período, desde la ficha de la CMF. Identifique el emisor por rut (numérico; se acepta con o sin DV); anio en AAAA y mes opcional en MM (default 12). Use esta tool para analizar la concentración accionaria; para el directorio use cmf_empresa_directorio.",
-      inputSchema: z.object({ rut: rutSchema, anio: anioSchema, mes: mesSchema.optional() }),
+        "Devuelve los 12 mayores accionistas de un emisor (nombre, RUT y participación) para un período, desde la ficha de la CMF. Identifique el emisor por rut (numérico; se acepta con o sin DV); anio en AAAA y mes opcional en MM (default 12). Use esta tool para analizar la concentración accionaria; para el directorio use cmf_empresa_directorio. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+      inputSchema: z.object({ rut: rutSchema, anio: anioSchema, mes: mesSchema.optional(), ...paginacion(50) }),
     },
-    async ({ rut, anio, mes }) => {
+    async ({ rut, anio, mes, offset, limit }) => {
       try {
         const html = await postLegacy(fichaUrl(rut, 5), { mm: mes ?? "12", aa: anio }, env);
         const filas = htmlTablaAJson(html);
         const texto = filas.length
           ? `Accionistas ${rut} período ${anio}-${mes ?? "12"} (total ${filas.length}):\n${resumirTabla(filas, Object.keys(filas[0]).slice(0, 6))}`
           : `Sin accionistas publicados para ${rut} en ${anio}.`;
-        return toolOk(texto, { rut, anio, mes, accionistas: filas.slice(0, 50) });
+        return toolOkPaginado(texto, { rut, anio, mes }, "accionistas", filas, offset, limit, "cmf_empresa_accionistas");
       } catch (e) {
         return fromError(e);
       }
@@ -481,17 +491,17 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: empresaArraySchema("directorio"),
       title: "Directorio y administración",
       description:
-        "Devuelve los directores y gerentes de un emisor (nombre, cargo y fechas de designación/cese) desde la ficha de la CMF. Identifique el emisor por rut (numérico; se acepta con o sin DV, ej: 61808000). Use esta tool para gobierno corporativo; para la composición accionaria use cmf_empresa_accionistas.",
-      inputSchema: z.object({ rut: rutSchema }),
+        "Devuelve los directores y gerentes de un emisor (nombre, cargo y fechas de designación/cese) desde la ficha de la CMF. Identifique el emisor por rut (numérico; se acepta con o sin DV, ej: 61808000). Use esta tool para gobierno corporativo; para la composición accionaria use cmf_empresa_accionistas. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+      inputSchema: z.object({ rut: rutSchema, ...paginacion(100) }),
     },
-    async ({ rut }) => {
+    async ({ rut, offset, limit }) => {
       try {
         const html = await getLegacy(fichaUrl(rut, 4), {}, env);
         const filas = htmlTablaAJson(html);
         const texto = filas.length
           ? `Directorio ${rut} (${filas.length} registros):\n${resumirTabla(filas, Object.keys(filas[0]).slice(0, 5))}`
           : `Sin datos de administración para ${rut}.`;
-        return toolOk(texto, { rut, directorio: filas.slice(0, 100) });
+        return toolOkPaginado(texto, { rut }, "directorio", filas, offset, limit, "cmf_empresa_directorio");
       } catch (e) {
         return fromError(e);
       }
@@ -505,10 +515,10 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: empresaArraySchema("sanciones"),
       title: "Sanciones de la entidad",
       description:
-        "Devuelve las sanciones aplicadas por la CMF a un emisor (número, fecha y materia) en un rango de fechas. Identifique el emisor por rut (numérico; se acepta con o sin DV); desde/hasta opcionales en YYYY-MM-DD (default 01/01/2000 a 31/12/2100). Use esta tool para el historial sancionatorio de un emisor; para sanciones de todo un mercado use cmf_sanciones_globales.",
-      inputSchema: z.object({ rut: rutSchema, desde: fechaSchema.optional(), hasta: fechaSchema.optional() }),
+        "Devuelve las sanciones aplicadas por la CMF a un emisor (número, fecha y materia) en un rango de fechas. Identifique el emisor por rut (numérico; se acepta con o sin DV); desde/hasta opcionales en YYYY-MM-DD (default 01/01/2000 a 31/12/2100). Use esta tool para el historial sancionatorio de un emisor; para sanciones de todo un mercado use cmf_sanciones_globales. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+      inputSchema: z.object({ rut: rutSchema, desde: fechaSchema.optional(), hasta: fechaSchema.optional(), ...paginacion(100) }),
     },
-    async ({ rut, desde, hasta }) => {
+    async ({ rut, desde, hasta, offset, limit }) => {
       try {
         const url = `${fichaUrl(rut, 36)}&fecha_inicio=${desde ? fechaLegacyCompleta(desde) : "01/01/2000"}&fecha_fin=${hasta ? fechaLegacyCompleta(hasta) : "31/12/2100"}&formulario=1`;
         const html = await getLegacy(url, {}, env);
@@ -516,7 +526,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `Sanciones ${rut} (${filas.length}):\n${resumirTabla(filas, Object.keys(filas[0]).slice(0, 4))}`
           : `Sin sanciones para ${rut} en el período.`;
-        return toolOk(texto, { rut, sanciones: filas.slice(0, 100) });
+        return toolOkPaginado(texto, { rut }, "sanciones", filas, offset, limit, "cmf_empresa_sanciones");
       } catch (e) {
         return fromError(e);
       }
@@ -530,10 +540,10 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: empresaArraySchema("resoluciones"),
       title: "Resoluciones de la entidad",
       description:
-        "Devuelve las resoluciones de la CMF sobre un emisor (número, fecha y materia) en un rango de fechas. Identifique el emisor por rut (numérico; se acepta con o sin DV); desde/hasta opcionales en YYYY-MM-DD (default 01/01/2000 a 31/12/2100). Use esta tool para resoluciones dirigidas a un emisor; para resoluciones generales publicadas use cmf_dictamenes o cmf_resoluciones_globales.",
-      inputSchema: z.object({ rut: rutSchema, desde: fechaSchema.optional(), hasta: fechaSchema.optional() }),
+        "Devuelve las resoluciones de la CMF sobre un emisor (número, fecha y materia) en un rango de fechas. Identifique el emisor por rut (numérico; se acepta con o sin DV); desde/hasta opcionales en YYYY-MM-DD (default 01/01/2000 a 31/12/2100). Use esta tool para resoluciones dirigidas a un emisor; para resoluciones generales publicadas use cmf_dictamenes o cmf_resoluciones_globales. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+      inputSchema: z.object({ rut: rutSchema, desde: fechaSchema.optional(), hasta: fechaSchema.optional(), ...paginacion(100) }),
     },
-    async ({ rut, desde, hasta }) => {
+    async ({ rut, desde, hasta, offset, limit }) => {
       try {
         const url = `${fichaUrl(rut, 37)}&fecha_inicio=${desde ? fechaLegacyCompleta(desde) : "01/01/2000"}&fecha_fin=${hasta ? fechaLegacyCompleta(hasta) : "31/12/2100"}&formulario=1`;
         const html = await getLegacy(url, {}, env);
@@ -541,7 +551,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `Resoluciones ${rut} (${filas.length}):\n${resumirTabla(filas, Object.keys(filas[0]).slice(0, 4))}`
           : `Sin resoluciones para ${rut} en el período.`;
-        return toolOk(texto, { rut, resoluciones: filas.slice(0, 100) });
+        return toolOkPaginado(texto, { rut }, "resoluciones", filas, offset, limit, "cmf_empresa_resoluciones");
       } catch (e) {
         return fromError(e);
       }
@@ -555,15 +565,14 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: empresaArraySchema("actas"),
       title: "Actas de juntas de accionistas",
       description:
-        "Devuelve las actas de juntas de accionistas de un emisor (ordinarias, extraordinarias o de reforma de estatutos) en un rango de fechas, con enlace al documento. Identifique el emisor por rut (numérico; se acepta con o sin DV); desde/hasta en YYYY-MM-DD y tipo=ordinaria (default), extraordinaria o reforma. Use esta tool para la historia societaria y de gobernanza de un emisor.",
+        "Devuelve las actas de juntas de accionistas de un emisor (ordinarias, extraordinarias o de reforma de estatutos) en un rango de fechas, con enlace al documento. Identifique el emisor por rut (numérico; se acepta con o sin DV); desde/hasta en YYYY-MM-DD y tipo=ordinaria (default), extraordinaria o reforma. Use esta tool para la historia societaria y de gobernanza de un emisor. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         rut: rutSchema,
         desde: fechaSchema,
         hasta: fechaSchema,
-        tipo: z.enum(["ordinaria", "extraordinaria", "reforma"]).default("ordinaria").describe("Tipo de junta: ordinaria (default), extraordinaria o reforma de estatutos"),
-      }),
+        tipo: z.enum(["ordinaria", "extraordinaria", "reforma"]).default("ordinaria").describe("Tipo de junta: ordinaria (default), extraordinaria o reforma de estatutos"), ...paginacion(100) }),
     },
-    async ({ rut, desde, hasta, tipo }) => {
+    async ({ rut, desde, hasta, tipo, offset, limit }) => {
       try {
         const pestania = tipo === "ordinaria" ? 78 : tipo === "extraordinaria" ? 79 : 80;
         const html = await postLegacy(
@@ -575,7 +584,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `Actas juntas ${tipo} ${rut} (${filas.length}):\n${resumirTabla(filas, Object.keys(filas[0]).slice(0, 4))}`
           : `Sin actas de juntas ${tipo} para ${rut} en el período.`;
-        return toolOk(texto, { rut, tipo, actas: filas.slice(0, 100) });
+        return toolOkPaginado(texto, { rut, tipo }, "actas", filas, offset, limit, "cmf_empresa_juntas");
       } catch (e) {
         return fromError(e);
       }
@@ -589,17 +598,17 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: empresaArraySchema("documentos"),
       title: "Memoria anual",
       description:
-        "Devuelve los documentos de la memoria anual de un emisor para un año (memoria, EEFF anuales e informes de auditores). Identifique el emisor por rut (numérico; se acepta con o sin DV) y fije anio en AAAA (ej: 2024). Use esta tool para el contexto anual completo; para cifras trimestrales use cmf_empresa_eeff.",
-      inputSchema: z.object({ rut: rutSchema, anio: anioSchema }),
+        "Devuelve los documentos de la memoria anual de un emisor para un año (memoria, EEFF anuales e informes de auditores). Identifique el emisor por rut (numérico; se acepta con o sin DV) y fije anio en AAAA (ej: 2024). Use esta tool para el contexto anual completo; para cifras trimestrales use cmf_empresa_eeff. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+      inputSchema: z.object({ rut: rutSchema, anio: anioSchema, ...paginacion(50) }),
     },
-    async ({ rut, anio }) => {
+    async ({ rut, anio, offset, limit }) => {
       try {
         const html = await postLegacy(fichaUrl(rut, 49), { aa: anio }, env);
         const filas = htmlTablaAJson(html);
         const texto = filas.length
           ? `Memoria anual ${anio} de ${rut} (${filas.length} documentos):\n${resumirTabla(filas, Object.keys(filas[0]).slice(0, 3))}`
           : `Sin memoria anual ${anio} para ${rut}.`;
-        return toolOk(texto, { rut, anio, documentos: filas.slice(0, 50) });
+        return toolOkPaginado(texto, { rut, anio }, "documentos", filas, offset, limit, "cmf_empresa_memoria_anual");
       } catch (e) {
         return fromError(e);
       }
@@ -613,22 +622,21 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: empresaArraySchema("indicadores"),
       title: "Indicadores ASG (ESG)",
       description:
-        "Devuelve los indicadores ASG (ambientales, sociales y de gobernanza) de un emisor para un período: memoria integrada, SASB o XBRL SASB. Identifique el emisor por rut (numérico; se acepta con o sin DV); anio en AAAA, mes opcional en MM (default 12) y tipo_informe=1 (Memoria Integrada), 2 (SASB) o 3 (XBRL SASB). Use esta tool para datos de sostenibilidad; para datos financieros use cmf_empresa_eeff.",
+        "Devuelve los indicadores ASG (ambientales, sociales y de gobernanza) de un emisor para un período: memoria integrada, SASB o XBRL SASB. Identifique el emisor por rut (numérico; se acepta con o sin DV); anio en AAAA, mes opcional en MM (default 12) y tipo_informe=1 (Memoria Integrada), 2 (SASB) o 3 (XBRL SASB). Use esta tool para datos de sostenibilidad; para datos financieros use cmf_empresa_eeff. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         rut: rutSchema,
         anio: anioSchema,
         mes: mesSchema.optional(),
-        tipo_informe: enumTolerante(["1", "2", "3"]).default("1").describe("1=Memoria Integrada, 2=SASB, 3=XBRL SASB (acepta 1 o '1')"),
-      }),
+        tipo_informe: enumTolerante(["1", "2", "3"]).default("1").describe("1=Memoria Integrada, 2=SASB, 3=XBRL SASB (acepta 1 o '1')"), ...paginacion(100) }),
     },
-    async ({ rut, anio, mes, tipo_informe }) => {
+    async ({ rut, anio, mes, tipo_informe, offset, limit }) => {
       try {
         const html = await postLegacy(fichaUrl(rut, 110), { aa: anio, mm: mes ?? "12", t_inf: tipo_informe }, env);
         const filas = htmlTablaAJson(html);
         const texto = filas.length
           ? `Indicadores ASG ${anio} de ${rut} (${filas.length} registros):\n${resumirTabla(filas, Object.keys(filas[0]).slice(0, 4))}`
           : `Sin indicadores ASG ${anio} para ${rut}.`;
-        return toolOk(texto, { rut, anio, tipo_informe, indicadores: filas.slice(0, 100) });
+        return toolOkPaginado(texto, { rut, anio, tipo_informe }, "indicadores", filas, offset, limit, "cmf_empresa_asg");
       } catch (e) {
         return fromError(e);
       }
@@ -642,17 +650,17 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: empresaArraySchema("filiales"),
       title: "EEFF de filiales",
       description:
-        "Devuelve los estados financieros de las filiales de un emisor para un período, desde la ficha de la CMF. Identifique el emisor por rut (numérico; se acepta con o sin DV); anio en AAAA y mes opcional en MM (default 12). Use esta tool para la operación del grupo consolidado; para EEFF de la matriz use cmf_empresa_eeff.",
-      inputSchema: z.object({ rut: rutSchema, anio: anioSchema, mes: mesSchema.optional() }),
+        "Devuelve los estados financieros de las filiales de un emisor para un período, desde la ficha de la CMF. Identifique el emisor por rut (numérico; se acepta con o sin DV); anio en AAAA y mes opcional en MM (default 12). Use esta tool para la operación del grupo consolidado; para EEFF de la matriz use cmf_empresa_eeff. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+      inputSchema: z.object({ rut: rutSchema, anio: anioSchema, mes: mesSchema.optional(), ...paginacion(100) }),
     },
-    async ({ rut, anio, mes }) => {
+    async ({ rut, anio, mes, offset, limit }) => {
       try {
         const html = await postLegacy(fichaUrl(rut, 33), { aa: anio, mm: mes ?? "12" }, env);
         const filas = htmlTablaAJson(html);
         const texto = filas.length
           ? `EEFF filiales ${rut} ${anio}-${mes ?? "12"} (${filas.length}):\n${resumirTabla(filas, Object.keys(filas[0]).slice(0, 4))}`
           : `Sin EEFF de filiales para ${rut} en ${anio}.`;
-        return toolOk(texto, { rut, anio, filiales: filas.slice(0, 100) });
+        return toolOkPaginado(texto, { rut, anio }, "filiales", filas, offset, limit, "cmf_empresa_eeff_filiales");
       } catch (e) {
         return fromError(e);
       }
@@ -666,17 +674,17 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: empresaArraySchema("productos"),
       title: "Registro de productos",
       description:
-        "Devuelve el registro de productos inscritos de una entidad ante la CMF: valores, cuotas y series. Identifique la entidad por rut (numérico; se acepta con o sin DV, ej: 61808000). Use esta tool para ver qué instrumentos tiene inscritos una entidad; para identificarla primero use cmf_buscar_entidad.",
-      inputSchema: z.object({ rut: rutSchema }),
+        "Devuelve el registro de productos inscritos de una entidad ante la CMF: valores, cuotas y series. Identifique la entidad por rut (numérico; se acepta con o sin DV, ej: 61808000). Use esta tool para ver qué instrumentos tiene inscritos una entidad; para identificarla primero use cmf_buscar_entidad. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+      inputSchema: z.object({ rut: rutSchema, ...paginacion(200) }),
     },
-    async ({ rut }) => {
+    async ({ rut, offset, limit }) => {
       try {
         const html = await getLegacy(fichaUrl(rut, 31), {}, env);
         const filas = htmlTablaAJson(html);
         const texto = filas.length
           ? `Registro de productos ${rut} (${filas.length}):\n${resumirTabla(filas, Object.keys(filas[0]).slice(0, 6))}`
           : `Sin productos registrados para ${rut}.`;
-        return toolOk(texto, { rut, productos: filas.slice(0, 200) });
+        return toolOkPaginado(texto, { rut }, "productos", filas, offset, limit, "cmf_empresa_registro_productos");
       } catch (e) {
         return fromError(e);
       }
@@ -692,17 +700,16 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: globalesSchema("hechos"),
       title: "Hechos esenciales globales",
       description:
-        "Devuelve los hechos esenciales de todo el mercado (o de un tipo de entidad) en un rango de fechas, con fecha/hora, número, entidad y materia. Fije mercado (V=valores, O=otros, S=seguros), tipoentidad opcional (ej: RVEMI) y desde/hasta en YYYY-MM-DD. REQUIERE captcha de la CMF (imagen de 6 caracteres): si no entrega captcha, la tool responde pidiéndoselo al usuario y debe reintentar con el código; si el captcha es inválido o expiró, devuelve error y hay que solicitar uno nuevo. Use esta tool para el flujo completo del mercado; para hechos de un emisor use cmf_empresa_hechos (sin captcha).",
+        "Devuelve los hechos esenciales de todo el mercado (o de un tipo de entidad) en un rango de fechas, con fecha/hora, número, entidad y materia. Fije mercado (V=valores, O=otros, S=seguros), tipoentidad opcional (ej: RVEMI) y desde/hasta en YYYY-MM-DD. REQUIERE captcha de la CMF (imagen de 6 caracteres): si no entrega captcha, la tool responde pidiéndoselo al usuario y debe reintentar con el código; si el captcha es inválido o expiró, devuelve error y hay que solicitar uno nuevo. Use esta tool para el flujo completo del mercado; para hechos de un emisor use cmf_empresa_hechos (sin captcha). Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         mercado: mercadoSchema.describe("Mercado: V=valores, O=otros, S=seguros"),
         tipoentidad: z.string().optional().describe("Tipo de entidad (ej: RVEMI; default RVEMI)"),
         desde: fechaSchema,
         hasta: fechaSchema,
         captcha: z.string().length(6).optional().describe("Código captcha de 6 caracteres (si no lo tiene, la tool le indicará dónde ver la imagen)"),
-        captcha_id: z.string().optional().describe("Id del captcha que la tool le entregó en la respuesta previa (opcional; si no, usa el último captcha activo)"),
-      }),
+        captcha_id: z.string().optional().describe("Id del captcha que la tool le entregó en la respuesta previa (opcional; si no, usa el último captcha activo)"), ...paginacion(200) }),
     },
-    async ({ mercado, tipoentidad, desde, hasta, captcha, captcha_id }) => {
+    async ({ mercado, tipoentidad, desde, hasta, captcha, captcha_id, offset, limit }) => {
       try {
         if (!captcha) {
           const id = await pedirCaptchaCMF(env, "hechos");
@@ -737,7 +744,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `Hechos esenciales ${mercado} (${filas.length}):\n${resumirTabla(filas.slice(0, 10), ["fecha_hora", "numero", "entidad", "materia"])}`
           : "Sin hechos en el período.";
-        return toolOk(texto, { mercado, desde, hasta, hechos: filas.slice(0, 200) });
+        return toolOkPaginado(texto, { mercado, desde, hasta }, "hechos", filas, offset, limit, "cmf_hechos_globales");
       } catch (e) {
         return fromError(e);
       }
@@ -751,15 +758,14 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: globalesSchema("sanciones"),
       title: "Sanciones globales por mercado",
       description:
-        "Devuelve las sanciones aplicadas en todo un mercado (V=valores, O=otros, S=seguros) en un rango de fechas. Fije desde/hasta opcionales en YYYY-MM-DD (default 01/01/2020 a 31/12/2100) y tipoentidad opcional (ej: RVEMI; default ALL=todas). Use esta tool para tendencias sancionatorias del mercado; para sanciones de un emisor específico use cmf_empresa_sanciones.",
+        "Devuelve las sanciones aplicadas en todo un mercado (V=valores, O=otros, S=seguros) en un rango de fechas. Fije desde/hasta opcionales en YYYY-MM-DD (default 01/01/2020 a 31/12/2100) y tipoentidad opcional (ej: RVEMI; default ALL=todas). Use esta tool para tendencias sancionatorias del mercado; para sanciones de un emisor específico use cmf_empresa_sanciones. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         mercado: mercadoSchema.describe("Mercado: V=valores, O=otros, S=seguros"),
         desde: fechaSchema.optional(),
         hasta: fechaSchema.optional(),
-        tipoentidad: z.string().optional().describe("Tipo de entidad (ej: RVEMI; default ALL=todas)"),
-      }),
+        tipoentidad: z.string().optional().describe("Tipo de entidad (ej: RVEMI; default ALL=todas)"), ...paginacion(200) }),
     },
-    async ({ mercado, desde, hasta, tipoentidad }) => {
+    async ({ mercado, desde, hasta, tipoentidad, offset, limit }) => {
       try {
         const url = `/institucional/sanciones/sanciones_mercados_entidad.php?mercado=${mercado}&entidad=${tipoentidad ?? "ALL"}&nom_entidad=&desde=${desde ? fechaLegacyCompleta(desde) : "01/01/2020"}&hasta=${hasta ? fechaLegacyCompleta(hasta) : "31/12/2100"}`;
         const html = await getLegacy(url, {}, env);
@@ -767,7 +773,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `Sanciones mercado ${mercado} (${filas.length}):\n${resumirTabla(filas, Object.keys(filas[0]).slice(0, 4))}`
           : `Sin sanciones en mercado ${mercado}.`;
-        return toolOk(texto, { mercado, sanciones: filas.slice(0, 200) });
+        return toolOkPaginado(texto, { mercado }, "sanciones", filas, offset, limit, "cmf_sanciones_globales");
       } catch (e) {
         return fromError(e);
       }
@@ -781,15 +787,14 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: globalesSchema("resoluciones"),
       title: "Resoluciones globales por mercado",
       description:
-        "Devuelve las resoluciones de la CMF sobre todo un mercado (V=valores, O=otros, S=seguros) en un rango de fechas. Fije desde/hasta opcionales en YYYY-MM-DD (default 01/01/2020 a 31/12/2100) y tipoentidad opcional (ej: RVEMI; default ALL=todas). Use esta tool para resoluciones de alcance de mercado; para resoluciones sobre un emisor use cmf_empresa_resoluciones.",
+        "Devuelve las resoluciones de la CMF sobre todo un mercado (V=valores, O=otros, S=seguros) en un rango de fechas. Fije desde/hasta opcionales en YYYY-MM-DD (default 01/01/2020 a 31/12/2100) y tipoentidad opcional (ej: RVEMI; default ALL=todas). Use esta tool para resoluciones de alcance de mercado; para resoluciones sobre un emisor use cmf_empresa_resoluciones. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         mercado: mercadoSchema.describe("Mercado: V=valores, O=otros, S=seguros"),
         desde: fechaSchema.optional(),
         hasta: fechaSchema.optional(),
-        tipoentidad: z.string().optional().describe("Tipo de entidad (ej: RVEMI; default ALL=todas)"),
-      }),
+        tipoentidad: z.string().optional().describe("Tipo de entidad (ej: RVEMI; default ALL=todas)"), ...paginacion(200) }),
     },
-    async ({ mercado, desde, hasta, tipoentidad }) => {
+    async ({ mercado, desde, hasta, tipoentidad, offset, limit }) => {
       try {
         const url = `/institucional/resoluciones/resoluciones_mercados_entidad.php?mercado=${mercado}&entidad=${tipoentidad ?? "ALL"}&nom_entidad=&fecha_inicio=${desde ? fechaLegacyCompleta(desde) : "01/01/2020"}&fecha_fin=${hasta ? fechaLegacyCompleta(hasta) : "31/12/2100"}`;
         const html = await getLegacy(url, {}, env);
@@ -797,7 +802,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `Resoluciones mercado ${mercado} (${filas.length}):\n${resumirTabla(filas, Object.keys(filas[0]).slice(0, 4))}`
           : `Sin resoluciones en mercado ${mercado}.`;
-        return toolOk(texto, { mercado, resoluciones: filas.slice(0, 200) });
+        return toolOkPaginado(texto, { mercado }, "resoluciones", filas, offset, limit, "cmf_resoluciones_globales");
       } catch (e) {
         return fromError(e);
       }
@@ -811,7 +816,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: paginadoSchema("comunicaciones"),
       title: "Comunicaciones de emisores",
       description:
-        "Lista las comunicaciones publicadas por los emisores de valores (fecha, número, sociedad, entidad informante y descripción) con paginación offset/limit (máx 500). No tiene filtro de fecha (la CMF entrega el listado completo): itere las páginas con next_offset para llegar al período buscado. Use esta tool para monitorear comunicados del mercado; para hechos esenciales use cmf_hechos_globales o cmf_empresa_hechos.",
+        "Lista las comunicaciones publicadas por los emisores de valores (fecha, número, sociedad, entidad informante y descripción) con paginación offset/limit (máx 5000). No tiene filtro de fecha (la CMF entrega el listado completo): itere las páginas con next_offset para llegar al período buscado. Use esta tool para monitorear comunicados del mercado; para hechos esenciales use cmf_hechos_globales o cmf_empresa_hechos. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({ offset: offsetSchema, limit: limitSchema }),
     },
     async ({ offset, limit }) => {
@@ -828,7 +833,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const texto = comunicaciones.length
           ? `Comunicaciones de emisores (total ${paginado.total}):\n${resumirTabla(comunicaciones, ["fecha", "numero", "sociedad", "descripcion"])}`
           : "Sin comunicaciones.";
-        return toolOk(texto, { comunicaciones, total: paginado.total, next_offset: paginado.next_offset });
+        return toolOk(texto + avisoDeTramo(comunicaciones.length, paginado, "cmf_comunicaciones_emisores"), { comunicaciones, total: paginado.total, next_offset: paginado.next_offset });
       } catch (e) {
         return fromError(e);
       }
@@ -842,7 +847,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: paginadoSchema("clasificaciones"),
       title: "Clasificaciones de riesgo",
       description:
-        "Devuelve las clasificaciones de riesgo asignadas a emisores e instrumentos por las clasificadoras (XLSX oficial de la CMF), paginado con offset/limit (máx 500). El sistema usa un flujo en 2 pasos: la tool genera el archivo (POST a excel_busqueda_clasificaciones) y descarga el XLSX resultante, que luego se parsea a filas. Filtre opcionalmente por emisor, clasificadora o tipo_instrumento (los filtros se aplican sobre las filas descargadas). Use esta tool para evaluar calidad crediticia de instrumentos; para el historial financiero del emisor use cmf_empresa_eeff.",
+        "Devuelve las clasificaciones de riesgo asignadas a emisores e instrumentos por las clasificadoras (XLSX oficial de la CMF), paginado con offset/limit (máx 5000). El sistema usa un flujo en 2 pasos: la tool genera el archivo (POST a excel_busqueda_clasificaciones) y descarga el XLSX resultante, que luego se parsea a filas. Filtre opcionalmente por emisor, clasificadora o tipo_instrumento (los filtros se aplican sobre las filas descargadas). Use esta tool para evaluar calidad crediticia de instrumentos; para el historial financiero del emisor use cmf_empresa_eeff. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         emisor: z.string().optional().describe("Filtro por nombre o RUT del emisor (texto libre, opcional)"),
         clasificadora: z.string().optional().describe("Filtro por clasificadora (texto libre, opcional)"),
@@ -904,7 +909,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         }
         const { filas: clasificaciones, paginado } = paginar(filas, offset, limit);
         const texto = `Clasificaciones de riesgo (total ${paginado.total}):\n${resumirTabla(clasificaciones, Object.keys(clasificaciones[0] ?? {}).slice(0, 5))}`;
-        return toolOk(texto, { clasificaciones, total: paginado.total, next_offset: paginado.next_offset });
+        return toolOk(texto + avisoDeTramo(clasificaciones.length, paginado, "cmf_clasificaciones_riesgo"), { clasificaciones, total: paginado.total, next_offset: paginado.next_offset });
       } catch (e) {
         return fromError(e);
       }
@@ -920,16 +925,15 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "EEFF IFRS de sociedades anónimas",
       description:
-        "Devuelve los estados financieros IFRS de sociedades anónimas y otras entidades (sistema sa_eeff_ifrs) para un rango de períodos. Seleccione sociedades por RUT (array; default ['0']=todas), anio1/anio2 en AAAA (ej: 2024) y mes1/mes2 opcionales en MM (default 12). Use esta tool para cifras agregadas de SA; para EEFF de un emisor con PDFs auditados use cmf_empresa_eeff.",
+        "Devuelve los estados financieros IFRS de sociedades anónimas y otras entidades (sistema sa_eeff_ifrs) para un rango de períodos. Seleccione sociedades por RUT (array; default ['0']=todas), anio1/anio2 en AAAA (ej: 2024) y mes1/mes2 opcionales en MM (default 12). Use esta tool para cifras agregadas de SA; para EEFF de un emisor con PDFs auditados use cmf_empresa_eeff. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
         anio1: anioSchema,
         anio2: anioSchema.describe("Año final del rango en AAAA (ej: 2025)"),
         mes1: mesSchema.optional(),
-        mes2: mesSchema.optional().describe("Mes final del rango en MM (default 12)"),
-      }),
+        mes2: mesSchema.optional().describe("Mes final del rango en MM (default 12)"), ...paginacion(300) }),
     },
-    async ({ sociedades, anio1, anio2, mes1, mes2 }) => {
+    async ({ sociedades, anio1, anio2, mes1, mes2, offset, limit }) => {
       try {
         const html = await postLegacy(
           "/institucional/estadisticas/merc_valores/sa_eeff_ifrs/sa_eeff_ifrs_index.php",
@@ -952,7 +956,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const texto = tablas.length
           ? `EEFF IFRS SA ${anio1}-${mes1 ?? "12"} → ${anio2}-${mes2 ?? "12"} (${tablas.length} filas):\n${resumirTabla(tablas.slice(0, 10), Object.keys(tablas[0] ?? {}).slice(0, 6))}`
           : "Sin resultados EEFF IFRS SA.";
-        return toolOk(texto, { sociedades, anio1, anio2, filas: tablas.slice(0, 300) });
+        return toolOkPaginado(texto, { sociedades, anio1, anio2 }, "filas", tablas, offset, limit, "cmf_eeff_ifrs_sa");
       } catch (e) {
         return fromError(e);
       }
@@ -966,12 +970,11 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Indicadores financieros IFRS de SA",
       description:
-        "Devuelve los indicadores financieros IFRS calculados de sociedades anónimas (liquidez, endeudamiento, rentabilidad) para un corte, con hasta 300 filas. Fije fecha_max en formato AAAAMM (ej: 202512). Use esta tool para comparar ratios entre SA; para los EEFF detallados use cmf_eeff_ifrs_sa y para ratios bajo norma local use cmf_indicadores_financieros_nch.",
+        "Devuelve los indicadores financieros IFRS calculados de sociedades anónimas (liquidez, endeudamiento, rentabilidad) para un corte, con hasta 300 filas. Fije fecha_max en formato AAAAMM (ej: 202512). Use esta tool para comparar ratios entre SA; para los EEFF detallados use cmf_eeff_ifrs_sa y para ratios bajo norma local use cmf_indicadores_financieros_nch. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
-        fecha_max: z.string().regex(/^\d{6}$/, "AAAAMM").describe("Corte en formato AAAAMM (ej: 202512)"),
-      }),
+        fecha_max: z.string().regex(/^\d{6}$/, "AAAAMM").describe("Corte en formato AAAAMM (ej: 202512)"), ...paginacion(300) }),
     },
-    async ({ fecha_max }) => {
+    async ({ fecha_max, offset, limit }) => {
       try {
         const html = await getLegacy(
           "/institucional/estadisticas/merc_valores/sa_indicadores_ifrs/sa_indicadoresfinancieros.php",
@@ -982,7 +985,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `Indicadores IFRS SA corte ${fecha_max} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
           : "Sin indicadores para el corte.";
-        return toolOk(texto, { fecha_max, filas: filas.slice(0, 300) });
+        return toolOkPaginado(texto, { fecha_max }, "filas", filas, offset, limit, "cmf_indicadores_financieros_sa");
       } catch (e) {
         return fromError(e);
       }
@@ -996,16 +999,15 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "EEFF NCH de sociedades anónimas",
       description:
-        "Devuelve los estados financieros bajo norma chilena (NCH/FECU) de sociedades anónimas para un rango de períodos. Seleccione sociedades por RUT (array; default todas), anio1/anio2 en AAAA y mes1/mes2 opcionales en MM (default 12). Use esta tool para períodos pre-IFRS o agregados bajo norma local; para los EEFF IFRS con PDF auditado de UN emisor use cmf_empresa_eeff (norma=IFRS); para el sistema IFRS de todas las SA use cmf_eeff_ifrs_sa.",
+        "Devuelve los estados financieros bajo norma chilena (NCH/FECU) de sociedades anónimas para un rango de períodos. Seleccione sociedades por RUT (array; default todas), anio1/anio2 en AAAA y mes1/mes2 opcionales en MM (default 12). Use esta tool para períodos pre-IFRS o agregados bajo norma local; para los EEFF IFRS con PDF auditado de UN emisor use cmf_empresa_eeff (norma=IFRS); para el sistema IFRS de todas las SA use cmf_eeff_ifrs_sa. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
         anio1: anioSchema,
         anio2: anioSchema.describe("Año final del rango en AAAA (ej: 2025)"),
         mes1: mesSchema.optional(),
-        mes2: mesSchema.optional().describe("Mes final del rango en MM (default 12)"),
-      }),
+        mes2: mesSchema.optional().describe("Mes final del rango en MM (default 12)"), ...paginacion(300) }),
     },
-    async ({ sociedades, anio1, anio2, mes1, mes2 }) => {
+    async ({ sociedades, anio1, anio2, mes1, mes2, offset, limit }) => {
       try {
         const html = await postLegacy(
           "/institucional/estadisticas/sa_fecu_index.php",
@@ -1027,7 +1029,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const texto = tablas.length
           ? `EEFF NCH SA ${anio1}-${mes1 ?? "12"} → ${anio2}-${mes2 ?? "12"} (${tablas.length} filas):\n${resumirTabla(tablas.slice(0, 10), Object.keys(tablas[0] ?? {}).slice(0, 6))}`
           : "Sin resultados EEFF NCH.";
-        return toolOk(texto, { sociedades, anio1, anio2, filas: tablas.slice(0, 300) });
+        return toolOkPaginado(texto, { sociedades, anio1, anio2 }, "filas", tablas, offset, limit, "cmf_empresa_eeff_nch");
       } catch (e) {
         return fromError(e);
       }
@@ -1041,16 +1043,15 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Indicadores financieros NCH de SA",
       description:
-        "Devuelve los indicadores financieros calculados bajo norma chilena (NCH) de sociedades anónimas para un rango de períodos. Seleccione sociedades por RUT (array; default todas), anio1/anio2 en AAAA y mes1/mes2 opcionales en MM (default 12). Use esta tool para ratios NCH; para indicadores IFRS use cmf_indicadores_financieros_sa.",
+        "Devuelve los indicadores financieros calculados bajo norma chilena (NCH) de sociedades anónimas para un rango de períodos. Seleccione sociedades por RUT (array; default todas), anio1/anio2 en AAAA y mes1/mes2 opcionales en MM (default 12). Use esta tool para ratios NCH; para indicadores IFRS use cmf_indicadores_financieros_sa. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
         anio1: anioSchema,
         anio2: anioSchema.describe("Año final del rango en AAAA (ej: 2025)"),
         mes1: mesSchema.optional(),
-        mes2: mesSchema.optional().describe("Mes final del rango en MM (default 12)"),
-      }),
+        mes2: mesSchema.optional().describe("Mes final del rango en MM (default 12)"), ...paginacion(300) }),
     },
-    async ({ sociedades, anio1, anio2, mes1, mes2 }) => {
+    async ({ sociedades, anio1, anio2, mes1, mes2, offset, limit }) => {
       try {
         const html = await postLegacy(
           "/institucional/estadisticas/sa_indicadoresfinancieros_index.php",
@@ -1072,7 +1073,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `Indicadores NCH SA (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
           : "Sin indicadores NCH.";
-        return toolOk(texto, { filas: filas.slice(0, 300) });
+        return toolOkPaginado(texto, {  }, "filas", filas, offset, limit, "cmf_indicadores_financieros_nch");
       } catch (e) {
         return fromError(e);
       }
@@ -1086,17 +1087,16 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Dividendos de sociedades",
       description:
-        "Devuelve los dividendos declarados por sociedades anónimas (detalle por sociedad, del grid acc_dividendos1grid de la CMF). Seleccione sociedades por RUT (array; el catálogo de sociedades del form usa RUTs específicos: pruebe con un RUT concreto si ['0'] no devuelve), anio en AAAA, anio2 opcional para rangos, mes/mes2 opcionales en MM (default 01-12) y tipodiv (0=dividendos, default 0). Si una sociedad no tiene dividendos en el período, la CMF lo dice y la tool lo reporta como ausencia real. Use esta tool para historial de dividendos; para operaciones de capital use cmf_operaciones_capital.",
+        "Devuelve los dividendos declarados por sociedades anónimas (detalle por sociedad, del grid acc_dividendos1grid de la CMF). Seleccione sociedades por RUT (array; el catálogo de sociedades del form usa RUTs específicos: pruebe con un RUT concreto si ['0'] no devuelve), anio en AAAA, anio2 opcional para rangos, mes/mes2 opcionales en MM (default 01-12) y tipodiv (0=dividendos, default 0). Si una sociedad no tiene dividendos en el período, la CMF lo dice y la tool lo reporta como ausencia real. Use esta tool para historial de dividendos; para operaciones de capital use cmf_operaciones_capital. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
         anio: anioSchema,
         anio2: anioSchema.optional().describe("Año final del rango en AAAA (default: igual a anio)"),
         mes: mesSchema.optional().describe("Mes inicial en MM (default 01)"),
         mes2: mesSchema.optional().describe("Mes final en MM (default 12)"),
-        tipodiv: z.string().default("0").describe("Tipo de dividendo (0=dividendos, default)"),
-      }),
+        tipodiv: z.string().default("0").describe("Tipo de dividendo (0=dividendos, default)"), ...paginacion(300) }),
     },
-    async ({ sociedades, anio, anio2, mes, mes2, tipodiv }) => {
+    async ({ sociedades, anio, anio2, mes, mes2, tipodiv, offset, limit }) => {
       try {
         const html = await postLegacy(
           "/institucional/estadisticas/divi/acc_dividendos1grid.php",
@@ -1118,7 +1118,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
           const texto = filas.length
             ? `Dividendos ${anio} (${filas.length} registros):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
             : `Sin dividendos para la selección.`;
-          return toolOk(texto, { anio, filas: filas.slice(0, 300) });
+          return toolOkPaginado(texto, { anio }, "filas", filas, offset, limit, "cmf_dividendos");
         }
         if (/no se encuentran datos/i.test(html)) {
           return toolOk(`Sin dividendos para las sociedades seleccionadas en el período ${anio} (la CMF no encontró datos).`, { anio, filas: [] });
@@ -1131,7 +1131,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         }
         const filas = htmlTablaAJson(html);
         const texto = `Dividendos ${anio} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`;
-        return toolOk(texto, { anio, filas: filas.slice(0, 300) });
+        return toolOkPaginado(texto, { anio }, "filas", filas, offset, limit, "cmf_dividendos");
       } catch (e) {
         return fromError(e);
       }
@@ -1145,14 +1145,13 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Operaciones de capital (repartos, canjes, liberadas)",
       description:
-        "Devuelve las operaciones de capital de sociedades anónimas para un año: repartos de capital, canjes de acciones o acciones liberadas de pago. Elija tipo=reparto, canje o liberadas; seleccione sociedades por RUT (array; default todas) y fije anio en AAAA. Use esta tool para eventos corporativos sobre el capital; para dividendos use cmf_dividendos.",
+        "Devuelve las operaciones de capital de sociedades anónimas para un año: repartos de capital, canjes de acciones o acciones liberadas de pago. Elija tipo=reparto, canje o liberadas; seleccione sociedades por RUT (array; default todas) y fije anio en AAAA. Use esta tool para eventos corporativos sobre el capital; para dividendos use cmf_dividendos. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         tipo: z.enum(["reparto", "canje", "liberadas"]).describe("Operación: reparto=repartos de capital, canje=canjes de acciones, liberadas=acciones liberadas de pago"),
         sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
-        anio: anioSchema,
-      }),
+        anio: anioSchema, ...paginacion(300) }),
     },
-    async ({ tipo, sociedades, anio }) => {
+    async ({ tipo, sociedades, anio, offset, limit }) => {
       try {
         const path =
           tipo === "reparto"
@@ -1165,7 +1164,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `${tipo === "reparto" ? "Repartos" : tipo === "canje" ? "Canjes" : "Liberadas"} ${anio} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
           : `Sin ${tipo}s de capital para ${anio}.`;
-        return toolOk(texto, { tipo, anio, filas: filas.slice(0, 300) });
+        return toolOkPaginado(texto, { tipo, anio }, "filas", filas, offset, limit, "cmf_operaciones_capital");
       } catch (e) {
         return fromError(e);
       }
@@ -1179,7 +1178,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Valores APV",
       description:
-        "Devuelve los valores de ahorro previsional voluntario (APV) que publica la CMF (Circular 1981): depósitos, traspasos, cuentas y bonificaciones por tipo de entidad y mes. Elija el cuadro (1=Depósitos APV, 2=Depósitos Convenidos, 3=APV Colectivo, 4=Bonificación APV/APVC, 5-10=Traspasos, 11+=Cuentas y desgloses), el rango (anio_desde/anio_hasta en AAAA, mes_desde/mes_hasta en MM) y los tipos de entidad (FI=fondos de inversión, FM=mutuos, FV=seguros de vida, IV, SV, SA). Con exportar=true devuelve además el XLS oficial del cuadro (base64). Use esta tool para estadísticas de APV; para fondos mutuos use las tools cmf_fondos_mutuos_*.",
+        "Devuelve los valores de ahorro previsional voluntario (APV) que publica la CMF (Circular 1981): depósitos, traspasos, cuentas y bonificaciones por tipo de entidad y mes. Elija el cuadro (1=Depósitos APV, 2=Depósitos Convenidos, 3=APV Colectivo, 4=Bonificación APV/APVC, 5-10=Traspasos, 11+=Cuentas y desgloses), el rango (anio_desde/anio_hasta en AAAA, mes_desde/mes_hasta en MM) y los tipos de entidad (FI=fondos de inversión, FM=mutuos, FV=seguros de vida, IV, SV, SA). Con exportar=true devuelve además el XLS oficial del cuadro (base64). Use esta tool para estadísticas de APV; para fondos mutuos use las tools cmf_fondos_mutuos_*. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         anio_desde: anioSchema,
         anio_hasta: anioSchema.describe("Año final del rango en AAAA (ej: 2025)"),
@@ -1188,10 +1187,9 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         cuadro: z.string().default("1").describe("Cuadro estadístico: 1=Depósitos APV, 2=Depósitos Convenidos, 3=APV Colectivo, 4=Bonificación APV/APVC, 5-10=Traspasos, 11+=Cuentas y desgloses (default 1)"),
         tipo_e: z.array(z.enum(["FI", "FM", "FV", "IV", "SV", "SA"])).default(["FI", "FM", "FV"]).describe("Tipos de entidad a incluir (default FI,FM,FV)"),
         tipo: z.enum(["entidad", "agregado"]).default("entidad").describe("Vista: entidad o agregado (default entidad)"),
-        exportar: z.boolean().default(false).describe("true = además descarga el XLS oficial del cuadro (base64 en xls_base64)"),
-      }),
+        exportar: z.boolean().default(false).describe("true = además descarga el XLS oficial del cuadro (base64 en xls_base64)"), ...paginacion(300) }),
     },
-    async ({ anio_desde, anio_hasta, mes_desde, mes_hasta, cuadro, tipo_e, tipo, exportar }) => {
+    async ({ anio_desde, anio_hasta, mes_desde, mes_hasta, cuadro, tipo_e, tipo, exportar, offset, limit }) => {
       try {
         const params = {
           cuadro,
@@ -1224,7 +1222,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `Valores APV cuadro ${cuadro} ${anio_desde}-${anio_hasta} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
           : `Sin información para el cuadro ${cuadro} en el período (la CMF no tiene datos para la combinación pedida).`;
-        return toolOk(texto, { anio_desde, anio_hasta, cuadro, filas: filas.slice(0, 300), ...(xlsBase64 ? { xls_base64: xlsBase64 } : {}) });
+        return toolOkPaginado(texto, { anio_desde, anio_hasta, cuadro, ...(xlsBase64 ? { xls_base64: xlsBase64 } : {}) }, "filas", filas, offset, limit, "cmf_apv");
       } catch (e) {
         return fromError(e);
       }
@@ -1238,17 +1236,17 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Tomas de control de emisores",
       description:
-        "Devuelve la información de tomas de control de emisores de valores publicada por la CMF (operación, fechas y sociedades involucradas), con hasta 300 filas. Elija el criterio de ordenamiento del listado con orden (1-5, default 1). Use esta tool para cambios de control accionario; para la composición accionaria actual use cmf_empresa_accionistas.",
-      inputSchema: z.object({ orden: z.number().int().min(1).max(5).optional().describe("Criterio de ordenamiento del listado (1-5, default 1)") }),
+        "Devuelve la información de tomas de control de emisores de valores publicada por la CMF (operación, fechas y sociedades involucradas), con hasta 300 filas. Elija el criterio de ordenamiento del listado con orden (1-5, default 1). Use esta tool para cambios de control accionario; para la composición accionaria actual use cmf_empresa_accionistas. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+      inputSchema: z.object({ orden: z.number().int().min(1).max(5).optional().describe("Criterio de ordenamiento del listado (1-5, default 1)"), ...paginacion(300) }),
     },
-    async ({ orden }) => {
+    async ({ orden, offset, limit }) => {
       try {
         const html = await getLegacy("/institucional/mercados/tomas_detalle.php", { tipo: "TDC", orden: orden ?? 1 }, env);
         const filas = htmlTablaAJson(html);
         const texto = filas.length
           ? `Tomas de control (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
           : "Sin tomas de control.";
-        return toolOk(texto, { filas: filas.slice(0, 300) });
+        return toolOkPaginado(texto, {  }, "filas", filas, offset, limit, "cmf_tomas_control");
       } catch (e) {
         return fromError(e);
       }
@@ -1262,12 +1260,11 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Listados de EEFF IFRS",
       description:
-        "Devuelve los listados de empresas que presentan EEFF bajo IFRS: listado general, Circular 556 u oficios 457/485. Elija tipo_listado=general (default), c556, ofc457 u ofc485. Use esta tool para verificar obligaciones de reporte IFRS de empresas; para los EEFF mismos use cmf_empresa_eeff.",
+        "Devuelve los listados de empresas que presentan EEFF bajo IFRS: listado general, Circular 556 u oficios 457/485. Elija tipo_listado=general (default), c556, ofc457 u ofc485. Use esta tool para verificar obligaciones de reporte IFRS de empresas; para los EEFF mismos use cmf_empresa_eeff. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
-        tipo_listado: z.enum(["general", "c556", "ofc457", "ofc485"]).default("general").describe("Listado: general (default), c556=Circular 556, ofc457/ofc485=respuestas a oficios"),
-      }),
+        tipo_listado: z.enum(["general", "c556", "ofc457", "ofc485"]).default("general").describe("Listado: general (default), c556=Circular 556, ofc457/ofc485=respuestas a oficios"), ...paginacion(300) }),
     },
-    async ({ tipo_listado }) => {
+    async ({ tipo_listado, offset, limit }) => {
       try {
         const path =
           tipo_listado === "general"
@@ -1282,7 +1279,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `Listado EEFF IFRS ${tipo_listado} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 5))}`
           : "Sin listado.";
-        return toolOk(texto, { tipo_listado, filas: filas.slice(0, 300) });
+        return toolOkPaginado(texto, { tipo_listado }, "filas", filas, offset, limit, "cmf_listados_eeff_ifrs");
       } catch (e) {
         return fromError(e);
       }
@@ -1296,17 +1293,17 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Fechas de divulgación de EEFF",
       description:
-        "Devuelve el calendario de fechas de divulgación de estados financieros de los emisores para un año. Fije anio en AAAA (ej: 2026). Use esta tool para anticipar la publicación de resultados; para los EEFF ya publicados use cmf_empresa_eeff.",
-      inputSchema: z.object({ anio: anioSchema }),
+        "Devuelve el calendario de fechas de divulgación de estados financieros de los emisores para un año. Fije anio en AAAA (ej: 2026). Use esta tool para anticipar la publicación de resultados; para los EEFF ya publicados use cmf_empresa_eeff. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+      inputSchema: z.object({ anio: anioSchema, ...paginacion(300) }),
     },
-    async ({ anio }) => {
+    async ({ anio, offset, limit }) => {
       try {
         const html = await getLegacy("/institucional/mercados/novedades_envio_fechas_eeff.php", { aaaa: anio }, env);
         const filas = htmlTablaAJson(html);
         const texto = filas.length
           ? `Fechas divulgación EEFF ${anio} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 5))}`
           : `Sin fechas para ${anio}.`;
-        return toolOk(texto, { anio, filas: filas.slice(0, 300) });
+        return toolOkPaginado(texto, { anio }, "filas", filas, offset, limit, "cmf_fechas_divulgacion_eeff");
       } catch (e) {
         return fromError(e);
       }
@@ -1322,16 +1319,15 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "EEFF IFRS de intermediarios (AV/CB/CBP)",
       description:
-        "Devuelve los estados financieros IFRS de intermediarios de valores (agentes de valores, corredores de bolsa y corredores de bolsa de productos) para un rango de períodos. Seleccione sociedades por RUT (array; default todas), anio1/anio2 en AAAA y mes1/mes2 opcionales en MM (default 12). Use esta tool para EEFF de intermediarios; para sociedades anónimas use cmf_eeff_ifrs_sa.",
+        "Devuelve los estados financieros IFRS de intermediarios de valores (agentes de valores, corredores de bolsa y corredores de bolsa de productos) para un rango de períodos. Seleccione sociedades por RUT (array; default todas), anio1/anio2 en AAAA y mes1/mes2 opcionales en MM (default 12). Use esta tool para EEFF de intermediarios; para sociedades anónimas use cmf_eeff_ifrs_sa. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
         anio1: anioSchema,
         anio2: anioSchema.describe("Año final del rango en AAAA (ej: 2025)"),
         mes1: mesSchema.optional(),
-        mes2: mesSchema.optional().describe("Mes final del rango en MM (default 12)"),
-      }),
+        mes2: mesSchema.optional().describe("Mes final del rango en MM (default 12)"), ...paginacion(300) }),
     },
-    async ({ sociedades, anio1, anio2, mes1, mes2 }) => {
+    async ({ sociedades, anio1, anio2, mes1, mes2, offset, limit }) => {
       try {
         const html = await postLegacy(
           "/institucional/estadisticas/merc_valores/intermediarios_fecu_ifrs/intermediarios_ifrs_index.php",
@@ -1353,7 +1349,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `EEFF IFRS intermediarios ${anio1}-${anio2} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
           : "Sin resultados de intermediarios.";
-        return toolOk(texto, { sociedades, anio1, anio2, filas: filas.slice(0, 300) });
+        return toolOkPaginado(texto, { sociedades, anio1, anio2 }, "filas", filas, offset, limit, "cmf_intermediarios_eeff_ifrs");
       } catch (e) {
         return fromError(e);
       }
@@ -1367,16 +1363,15 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Indicadores IFRS de intermediarios",
       description:
-        "Devuelve los indicadores financieros IFRS de intermediarios de valores (agentes de valores y corredores de bolsa) para un rango de períodos. Seleccione sociedades por RUT (array; default todas), anio1/anio2 en AAAA y mes1/mes2 opcionales en MM (default 12). Use esta tool para ratios de intermediarios; para sus EEFF use cmf_intermediarios_eeff_ifrs.",
+        "Devuelve los indicadores financieros IFRS de intermediarios de valores (agentes de valores y corredores de bolsa) para un rango de períodos. Seleccione sociedades por RUT (array; default todas), anio1/anio2 en AAAA y mes1/mes2 opcionales en MM (default 12). Use esta tool para ratios de intermediarios; para sus EEFF use cmf_intermediarios_eeff_ifrs. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
         anio1: anioSchema,
         anio2: anioSchema.describe("Año final del rango en AAAA (ej: 2025)"),
         mes1: mesSchema.optional(),
-        mes2: mesSchema.optional().describe("Mes final del rango en MM (default 12)"),
-      }),
+        mes2: mesSchema.optional().describe("Mes final del rango en MM (default 12)"), ...paginacion(300) }),
     },
-    async ({ sociedades, anio1, anio2, mes1, mes2 }) => {
+    async ({ sociedades, anio1, anio2, mes1, mes2, offset, limit }) => {
       try {
         const html = await postLegacy(
           "/institucional/estadisticas/merc_valores/intermediarios_indicadores_ifrs/intermediarios_indicadoresfinancieros_index.php",
@@ -1397,7 +1392,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `Indicadores IFRS intermediarios (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
           : "Sin indicadores de intermediarios.";
-        return toolOk(texto, { filas: filas.slice(0, 300) });
+        return toolOkPaginado(texto, {  }, "filas", filas, offset, limit, "cmf_intermediarios_indicadores_ifrs");
       } catch (e) {
         return fromError(e);
       }
@@ -1411,14 +1406,13 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Cuadros de resultados (AV/CB y emisores NCH)",
       description:
-        "Devuelve los cuadros de resultados de agentes de valores y corredores de bolsa (tipo=av_cb, norma IFRS) o de emisores bajo norma NCH (tipo=emisores_nch), para un período. Fije anio en AAAA y mes en MM (03/06/09/12 para IFRS; 12 para NCH); la respuesta trae la tabla de corredores y la de agentes. Use esta tool para estados de resultados agregados del mercado; para EEFF de un emisor individual use cmf_empresa_eeff o cmf_empresa_eeff_nch.",
+        "Devuelve los cuadros de resultados de agentes de valores y corredores de bolsa (tipo=av_cb, norma IFRS) o de emisores bajo norma NCH (tipo=emisores_nch), para un período. Fije anio en AAAA y mes en MM (03/06/09/12 para IFRS; 12 para NCH); la respuesta trae la tabla de corredores y la de agentes. Use esta tool para estados de resultados agregados del mercado; para EEFF de un emisor individual use cmf_empresa_eeff o cmf_empresa_eeff_nch. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         tipo: z.enum(["av_cb", "emisores_nch"]).default("av_cb").describe("av_cb=agentes/corredores IFRS (default), emisores_nch=emisores bajo NCH"),
         anio: anioSchema.optional().describe("Año del período en AAAA (default 2025)"),
-        mes: mesCorteSchema.optional().describe("Mes de corte (03/06/09/12; default 12)"),
-      }),
+        mes: mesCorteSchema.optional().describe("Mes de corte (03/06/09/12; default 12)"), ...paginacion(300) }),
     },
-    async ({ tipo, anio, mes }) => {
+    async ({ tipo, anio, mes, offset, limit }) => {
       try {
         const aa = anio ?? "2025";
         const mm = mes ?? (tipo === "av_cb" ? "12" : "12");
@@ -1445,7 +1439,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
           );
         }
         const texto = `Cuadro ${tipo} ${aa}-${mm} (${filas.length} filas, tablas corredores/agentes):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`;
-        return toolOk(texto, { tipo, anio: aa, mes: mm, filas: filas.slice(0, 300) });
+        return toolOkPaginado(texto, { tipo, anio: aa, mes: mm }, "filas", filas, offset, limit, "cmf_resultados_av_cb");
       } catch (e) {
         return fromError(e);
       }
@@ -1459,14 +1453,13 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Índices de liquidez/solvencia de intermediarios",
       description:
-        "Devuelve los índices de liquidez y solvencia de los intermediarios de valores. Filtre opcionalmente por intermediario (texto libre; default todos) y por rango desde/hasta en YYYY-MM-DD (default 01/01/2024 a 31/12/2026). Use esta tool para monitorear la salud financiera de intermediarios; para sus EEFF use cmf_intermediarios_eeff_ifrs.",
+        "Devuelve los índices de liquidez y solvencia de los intermediarios de valores. Filtre opcionalmente por intermediario (texto libre; default todos) y por rango desde/hasta en YYYY-MM-DD (default 01/01/2024 a 31/12/2026). Use esta tool para monitorear la salud financiera de intermediarios; para sus EEFF use cmf_intermediarios_eeff_ifrs. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         intermediario: z.string().optional().describe("Nombre o código del intermediario (texto libre, opcional; default todos)"),
         desde: fechaSchema.optional(),
-        hasta: fechaSchema.optional(),
-      }),
+        hasta: fechaSchema.optional(), ...paginacion(300) }),
     },
-    async ({ intermediario, desde, hasta }) => {
+    async ({ intermediario, desde, hasta, offset, limit }) => {
       try {
         const f1 = desde ? fechaLegacy(desde) : { dd: "01", mm: "01", aa: "2024" };
         const f2 = hasta ? fechaLegacy(hasta) : { dd: "31", mm: "12", aa: "2026" };
@@ -1489,7 +1482,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `Índices liquidez/solvencia (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
           : "Sin índices.";
-        return toolOk(texto, { filas: filas.slice(0, 300) });
+        return toolOkPaginado(texto, {  }, "filas", filas, offset, limit, "cmf_liquidez_intermediarios");
       } catch (e) {
         return fromError(e);
       }
@@ -1503,13 +1496,12 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Préstamos otorgados",
       description:
-        "Devuelve el reporte mensual de préstamos otorgados en el mercado de valores publicado por la CMF (XLS oficial), con detalle por entidad y hasta 300 filas. Fije anio (2016-2026) y mes (01-12), ambos opcionales (default año y mes actuales); si el mes no tiene reporte, la CMF devuelve solo el título y la tool lo indica. Use esta tool para estadísticas de préstamos del mercado; para reportes de la banca use cmf_bancos_reportes.",
+        "Devuelve el reporte mensual de préstamos otorgados en el mercado de valores publicado por la CMF (XLS oficial), con detalle por entidad y hasta 300 filas. Fije anio (2016-2026) y mes (01-12), ambos opcionales (default año y mes actuales); si el mes no tiene reporte, la CMF devuelve solo el título y la tool lo indica. Use esta tool para estadísticas de préstamos del mercado; para reportes de la banca use cmf_bancos_reportes. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         anio: anioSchema.optional().describe("Año del reporte en AAAA (2016-2026; default año actual)"),
-        mes: mesSchema.optional().describe("Mes del reporte en MM (default mes actual)"),
-      }),
+        mes: mesSchema.optional().describe("Mes del reporte en MM (default mes actual)"), ...paginacion(300) }),
     },
-    async ({ anio, mes }) => {
+    async ({ anio, mes, offset, limit }) => {
       try {
         const ahora = new Date();
         const aa = anio ?? String(ahora.getFullYear());
@@ -1527,7 +1519,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
           );
         }
         const texto = `Préstamos otorgados ${aa}-${mm} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`;
-        return toolOk(texto, { anio: aa, mes: mm, filas: filas.slice(0, 300) });
+        return toolOkPaginado(texto, { anio: aa, mes: mm }, "filas", filas, offset, limit, "cmf_prestamos_otorgados");
       } catch (e) {
         return fromError(e);
       }
@@ -1578,17 +1570,17 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Sanciones cursadas del mes",
       description:
-        "Devuelve las sanciones cursadas del mes en curso y la portada de sanciones (la CMF entrega la portada completa, sin filtro por mercado). Use esta tool para las sanciones más recientes; para rangos históricos use cmf_sanciones_globales; para las de un emisor use cmf_empresa_sanciones.",
-      inputSchema: z.object({}),
+        "Devuelve las sanciones cursadas del mes en curso y la portada de sanciones (la CMF entrega la portada completa, sin filtro por mercado). Use esta tool para las sanciones más recientes; para rangos históricos use cmf_sanciones_globales; para las de un emisor use cmf_empresa_sanciones. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+      inputSchema: z.object({ ...paginacion(300) }),
     },
-    async () => {
+    async ({ offset, limit }) => {
       try {
         const html = await getLegacy("/institucional/sanciones/sanciones_cursadas_mes.php", {}, env);
         const filas = htmlTablaAJson(html);
         const texto = filas.length
           ? `Sanciones cursadas (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 5))}`
           : "Sin sanciones cursadas.";
-        return toolOk(texto, { filas: filas.slice(0, 300) });
+        return toolOkPaginado(texto, {  }, "filas", filas, offset, limit, "cmf_sanciones_cursadas");
       } catch (e) {
         return fromError(e);
       }
@@ -1602,10 +1594,10 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Resoluciones cursadas",
       description:
-        "Devuelve las resoluciones cursadas recientes (historico=false, default) o el listado completo de meses anteriores (historico=true, respuesta grande). Use esta tool para resoluciones recientes de la CMF; para resoluciones filtradas por mercado use cmf_resoluciones_globales.",
-      inputSchema: z.object({ historico: z.boolean().default(false).describe("true = listado histórico completo (grande)") }),
+        "Devuelve las resoluciones cursadas recientes (historico=false, default) o el listado completo de meses anteriores (historico=true, respuesta grande). Use esta tool para resoluciones recientes de la CMF; para resoluciones filtradas por mercado use cmf_resoluciones_globales. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+      inputSchema: z.object({ historico: z.boolean().default(false).describe("true = listado histórico completo (grande)"), ...paginacion(300) }),
     },
-    async ({ historico }) => {
+    async ({ historico, offset, limit }) => {
       try {
         const path = historico
           ? "/institucional/resoluciones/resoluciones_cursadas_meses_anteriores.php"
@@ -1615,7 +1607,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const texto = filas.length
           ? `Resoluciones cursadas (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 5))}`
           : "Sin resoluciones.";
-        return toolOk(texto, { historico, filas: filas.slice(0, 300) });
+        return toolOkPaginado(texto, { historico }, "filas", filas, offset, limit, "cmf_resoluciones_cursadas");
       } catch (e) {
         return fromError(e);
       }
@@ -1629,7 +1621,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       annotations: { readOnlyHint: true, destructiveHint: false },
       title: "Catálogo completo de entidades supervisadas",
       description:
-        "Devuelve el catálogo completo de entidades supervisadas de la CMF filtrable por nombre (parcial), tipo de entidad (descripción o código como RVEMI/FMT/FIP) y estado (VI=vigentes, NV=no vigentes), con paginación offset/limit (máx 500). El catálogo se cachea 24h en KV; la primera carga sin caché puede exceder el límite de CPU del plan free de Workers. Use esta tool para búsquedas masivas o filtradas; para una entidad puntual use cmf_buscar_entidad.",
+        "Devuelve el catálogo completo de entidades supervisadas de la CMF filtrable por nombre (parcial), tipo de entidad (descripción o código como RVEMI/FMT/FIP) y estado (VI=vigentes, NV=no vigentes), con paginación offset/limit (máx 5000). El catálogo se cachea 24h en KV; la primera carga sin caché puede exceder el límite de CPU del plan free de Workers. Use esta tool para búsquedas masivas o filtradas; para una entidad puntual use cmf_buscar_entidad. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         nombre: z.string().optional().describe("Filtro por nombre (parcial, insensible a acentos)"),
         tipo_entidad: z.string().optional().describe("Filtro por tipo de entidad: texto parcial del tipo (ej: 'Emisores de Valores', 'Fondos Mutuos') o código (RVEMI, FMT, FIP, CSVID, CSGEN)"),

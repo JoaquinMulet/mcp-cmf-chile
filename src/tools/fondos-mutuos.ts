@@ -6,6 +6,7 @@ import { pedirCaptchaCMF, obtenerCaptcha, ultimoCaptcha, consumirCaptcha } from 
 import { xlsAJson, txtCsvAJson, htmlTablaAJson } from "../client/parsers.js";
 import { fromError, toolError, toolErrorFuente, toolOk, resumirTabla } from "../util/errors.js";
 import { paginar } from "../util/paginate.js";
+import { avisoDeTramo, paginacion, toolOkPaginado } from "../util/tramos.js";
 import {
   anioSchema, carteraSchema, fechaSchema, mesSchema, offsetSchema, limitSchema, codigoSchema, enumTolerante } from "../util/schemas.js";
 
@@ -51,7 +52,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
       annotations: { readOnlyHint: true, destructiveHint: false },
       title: "Catálogo de Fondos Mutuos",
       description:
-        "Devuelve el catálogo completo de fondos mutuos de la CMF (RUT administradora, RUN fondo, nombre, tipo de fondo, moneda, fechas de inicio/término), filtrable por nombre y tipo y paginado con offset/limit. Use esta tool para encontrar el RUN de un fondo antes de consultar su cartola (cmf_fondos_mutuos_cartola) o su cartera (cmf_fondos_mutuos_cartera).",
+        "Devuelve el catálogo completo de fondos mutuos de la CMF (RUT administradora, RUN fondo, nombre, tipo de fondo, moneda, fechas de inicio/término), filtrable por nombre y tipo y paginado con offset/limit. Use esta tool para encontrar el RUN de un fondo antes de consultar su cartola (cmf_fondos_mutuos_cartola) o su cartera (cmf_fondos_mutuos_cartera). Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         nombre: z.string().optional().describe("Filtro por nombre del fondo (parcial)"),
         tipo: z.string().optional().describe("Filtro por tipo de fondo: compara el CÓDIGO numérico (0-8), no el nombre"),
@@ -82,7 +83,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
         const texto = fondos.length
           ? `Fondos mutuos (total ${paginado.total}):\n${resumirTabla(fondos, ["run_fondo", "nombre_fondo", "tipo_fondo", "moneda", "rut_admin"])}`
           : "Sin fondos mutuos que coincidan.";
-        return toolOk(texto, { fondos, total: paginado.total, next_offset: paginado.next_offset });
+        return toolOk(texto + avisoDeTramo(fondos.length, paginado, "cmf_fondos_mutuos_catalogo"), { fondos, total: paginado.total, next_offset: paginado.next_offset });
       } catch (e) {
         return fromError(e);
       }
@@ -115,7 +116,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
         const texto = paginadas.length
           ? `Cartera ${cartera} ${anio}-${mes}: ${paginado.total} fondos con posiciones. Ejemplo:\n${resumirTabla(paginadas.slice(0, 5), Object.keys(paginadas[0] ?? {}).slice(0, 6))}`
           : `Sin cartera ${cartera} para ${anio}-${mes}.`;
-        return toolOk(texto, { anio, mes, cartera, total: paginado.total, filas: paginadas });
+        return toolOk(texto + avisoDeTramo(paginadas.length, paginado, "cmf_fondos_mutuos_cartera"), {  anio, mes, cartera, total: paginado.total, filas: paginadas, next_offset: paginado.next_offset });
       } catch (e) {
         return fromError(e);
       }
@@ -150,7 +151,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
         const texto = paginadas.length
           ? `Comisiones FM ${anio}-${mes ?? "12"} (${paginado.total} filas):\n${resumirTabla(paginadas.slice(0, 5), Object.keys(paginadas[0] ?? {}).slice(0, 8))}`
           : `Sin comisiones para ${anio}-${mes}.`;
-        return toolOk(texto, { anio, mes, total: paginado.total, filas: paginadas });
+        return toolOk(texto + avisoDeTramo(paginadas.length, paginado, "cmf_fondos_mutuos_comisiones"), {  anio, mes, total: paginado.total, filas: paginadas, next_offset: paginado.next_offset });
       } catch (e) {
         return fromError(e);
       }
@@ -192,7 +193,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
         }
         const { filas: paginadas, paginado } = paginar(filas, 0, 50);
         const texto = `Inversiones ${tipo} FM ${anio}-${mes ?? "12"} (${paginado.total} filas):\n${resumirTabla(paginadas.slice(0, 5), Object.keys(paginadas[0] ?? {}).slice(0, 8))}`;
-        return toolOk(texto, { anio, mes, tipo, total: paginado.total, filas: paginadas });
+        return toolOk(texto + avisoDeTramo(paginadas.length, paginado, "cmf_fondos_mutuos_inversiones"), {  anio, mes, tipo, total: paginado.total, filas: paginadas, next_offset: paginado.next_offset });
       } catch (e) {
         return fromError(e);
       }
@@ -225,7 +226,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
         const texto = paginadas.length
           ? `BPR FM ${anio}-${mes ?? "12"} (${paginado.total} series):\n${resumirTabla(paginadas.slice(0, 5), ["Run Fondo", "Nombre Fondo", "Patrimonio", "Valor cuota", "Partícipes", "Rentabilidad nominal mensual"])}`
           : `Sin BPR para ${anio}-${mes}.`;
-        return toolOk(texto, { anio, mes, total: paginado.total, filas: paginadas });
+        return toolOk(texto + avisoDeTramo(paginadas.length, paginado, "cmf_fondos_mutuos_bpr"), {  anio, mes, total: paginado.total, filas: paginadas, next_offset: paginado.next_offset });
       } catch (e) {
         return fromError(e);
       }
@@ -259,7 +260,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
         const texto = paginadas.length
           ? `Costos FM ${anio}-${mes ?? "12"} (${paginado.total} filas):\n${resumirTabla(paginadas.slice(0, 5), Object.keys(paginadas[0] ?? {}).slice(0, 8))}`
           : `Sin costos para ${anio}-${mes}.`;
-        return toolOk(texto, { anio, mes, total: paginado.total, filas: paginadas });
+        return toolOk(texto + avisoDeTramo(paginadas.length, paginado, "cmf_fondos_mutuos_costos"), {  anio, mes, total: paginado.total, filas: paginadas, next_offset: paginado.next_offset });
       } catch (e) {
         return fromError(e);
       }
@@ -288,7 +289,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
         const texto = paginadas.length
           ? `Antecedentes generales FM (${paginado.total} filas):\n${resumirTabla(paginadas.slice(0, 10), Object.keys(paginadas[0] ?? {}).slice(0, 5))}`
           : "Sin antecedentes.";
-        return toolOk(texto, { total: paginado.total, filas: paginadas });
+        return toolOk(texto + avisoDeTramo(paginadas.length, paginado, "cmf_fondos_mutuos_antecedentes"), {  total: paginado.total, filas: paginadas, next_offset: paginado.next_offset });
       } catch (e) {
         return fromError(e);
       }
@@ -302,16 +303,15 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
       outputSchema: fondosSchema("filas"),
       title: "Cartola diaria de Fondos Mutuos",
       description:
-        "Devuelve la cartola diaria de un fondo mutuo de la CMF (valor cuota, patrimonio y partícipes por día) para un rango de fechas. Requiere el RUN del fondo (búsquelo con cmf_fondos_mutuos_catalogo) y captcha de la CMF: si no se entrega el código de 6 caracteres, la tool lo solicitará para reintentar. Use esta tool para la evolución diaria de un fondo; para datos mensuales por serie use cmf_fondos_mutuos_bpr.",
+        "Devuelve la cartola diaria de un fondo mutuo de la CMF (valor cuota, patrimonio y partícipes por día) para un rango de fechas. Requiere el RUN del fondo (búsquelo con cmf_fondos_mutuos_catalogo) y captcha de la CMF: si no se entrega el código de 6 caracteres, la tool lo solicitará para reintentar. Use esta tool para la evolución diaria de un fondo; para datos mensuales por serie use cmf_fondos_mutuos_bpr. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         fondo: codigoSchema.describe("RUN del fondo (búsquelo con cmf_fondos_mutuos_catalogo); acepta 8298 o '8298'"),
         desde: fechaSchema.describe("Fecha inicial en YYYY-MM-DD (acepta DD/MM/AAAA). Ej: 2026-01-01"),
         hasta: fechaSchema.describe("Fecha final en YYYY-MM-DD (acepta DD/MM/AAAA). Ej: 2026-01-31"),
         captcha: z.string().length(6).optional().describe("Código captcha de 6 caracteres (si no lo tiene, la tool le indicará dónde ver la imagen)"),
-        captcha_id: z.string().optional().describe("Id del captcha que la tool le entregó en la respuesta previa (opcional; si no, usa el último captcha activo)"),
-      }),
+        captcha_id: z.string().optional().describe("Id del captcha que la tool le entregó en la respuesta previa (opcional; si no, usa el último captcha activo)"), ...paginacion(400) }),
     },
-    async ({ fondo, desde, hasta, captcha, captcha_id }) => {
+    async ({ fondo, desde, hasta, captcha, captcha_id, offset, limit }) => {
       try {
         if (!captcha) {
           const id = await pedirCaptchaCMF(env, "cartola");
@@ -356,7 +356,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
         const texto = filas.length
           ? `Cartola diaria fondo ${fondo} (${filas.length} días):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
           : "Sin cartola para el fondo en el rango.";
-        return toolOk(texto, { fondo, desde, hasta, filas: filas.slice(0, 400) });
+        return toolOkPaginado(texto, { fondo, desde, hasta }, "filas", filas, offset, limit, "cmf_fondos_mutuos_cartola");
       } catch (e) {
         return fromError(e);
       }
