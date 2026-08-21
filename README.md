@@ -8,11 +8,30 @@ Servidor **Model Context Protocol** (spec 2026-07-28, dual-era: también respond
 
 ## 🚀 Instalación rápida (versión hosteada por nosotros)
 
-**No necesitas instalar ni hostear nada.** El servidor ya está en línea y puedes conectarte directamente:
+**No necesitas instalar ni hostear nada.** El servidor ya está en línea y hay 2 rutas para conectarse.
+
+**Modo código, recomendado.** 2 herramientas.
+
+```
+https://cmf-mcp.kumocloud.cl/mcp/codigo
+```
+
+**Modo clásico.** 86 herramientas, una por operación.
 
 ```
 https://cmf-mcp.kumocloud.cl/mcp
 ```
+
+Las 2 rutas sirven exactamente las mismas 86 operaciones, sobre el mismo
+registro. Cambia cómo se exponen. En modo clásico cada operación es una
+herramienta MCP, y las 86 definiciones viajan en cada petición del
+modelo, unos 37 mil tokens medidos. En modo código hay 2 herramientas y
+el modelo escribe JavaScript, con un costo fijo de unos 736 tokens. Es
+un 98 por ciento menos, y no crece si mañana hay 200 operaciones.
+
+Elige el modo al conectarte. La norma MCP prohíbe que el conjunto de
+herramientas cambie dentro de una conexión, así que cada ruta mantiene
+el suyo y nada se mueve bajo los pies del cliente.
 
 ### opencode (`opencode.json`)
 
@@ -47,6 +66,88 @@ Usa el adaptador `mcp-remote`:
 - **MCP Inspector**: `npx @modelcontextprotocol/inspector@latest` → URL → Connect → List Tools.
 
 > Más ejemplos en [`docs/CONEXION.md`](docs/CONEXION.md).
+
+---
+
+---
+
+## Modo código (2 herramientas en vez de 86)
+
+En la ruta `/mcp/codigo` el servidor expone solo `cmf_buscar` y
+`cmf_ejecutar`. Las 2 reciben JavaScript y devuelven lo que ese código
+retorne.
+
+1. **`cmf_buscar`** te da la variable `catalogo`, un arreglo con las 86
+   operaciones y sus parámetros. Escribes código que lo filtra. El
+   catálogo nunca entra a tu contexto, solo entra lo que devuelvas.
+2. **`cmf_ejecutar`** te da además `cmf`, con una función async por
+   operación. Llamas las que necesites, filtras el resultado y devuelves
+   solo lo útil.
+
+En los 2 casos escribes el CUERPO de una función async y usas `return`.
+Lo que imprimas con `console.log` también te llega.
+
+```js
+// cmf_buscar. qué operaciones hay sobre pólizas
+return catalogo
+  .filter(o => /poliza|seguros/i.test(o.nombre + o.resumen))
+  .map(o => ({ nombre: o.nombre, params: o.params }))
+```
+
+```js
+// cmf_ejecutar. buscar la póliza, bajar su documento y recorrerlo
+const r = await cmf.seguros_deposito_polizas({ poliza: "POL120260128" })
+const p = r.polizas[0]
+const d = await cmf.documento_markdown({ url: p.url })
+const lineas = d.markdown.split("
+").filter(l => /deducible/i.test(l))
+return { entidad: p.entidad, largo: d.markdown.length, lineas: lineas.slice(0, 3) }
+```
+
+Ese segundo ejemplo recorre un documento de 30 mil caracteres adentro
+del servidor y devuelve 3 líneas. Antes había que traer el documento
+entero al contexto del modelo, o conformarse con lo que el servidor
+quisiera mostrar.
+
+### El servidor no recorta
+
+Regla dura del proyecto. **una herramienta jamás decide por el agente
+qué parte del dato merece verse.** Dentro del código, cada operación
+devuelve su JSON completo, con todas las filas que pediste y todos sus
+campos, incluida la url del documento. Quien filtra eres tú, en tu
+código, sabiendo para qué lo necesitas.
+
+Esto arregla un defecto real. El bloque de texto es lo único que un
+modelo ve de una respuesta MCP; el `structuredContent` sobrevive solo
+para quien llama por programa. El resumen en texto del modo clásico no
+traía la columna `url`, así que un agente podía encontrar una póliza y
+no tener nunca cómo leerla.
+
+### La caja aislada
+
+El código corre en un Worker cargado al vuelo, aparte del proceso del
+servidor.
+
+- **Sin salida a internet.** `globalOutbound: null`. Verificado
+  intentando un `fetch` desde adentro y recibiendo el bloqueo del
+  runtime.
+- **Sin sistema de archivos y sin variables de entorno.**
+- **Una sola puerta.** Un puente RPC con las operaciones de la CMF, que
+  salen todas por el cliente HTTP del servidor, con su límite de
+  velocidad, su caché y su anti-bot.
+- **Presupuesto acotado.** 10 segundos de CPU y 60 subpeticiones por
+  programa.
+
+El agente que te habla nunca ejecuta código en su propia máquina. Manda
+un texto y recibe un resultado.
+
+### Cuándo usar el modo clásico
+
+- Si tu cliente ya integró las 86 herramientas y no quieres tocarlo.
+- Si tu modelo escribe JavaScript poco fiable. En modo código, un
+  programa mal escrito cuesta un reintento.
+- Si necesitas las herramientas con captcha. Su imagen viaja como
+  recurso MCP y ese camino solo existe en modo clásico.
 
 ---
 
@@ -112,13 +213,16 @@ Configura tu agente para lanzarlo como proceso:
 src/
 ├── worker.ts            # Entrypoint HTTP remoto: createMcpHandler (agents) + auth opcional
 ├── index.ts             # Entrypoint STDIO local
-├── server.ts            # Factory per-request: registra 86 tools + 7 resources + 3 prompts
+├── server.ts            # Factory per-request. registra las tools segun el modo, + resources + prompts
+├── registro.ts          # Captura las 86 operaciones de src/tools/ y deriva el catalogo
+├── sandbox.ts           # La caja aislada. Worker cargado al vuelo, sin internet
 ├── client/
 │   ├── cmf-client.ts    # Cliente HTTP central: allowlist, UA, cookies, rate limit, retry
 │   ├── anti-bot.ts      # Resolución del challenge anti-bot F5 (por HTTP, sin ejecutar JS)
 │   ├── cache.ts         # LRU + TTL
 │   └── parsers.ts       # HTML→JSON, TXT CSV→JSON, XLS/BIFF→JSON, grids GoogleVis, mojibake
 ├── tools/               # api-oficial, empresas, fondos-mutuos, fondos-inversion, otros, paquete
+│   └── code-mode.ts     # Las 2 tools del modo codigo (cmf_buscar, cmf_ejecutar)
 ├── resources.ts         # cmf://entidades/{rut}, cmf://indicadores/…, cmf://captcha/{id}, …
 ├── prompts.ts           # cmf_analizar_empresa, cmf_comparar_fondos, cmf_indicadores_economicos
 └── captcha.ts           # Store de captchas (KV, TTL 10 min, single-use) para MRTR
@@ -131,7 +235,8 @@ src/
 - **Captchas** (hechos globales, cartola diaria): al llamar la tool sin código, el servidor descarga la imagen real de la CMF y la sirve como resource `cmf://captcha/{id}`; el agente pide el código al usuario y reintenta con `captcha=<código>` (single-use, TTL 10 min); nunca OCR automático.
 - **Rate limiting** hacia la CMF (1 req/s por host) y respeto a la cuota de la API oficial.
 - Los enlaces firmados de la CMF (`ver_sgd`/`auth`/`send`) son **efímeros**: las tools los consumen y no requieren que el modelo maneje credenciales; no los comparta ni los trate como URLs permanentes.
-- Incluye `CMF_HTTP_TOKEN` (bearer) opcional para quienes desplieguen su instancia privada.
+- **Modo código.** El JavaScript del modelo corre en un Worker cargado al vuelo con `globalOutbound: null`, sin sistema de archivos y sin variables de entorno, con 10 segundos de CPU y 60 subpeticiones de tope. Su única puerta es un puente RPC hacia las operaciones de la CMF, así que toda petición real sale por el cliente HTTP del servidor. El bloqueo de internet está verificado contra el despliegue, no supuesto.
+- Incluye `CMF_HTTP_TOKEN` (bearer) opcional para quienes desplieguen su instancia privada. Cubre las 2 rutas.
 - El transport Streamable HTTP valida `Origin` (403 si está presente e inválido), exige `MCP-Protocol-Version`, `Mcp-Method`/`Mcp-Name` y `_meta` en cada request, y responde 202 a las notificaciones (lo implementa el SDK de Cloudflare, verificado en CI por `test/verify-proto.ts`).
 
 ## Solución de problemas
