@@ -176,7 +176,7 @@ export function registrarModoCodigo(server: McpServer, env: CmfEnv, ejecutor: Ej
       inputSchema: z.object({
         codigo: z.string().describe("Cuerpo de una función async de JavaScript que filtra `catalogo` y hace return."),
       }),
-      outputSchema: z.object({ valor: z.unknown().optional(), error: z.string().optional() }),
+      outputSchema: z.object({ valor: z.unknown().optional(), error: z.string().optional() }).passthrough(),
     },
     async ({ codigo }: { codigo: string }) => {
       // La búsqueda no toca la red: solo ve el catálogo.
@@ -205,7 +205,7 @@ export function registrarModoCodigo(server: McpServer, env: CmfEnv, ejecutor: Ej
       inputSchema: z.object({
         codigo: z.string().describe("Cuerpo de una función async de JavaScript que usa `cmf` y hace return."),
       }),
-      outputSchema: z.object({ valor: z.unknown().optional(), error: z.string().optional() }),
+      outputSchema: z.object({ valor: z.unknown().optional(), error: z.string().optional() }).passthrough(),
     },
     async ({ codigo }: { codigo: string }) => {
       const r = await ejecutor.correr(codigo, prestamos);

@@ -176,3 +176,50 @@ test("el valor por DEFECTO se conserva, que no es lo mismo que un techo", () => 
   assert.equal(doc.prepararArgs({ url: "https://x" }).max_chars, 30000);
   assert.equal(doc.prepararArgs({ url: "https://x", max_chars: 9_000_000 }).max_chars, 9_000_000);
 });
+
+test("todo outputSchema es tolerante a campos nuevos", () => {
+  // El 21 de agosto de 2026 el CI se puso rojo 4 commits seguidos por
+  // esto. Le agregué next_offset a una respuesta y su esquema de salida,
+  // que era estricto, la rechazó con "data must NOT have additional
+  // properties". Un esquema de salida estricto convierte cualquier dato
+  // NUEVO en un error, que es la misma familia que un techo. el servidor
+  // decidiendo qué puede contener una respuesta.
+  const culpables: string[] = [];
+  for (const archivo of ARCHIVOS) {
+    const fuente = readFileSync(join(DIR, archivo), "utf-8");
+    const re = /outputSchema:\s*z\.object\(\{/g;
+    for (let m = re.exec(fuente); m !== null; m = re.exec(fuente)) {
+      let prof = 1;
+      let j = m.index + m[0].length;
+      while (j < fuente.length && prof > 0) {
+        if (fuente[j] === "{") prof += 1;
+        else if (fuente[j] === "}") prof -= 1;
+        j += 1;
+      }
+      const cola = fuente.slice(j, j + 30);
+      if (!cola.includes("passthrough")) {
+        culpables.push(`${archivo}:${fuente.slice(0, m.index).split("\n").length}`);
+      }
+    }
+  }
+  assert.deepEqual(culpables, [], `estos esquemas de salida rechazan campos nuevos: ${culpables.join(" | ")}`);
+});
+
+test("ninguna descripción anuncia un máximo que ya no existe", () => {
+  // El 20 de agosto de 2026 subí el techo de filas y 5 descripciones
+  // siguieron diciendo "máx 500". El modelo elige leyendo la
+  // descripción, así que un número viejo ahí es peor que no ponerlo.
+  // Hoy no hay techos, así que ninguna descripción puede anunciar uno.
+  const culpables: string[] = [];
+  for (const op of construirRegistro({ CMF_RATE_LIMIT_MS: "0" }).values()) {
+    const anuncio = /m[áa]x(?:imo)?\.?\s*\d{2,}/i.exec(op.descripcion);
+    if (anuncio) culpables.push(`${op.nombre}: "${anuncio[0]}"`);
+    for (const p of op.params) {
+      const enParam = /m[áa]ximo\s*\d{2,}/i.exec(p.descripcion);
+      if (enParam && ["limit", "max_chars", "max_entradas"].includes(p.nombre)) {
+        culpables.push(`${op.nombre}.${p.nombre}: "${enParam[0]}"`);
+      }
+    }
+  }
+  assert.deepEqual(culpables, [], `estas descripciones anuncian un techo inexistente: ${culpables.join(" | ")}`);
+});

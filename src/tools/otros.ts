@@ -42,7 +42,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         normas: z.array(z.record(z.string(), z.string())),
         total: z.number(),
         next_offset: z.number().nullable(),
-      }),
+      }).passthrough(),
     },
     async ({ tipo, numero, desde, hasta, entidad, materia, offset, limit }) => {
       try {
@@ -848,7 +848,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         polizas: z.array(z.record(z.string(), z.unknown())).optional().describe("Filas del registro de pólizas"),
         filas: z.array(z.record(z.string(), z.unknown())).optional().describe("Filas del exportador XLSX"),
         exportador: z.enum(["xlsx"]).optional().describe("Presente si se usó el exportador XLSX"),
-      }),
+      }).passthrough(),
     },
     async ({ poliza, desde, hasta, norma, tema, texto, offset, limit, exportar }) => {
       try {
@@ -923,7 +923,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         total: z.number().describe("Total de resoluciones de prohibición"),
         next_offset: z.number().nullable().describe("Offset para la siguiente página (null si no hay más)"),
         resoluciones: z.array(z.record(z.string(), z.unknown())).describe("Filas de resoluciones de prohibición"),
-      }),
+      }).passthrough(),
     },
     async ({ offset, limit }) => {
       try {

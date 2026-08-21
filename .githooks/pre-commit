@@ -1,0 +1,19 @@
+#!/bin/sh
+# Puerta rapida antes de cada commit. Compila y corre la suite entera,
+# que incluye las comprobaciones de CLASE sobre el codigo fuente.
+#
+# Por que existe. El 21 de agosto de 2026 el CI estuvo rojo 4 commits
+# seguidos mientras yo declaraba verde, porque `npm test` no es lo que
+# corre el CI. Verde local tiene que significar lo mismo que verde alla.
+#
+# Esto tarda unos 15 segundos. Lo lento (la verificacion contra la CMF
+# real) va en el hook de pre-push, que corre mucho menos seguido.
+set -e
+
+echo "[pre-commit] compilando..."
+npm run build
+
+echo "[pre-commit] suite completa..."
+npm test
+
+echo "[pre-commit] verde. Puedes commitear."

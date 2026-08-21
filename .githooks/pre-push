@@ -1,0 +1,22 @@
+#!/bin/sh
+# Puerta COMPLETA antes de empujar. Corre exactamente lo que corre el CI
+# sobre el codigo local, incluida la verificacion exhaustiva contra la
+# CMF real, que es la que atrapa los errores de esquema de salida.
+#
+# Tarda unos 4 minutos. Es el precio de que nada llegue rojo a GitHub.
+#
+# Lo que NO corre aca son verify-proto y verify-remote, porque hablan con
+# la instancia DESPLEGADA. Esos van despues de `npm run deploy`, con
+# `npm run verificar-desplegado`.
+set -e
+
+echo "[pre-push] compilando..."
+npm run build
+
+echo "[pre-push] suite completa..."
+npm test
+
+echo "[pre-push] verificacion exhaustiva contra la CMF real (unos 4 minutos)..."
+npx tsx test/verify-endpoints.ts
+
+echo "[pre-push] verde. Esto es lo mismo que va a correr el CI."

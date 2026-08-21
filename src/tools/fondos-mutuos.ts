@@ -63,7 +63,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
         fondos: z.array(z.record(z.string(), z.unknown())),
         total: z.number(),
         next_offset: z.number().nullable(),
-      }),
+      }).passthrough(),
     },
     async ({ nombre, tipo, offset, limit }) => {
       try {

@@ -18,7 +18,10 @@
     "test": "tsx --test test/*.test.ts",
     "verify": "tsx test/verify-endpoints.ts",
     "inspector": "npx @modelcontextprotocol/inspector node dist/index.js",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "ci": "npm run build && npm test && npx tsx test/verify-endpoints.ts",
+    "verificar-desplegado": "npx tsx test/verify-proto.ts && npx tsx test/verify-remote.ts",
+    "preparar-hooks": "git config core.hooksPath .githooks"
   },
   "engines": {
     "node": ">=20"

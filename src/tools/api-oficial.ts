@@ -45,7 +45,7 @@ export function registrarToolsApi(server: McpServer, env: CmfEnv): void {
         serie: z.string(),
         fecha: z.string(),
         valor: z.unknown(),
-      }),
+      }).passthrough(),
     },
     async ({ serie, anio, mes, dia }) => {
       try {

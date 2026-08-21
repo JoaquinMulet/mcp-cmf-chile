@@ -53,7 +53,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         resultados: z.array(z.record(z.string(), z.unknown())),
         total: z.number(),
         fuente: z.enum(["kv", "red"]),
-      }),
+      }).passthrough(),
     },
     async ({ consulta, term, limite }) => {
       try {
@@ -135,7 +135,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: z.object({
         resultados: z.array(z.record(z.string(), z.string())),
         total: z.number(),
-      }),
+      }).passthrough(),
     },
     async ({ consulta, term, limite }) => {
       try {
@@ -197,7 +197,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       annotations: { readOnlyHint: true, destructiveHint: false },
       title: "Listar entidades por tipo",
       description:
-        "Lista las entidades supervisadas de un tipo (tipoentidad, ej: RVEMI=emisores de valores) y mercado, paginado con offset/limit (máx 5000). Filtre por estado=VI (vigentes, default) o NV y mercado=V (default), O u S. Use esta tool para enumerar un segmento completo; para buscar por nombre o RUT use cmf_buscar_entidad y para el catálogo completo cmf_catalogo_entidades. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Lista las entidades supervisadas de un tipo (tipoentidad, ej: RVEMI=emisores de valores) y mercado, paginado con offset/limit, sin máximo. Filtre por estado=VI (vigentes, default) o NV y mercado=V (default), O u S. Use esta tool para enumerar un segmento completo; para buscar por nombre o RUT use cmf_buscar_entidad y para el catálogo completo cmf_catalogo_entidades. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         tipoentidad: tipoEntidadSchema,
         mercado: mercadoSchema.optional().describe("Mercado: V=valores (default), O=otros, S=seguros"),
@@ -209,7 +209,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         entidades: z.array(z.record(z.string(), z.string())),
         total: z.number(),
         next_offset: z.number().nullable(),
-      }),
+      }).passthrough(),
     },
     async ({ tipoentidad, mercado, estado, offset, limit }) => {
       try {
@@ -300,7 +300,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         filas_separadas: z.number().optional(),
         filas_fusionadas_pendientes: z.number().optional(),
         verificacion_contable: z.record(z.string(), z.unknown()).optional(),
-      }),
+      }).passthrough(),
     },
     async ({ rut, query, anio, mes, tipo, norma, modo, max_chars, offset_chars, validar_contable }) => {
         const rutFinal = rut ?? query;
@@ -419,7 +419,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       annotations: { readOnlyHint: true, destructiveHint: false },
       title: "Hechos esenciales de empresa",
       description:
-        "Devuelve los hechos esenciales publicados por un emisor (fecha/hora, número, materia y enlace al documento) en un rango de fechas. Identifique el emisor por rut (numérico; se acepta con o sin DV); fije desde/hasta en YYYY-MM-DD y pagine con offset/limit (máx 5000). Use esta tool para hechos de un emisor específico; para el flujo de todo el mercado use cmf_hechos_globales (requiere captcha). Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Devuelve los hechos esenciales publicados por un emisor (fecha/hora, número, materia y enlace al documento) en un rango de fechas. Identifique el emisor por rut (numérico; se acepta con o sin DV); fije desde/hasta en YYYY-MM-DD y pagine con offset/limit, sin máximo. Use esta tool para hechos de un emisor específico; para el flujo de todo el mercado use cmf_hechos_globales (requiere captcha). Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         rut: rutSchema,
         desde: fechaSchema,
@@ -431,7 +431,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         hechos: z.array(z.record(z.string(), z.string())),
         total: z.number(),
         next_offset: z.number().nullable(),
-      }),
+      }).passthrough(),
     },
     async ({ rut, desde, hasta, offset, limit }) => {
       try {
@@ -816,7 +816,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: paginadoSchema("comunicaciones"),
       title: "Comunicaciones de emisores",
       description:
-        "Lista las comunicaciones publicadas por los emisores de valores (fecha, número, sociedad, entidad informante y descripción) con paginación offset/limit (máx 5000). No tiene filtro de fecha (la CMF entrega el listado completo): itere las páginas con next_offset para llegar al período buscado. Use esta tool para monitorear comunicados del mercado; para hechos esenciales use cmf_hechos_globales o cmf_empresa_hechos. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Lista las comunicaciones publicadas por los emisores de valores (fecha, número, sociedad, entidad informante y descripción) con paginación offset/limit, sin máximo. No tiene filtro de fecha (la CMF entrega el listado completo): itere las páginas con next_offset para llegar al período buscado. Use esta tool para monitorear comunicados del mercado; para hechos esenciales use cmf_hechos_globales o cmf_empresa_hechos. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({ offset: offsetSchema, limit: limitSchema }),
     },
     async ({ offset, limit }) => {
@@ -847,7 +847,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: paginadoSchema("clasificaciones"),
       title: "Clasificaciones de riesgo",
       description:
-        "Devuelve las clasificaciones de riesgo asignadas a emisores e instrumentos por las clasificadoras (XLSX oficial de la CMF), paginado con offset/limit (máx 5000). El sistema usa un flujo en 2 pasos: la tool genera el archivo (POST a excel_busqueda_clasificaciones) y descarga el XLSX resultante, que luego se parsea a filas. Filtre opcionalmente por emisor, clasificadora o tipo_instrumento (los filtros se aplican sobre las filas descargadas). Use esta tool para evaluar calidad crediticia de instrumentos; para el historial financiero del emisor use cmf_empresa_eeff. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Devuelve las clasificaciones de riesgo asignadas a emisores e instrumentos por las clasificadoras (XLSX oficial de la CMF), paginado con offset/limit, sin máximo. El sistema usa un flujo en 2 pasos: la tool genera el archivo (POST a excel_busqueda_clasificaciones) y descarga el XLSX resultante, que luego se parsea a filas. Filtre opcionalmente por emisor, clasificadora o tipo_instrumento (los filtros se aplican sobre las filas descargadas). Use esta tool para evaluar calidad crediticia de instrumentos; para el historial financiero del emisor use cmf_empresa_eeff. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         emisor: z.string().optional().describe("Filtro por nombre o RUT del emisor (texto libre, opcional)"),
         clasificadora: z.string().optional().describe("Filtro por clasificadora (texto libre, opcional)"),
@@ -1621,7 +1621,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       annotations: { readOnlyHint: true, destructiveHint: false },
       title: "Catálogo completo de entidades supervisadas",
       description:
-        "Devuelve el catálogo completo de entidades supervisadas de la CMF filtrable por nombre (parcial), tipo de entidad (descripción o código como RVEMI/FMT/FIP) y estado (VI=vigentes, NV=no vigentes), con paginación offset/limit (máx 5000). El catálogo se cachea 24h en KV; la primera carga sin caché puede exceder el límite de CPU del plan free de Workers. Use esta tool para búsquedas masivas o filtradas; para una entidad puntual use cmf_buscar_entidad. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Devuelve el catálogo completo de entidades supervisadas de la CMF filtrable por nombre (parcial), tipo de entidad (descripción o código como RVEMI/FMT/FIP) y estado (VI=vigentes, NV=no vigentes), con paginación offset/limit, sin máximo. El catálogo se cachea 24h en KV; la primera carga sin caché puede exceder el límite de CPU del plan free de Workers. Use esta tool para búsquedas masivas o filtradas; para una entidad puntual use cmf_buscar_entidad. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         nombre: z.string().optional().describe("Filtro por nombre (parcial, insensible a acentos)"),
         tipo_entidad: z.string().optional().describe("Filtro por tipo de entidad: texto parcial del tipo (ej: 'Emisores de Valores', 'Fondos Mutuos') o código (RVEMI, FMT, FIP, CSVID, CSGEN)"),
@@ -1635,7 +1635,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         next_offset: z.number().nullable(),
         cache: z.enum(["kv", "red"]),
         advertencia: z.string().optional(),
-      }),
+      }).passthrough(),
     },
     async ({ nombre, tipo_entidad, estado, offset, limit }) => {
       try {
