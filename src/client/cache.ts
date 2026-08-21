@@ -44,11 +44,5 @@ export class CacheLRU<T> {
 /** Caché de respuestas HTTP crudas (HTML/TXT) con TTL. */
 export const cacheHttp = new CacheLRU<string>(500, 900_000);
 
-/** Caché de catálogos grandes (TTL largo, 24h). */
-export const cacheCatalogo = new CacheLRU<Record<string, unknown>[]>(50, 86_400_000);
-
-/** Caché de datos parseados por clave de tool (TTL default). */
-export const cacheDatos = new CacheLRU<unknown>(400, 900_000);
-
 /** Caché de binarios (PDF/XLS) con TTL corto (15 min) para paquetes. */
 export const cacheBinario = new CacheLRU<{ bytes: Uint8Array; contentType: string }>(100, 900_000);

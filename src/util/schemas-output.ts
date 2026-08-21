@@ -68,17 +68,6 @@ export const historialSchema = z
   })
   .passthrough();
 
-/** EEFF de empresa */
-export const eeffSchema = z
-  .object({
-    periodo: z.string().optional(),
-    tipo_balance: z.string().optional(),
-    tablas: z.array(rec()).optional(),
-    documentos: z.array(rec()).optional(),
-    aviso: z.string().optional(),
-  })
-  .passthrough();
-
 /** Globales por mercado (hechos/sanciones/resoluciones) */
 export const globalesSchema = (campo: string) =>
   z

@@ -49,7 +49,7 @@ export interface Ejecutor {
 }
 
 /** Presupuesto de la caja. Un programa del modelo no puede colgar el Worker. */
-export const LIMITES = { cpuMs: 10_000, subRequests: 60 };
+const LIMITES = { cpuMs: 10_000, subRequests: 60 };
 
 /** Tope del valor devuelto, en caracteres. Ver `recortarValor`. */
 const TOPE_VALOR = 40_000;
@@ -81,7 +81,7 @@ const SIN_RETURN = [
  * problema del formato de entrada, no del programa, así que se corrige
  * antes de ejecutar en vez de fallar.
  */
-export function limpiarCodigo(codigo: string): string {
+function limpiarCodigo(codigo: string): string {
   const t = codigo.trim();
   const CERCO = "```";
   if (!t.startsWith(CERCO) || !t.endsWith(CERCO) || t.length < CERCO.length * 2) return codigo;
@@ -142,7 +142,7 @@ export function traducirErrorDeCaja(bruto: string): string {
  * sí las hay. Por eso el nombre desconocido devuelve `undefined`, y para
  * los que existen se entrega la función de verdad.
  */
-export function construirProxyCmf(
+function construirProxyCmf(
   operaciones: Record<string, (args: Record<string, unknown>) => Promise<unknown>>,
 ): Record<string, unknown> {
   const hayAlguna = Object.keys(operaciones).length > 0;
@@ -179,7 +179,7 @@ export function construirProxyCmf(
  * Traduce el error crudo de JavaScript a algo que el modelo pueda usar
  * para corregirse. `cmf.loQueSea is not a function` no le dice nada.
  */
-export function mejorarError(e: unknown): string {
+function mejorarError(e: unknown): string {
   const bruto = e instanceof Error ? e.message : String(e);
   const nombreMalo = /cmf\.([A-Za-z0-9_]+) is not a function/.exec(bruto);
   if (nombreMalo) {

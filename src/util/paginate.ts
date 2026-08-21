@@ -24,9 +24,3 @@ export function paginar<T>(rows: T[], offset: number, limit: number): { filas: T
     },
   };
 }
-
-/** Recorta una respuesta para no saturar el contexto: preview + flag. */
-export function truncarTexto(texto: string, maxChars = 12000): string {
-  if (texto.length <= maxChars) return texto;
-  return `${texto.slice(0, maxChars)}\n...[truncado ${texto.length - maxChars} caracteres]`;
-}

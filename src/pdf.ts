@@ -13,17 +13,53 @@ export interface PdfResultado {
   markdown: string | null;
 }
 
-/** Límite defensivo: el wasm de pdf-inspector no puede asignar buffers muy grandes
- *  en un Worker (memoria limitada) y su error crudo no enseña nada. */
-export const LIMITE_PDF_BYTES = 4 * 1024 * 1024;
+/**
+ * Límite REAL de la conversión, en bytes.
+ *
+ * No es una decisión editorial sobre cuánto dato mereces. Es lo que el
+ * wasm de pdf-inspector puede asignar dentro de un Worker, así que este
+ * sí es un límite legítimo. El mensaje lo calcula desde acá, nunca
+ * escrito a mano, para que no queden 2 cifras distintas.
+ */
+const LIMITE_PDF_BYTES = 4 * 1024 * 1024;
 
-export function errorPdfMuyGrande(bytes: Uint8Array): Error {
-  const mb = (bytes.length / 1048576).toFixed(1).replace(".", ",");
+/** MB con 1 decimal y coma, como se escribe en español. */
+function enMb(bytes: number): string {
+  return (bytes / 1048576).toFixed(1).replace(".", ",");
+}
+
+/**
+ * La salida que sirve para las 2 fallas. bajar el PDF y convertirlo
+ * afuera. Estaba repetida 3 veces palabra por palabra.
+ */
+const COMO_SEGUIR =
+  "Usa modo=documentos (devuelve la URL del PDF) y descárgalo tú. "
+  + "Para pasarlo a Markdown localmente, recomendamos pdf-inspector (Firecrawl, MIT): "
+  + "https://github.com/firecrawl/pdf-inspector — el mismo motor que usa este servidor. "
+  + "Repositorio del proyecto: https://github.com/JoaquinMulet/mcp-cmf-chile";
+
+/** El documento pesa más de lo que el motor puede cargar. Causa cierta. */
+function errorPdfMuyGrande(bytes: Uint8Array): Error {
   return new Error(
-    `El documento pesa ${mb} MB y supera el límite de conversión del servidor (4 MB): el motor de extracción no puede procesarlo acá. ` +
-      `Usa modo=documentos (devuelve la URL del PDF) y descárgalo tú. ` +
-        `Para pasarlo a Markdown localmente, recomendamos pdf-inspector (Firecrawl, MIT): https://github.com/firecrawl/pdf-inspector — el mismo motor que usa este servidor. ` +
-      `Repositorio del proyecto: https://github.com/JoaquinMulet/mcp-cmf-chile`,
+    `El documento pesa ${enMb(bytes.length)} MB y supera el límite de conversión del servidor `
+    + `(${enMb(LIMITE_PDF_BYTES)} MB): el motor de extracción no puede procesarlo acá. ${COMO_SEGUIR}`,
+  );
+}
+
+/**
+ * El motor falló con un documento que SÍ cabía.
+ *
+ * Antes este caso reusaba el mensaje de arriba, así que un PDF de 2 MB
+ * recibía un error diciendo que superaba los 4 MB. Un mismo mensaje para
+ * 2 causas distintas es una mentira, y quien lo lee elige la que le
+ * conviene. Acá se dice lo que de verdad pasó.
+ */
+function errorMotorFallo(bytes: Uint8Array, causa: unknown): Error {
+  const detalle = String((causa as Error)?.message ?? causa).slice(0, 200);
+  return new Error(
+    `El motor de extracción falló con un documento de ${enMb(bytes.length)} MB, que sí cabe en el `
+    + `límite de ${enMb(LIMITE_PDF_BYTES)} MB. Suele pasar con PDF malformados o de estructura muy `
+    + `pesada. Detalle del motor: ${detalle}. ${COMO_SEGUIR}`,
   );
 }
 
@@ -48,15 +84,12 @@ export async function pdfAMarkdown(
     const r = mod.processPdf(bytes);
     return { pdfType: String(r?.pdfType ?? "?"), markdown: (r?.markdown as string | null) ?? null };
   } catch (e) {
-    // El motor puede fallar por memoria aunque el tamaño sea menor al límite
-    // (PDFs malformados, estructuras pesadas): convertir el error crudo en didáctico.
-    if (bytes.length > 1024 * 1024) throw errorPdfMuyGrande(bytes);
-    throw new Error(
-      `El motor de extracción del PDF falló (${String((e as Error)?.message ?? e).slice(0, 200)}). ` +
-        `Usa modo=documentos (devuelve la URL del PDF) y descárgalo tú. ` +
-      `Para pasarlo a Markdown localmente, recomendamos pdf-inspector (Firecrawl, MIT): https://github.com/firecrawl/pdf-inspector — el mismo motor que usa este servidor. ` +
-        `Repositorio del proyecto: https://github.com/JoaquinMulet/mcp-cmf-chile`,
-    );
+    // El motor puede fallar aunque el documento quepa (PDF malformados,
+    // estructuras muy pesadas). Es una causa DISTINTA de pasarse del
+    // límite, así que lleva su propio mensaje. Antes los 2 casos
+    // compartían texto y un PDF de 2 MB recibía un error diciendo que
+    // superaba los 4 MB.
+    throw errorMotorFallo(bytes, e);
   }
 }
 

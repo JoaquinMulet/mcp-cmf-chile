@@ -10,20 +10,6 @@ import { avisoDeTramo, paginacion, toolOkPaginado } from "../util/tramos.js";
 import {
   anioSchema, carteraSchema, fechaSchema, mesSchema, offsetSchema, limitSchema, codigoSchema, enumTolerante } from "../util/schemas.js";
 
-const COLS_IDENT = [
-  "rut_admin",
-  "razon_admin",
-  "run_fondo",
-  "nombre_fondo",
-  "nombre_corto",
-  "fecha_res_ri",
-  "nro_res_ri",
-  "tipo_fondo",
-  "fecha_inicio",
-  "fecha_termino",
-  "moneda",
-];
-
 /** Descarga y parsea el catálogo completo de FM (fm_ident2) con caché en KV (24h) cuando está disponible. */
 async function catalogoFondosMutuos(env: CmfEnv): Promise<Record<string, unknown>[]> {
   const clave = "catalogo:fm_ident_v1";

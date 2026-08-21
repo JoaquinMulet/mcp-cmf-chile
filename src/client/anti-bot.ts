@@ -44,14 +44,14 @@ export function crearCookieJar(): CookieJar {
   };
 }
 
-export function esChallenge(body: string): boolean {
+function esChallenge(body: string): boolean {
   return (
     body.length < 4000 &&
     (body.includes("cookiesession8341") || body.includes("fwb_dat") || body.includes("eval(function"))
   );
 }
 
-export function extraerChallenge(body: string): { fwbDat: string; md5: string } | null {
+function extraerChallenge(body: string): { fwbDat: string; md5: string } | null {
   const fwb = body.match(/fwb_dat["']?\s*[:=]\s*["']([A-Za-z0-9+/=]+)["']/);
   const md5 = body.match(/cookiesession8341\s*=\s*([a-f0-9]{32})/) || body.match(/cookiesession8341=([a-f0-9]{32})/);
   if (!fwb) return null;

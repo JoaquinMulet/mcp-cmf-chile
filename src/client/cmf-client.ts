@@ -1,5 +1,5 @@
 ﻿import { resolverChallenge, crearCookieJar, UA_DEFAULT } from "./anti-bot.js";
-import { cacheHttp, cacheDatos, cacheBinario } from "./cache.js";
+import { cacheHttp, cacheBinario } from "./cache.js";
 
 /** Entorno del servidor (Workers env o vacío en STDIO). */
 export interface CmfEnv {
@@ -347,11 +347,3 @@ export async function fetchCmfBinarioCached(
   return { bytes: new Uint8Array(buf), contentType };
 }
 
-/** Cache de datos parseados por clave (evita re-parsear catálogos). */
-export function datosCache<T>(clave: string, ttlMs: number, productor: () => T): T {
-  const cacheado = cacheDatos.get(clave);
-  if (cacheado !== undefined) return cacheado as T;
-  const valor = productor();
-  cacheDatos.set(clave, valor, ttlMs);
-  return valor;
-}

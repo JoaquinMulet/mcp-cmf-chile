@@ -63,7 +63,7 @@ export interface FilaTabla {
 }
 
 /** Extrae todas las <table> de un HTML como arrays de filas (celdas decodificadas + enlace). */
-export function htmlTablas(html: string): FilaTabla[][] {
+function htmlTablas(html: string): FilaTabla[][] {
   const tablas: FilaTabla[][] = [];
   const reTabla = /<table[^>]*>([\s\S]*?)<\/table>/gi;
   let tm: RegExpExecArray | null;

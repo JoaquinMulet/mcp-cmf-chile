@@ -30,15 +30,12 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { toolOk } from "./errors.js";
 import { paginar } from "./paginate.js";
 
-// Sin techo de filas a propósito. El servidor no decide cuántas
-// filas mereces; entrega lo que pidas y lo que la fuente tenga.
-// El valor por DEFECTO sí existe, y es el histórico de cada tool,
-// para que quien no pide nada reciba lo de siempre.
-
 /**
  * Campos de paginación para el `inputSchema` de una tool que devuelve filas.
- * @param porDefecto El tope histórico de esa tool, para no cambiar su
- * comportamiento de fábrica.
+ * Sin techo a propósito. El servidor no decide cuántas filas mereces,
+ * entrega lo que pidas y lo que la fuente tenga.
+ * @param porDefecto El tope histórico de esa tool, para no cambiarle el
+ * comportamiento a quien no pide nada.
  */
 export function paginacion(porDefecto: number) {
   return {

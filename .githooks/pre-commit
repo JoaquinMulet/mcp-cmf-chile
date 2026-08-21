@@ -16,4 +16,11 @@ npm run build
 echo "[pre-commit] suite completa..."
 npm test
 
-echo "[pre-commit] verde. Puedes commitear."
+echo "[pre-commit] verde."
+echo ""
+echo "Antes de escribir el mensaje, mira si algo quedo para limpiar."
+echo "  - Codigo que dejo de usarse con este cambio."
+echo "  - Numeros o textos repetidos en 2 lugares."
+echo "  - Comentarios que describen como era antes."
+echo "La suite ya caza las declaraciones muertas, pero no caza la duplicacion."
+echo "Regla del dueño. el sistema se entrega mas limpio de lo que estaba."
