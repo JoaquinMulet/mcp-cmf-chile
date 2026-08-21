@@ -3,7 +3,10 @@
 # sobre el codigo local, incluida la verificacion exhaustiva contra la
 # CMF real, que es la que atrapa los errores de esquema de salida.
 #
-# Tarda unos 4 minutos. Es el precio de que nada llegue rojo a GitHub.
+# Tarda unos minutos y eso NO es un argumento para recortarlo. Un porton
+# lento cuesta minutos; un defecto que se escapa cuesta un entregable
+# equivocado. Los costos no son comparables, asi que la duracion no
+# decide que se ejecuta. Si molesta, se hace mas rapido, no mas corto.
 #
 # Lo que NO corre aca son verify-proto y verify-remote, porque hablan con
 # la instancia DESPLEGADA. Esos van despues de `npm run deploy`, con
@@ -16,7 +19,7 @@ npm run build
 echo "[pre-push] suite completa..."
 npm test
 
-echo "[pre-push] verificacion exhaustiva contra la CMF real (unos 4 minutos)..."
+echo "[pre-push] verificacion exhaustiva contra la CMF real..."
 npx tsx test/verify-endpoints.ts
 
 echo "[pre-push] verde. Esto es lo mismo que va a correr el CI."

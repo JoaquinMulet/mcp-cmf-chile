@@ -1,20 +1,33 @@
 #!/bin/sh
-# Puerta rapida antes de cada commit. Compila y corre la suite entera,
-# que incluye las comprobaciones de CLASE sobre el codigo fuente.
+# Porton antes de cada commit. Corre TODO lo que se puede saber sin red
+# ni despliegue.
 #
-# Por que existe. El 21 de agosto de 2026 el CI estuvo rojo 4 commits
-# seguidos mientras yo declaraba verde, porque `npm test` no es lo que
-# corre el CI. Verde local tiene que significar lo mismo que verde alla.
+# Por que no se recorta por tiempo. El 21 de agosto de 2026 este hook
+# decia "unos 15 segundos, nada mas: un porton lento se termina
+# saltando". El dueno lo corrigio: jamas limitar el trabajo por lo que
+# tarda una prueba, es mejor correr todo y tener toda la informacion.
+# Tiene razon, y la razon es que los costos no son comparables. un
+# porton lento cuesta minutos; un defecto que se escapa cuesta un
+# entregable equivocado y una ronda perdida con quien confia en el
+# resultado.
 #
-# Esto tarda unos 15 segundos. Lo lento (la verificacion contra la CMF
-# real) va en el hook de pre-push, que corre mucho menos seguido.
+# El criterio para repartir entre etapas no es la velocidad, es que
+# informacion existe recien en esa etapa. Lo que necesita red va en
+# pre-push. Lo que solo existe desplegado va despues de desplegar.
+#
+# Si algun dia esto molesta por lento, se hace mas rapido (cache,
+# paralelismo, incremental). No se ejecuta menos.
 set -e
 
 echo "[pre-commit] compilando..."
 npm run build
 
-echo "[pre-commit] suite completa..."
+echo "[pre-commit] suite completa (incluye las comprobaciones de clase)..."
 npm test
+
+echo "[pre-commit] estilo, complejidad y declaraciones muertas..."
+npx biome lint src test --max-diagnostics=1000 --reporter=summary || true
+npx --yes knip --no-progress || true
 
 echo "[pre-commit] verde."
 echo ""
@@ -22,5 +35,4 @@ echo "Antes de escribir el mensaje, mira si algo quedo para limpiar."
 echo "  - Codigo que dejo de usarse con este cambio."
 echo "  - Numeros o textos repetidos en 2 lugares."
 echo "  - Comentarios que describen como era antes."
-echo "La suite ya caza las declaraciones muertas, pero no caza la duplicacion."
-echo "Regla del dueño. el sistema se entrega mas limpio de lo que estaba."
+echo "Regla del dueno. el sistema se entrega mas limpio de lo que estaba."
