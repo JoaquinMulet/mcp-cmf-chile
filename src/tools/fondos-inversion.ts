@@ -5,7 +5,7 @@ import { getLegacy, postLegacy, type CmfEnv } from "../client/cmf-client.js";
 import { htmlTablaAJson, gridGoogleVisAJson } from "../client/parsers.js";
 import { fromError, toolOk, resumirTabla } from "../util/errors.js";
 import { paginar } from "../util/paginate.js";
-import { avisoDeTramo, paginacion, toolOkPaginado } from "../util/tramos.js";
+import { avisoDeTramo, paginacion, toolOkPaginado, toolOkTabla } from "../util/tramos.js";
 import {
   anioSchema, mesSchema, offsetSchema, limitSchema } from "../util/schemas.js";
 
@@ -44,10 +44,18 @@ export function registrarToolsFondosInversion(server: McpServer, env: CmfEnv): v
           { auth: "", send: "", lang: "es", control: "Berlin39", xls: "n" },
         );
         const { columnas, filas } = gridGoogleVisAJson(html);
-        const texto = filas.length
-          ? `EEFF IFRS FI ${anio1}-${mes1 ?? "12"} → ${anio2}-${mes2 ?? "12"}: ${filas.length} cuentas × ${Math.max(0, columnas.length - 1)} fondos.\n${resumirTabla(filas.slice(0, 8), columnas.slice(0, 6))}`
-          : "Sin resultados de EEFF IFRS FI (puede requerir re-solución del anti-bot; reintente).";
-        return toolOkPaginado(texto, { columnas, total_filas: filas.length }, "filas", filas, offset, limit, "cmf_fondos_inversion_eeff_ifrs");
+        return toolOkTabla({
+          titulo: `EEFF IFRS FI ${anio1}-${mes1 ?? "12"} → ${anio2}-${mes2 ?? "12"}, ${Math.max(0, columnas.length - 1)} fondos`,
+          vacio: "Sin resultados de EEFF IFRS FI (puede requerir re-solución del anti-bot; reintente).",
+          base: { columnas },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_fondos_inversion_eeff_ifrs",
+          columnas,
+          unidad: "cuentas",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -104,10 +112,16 @@ export function registrarToolsFondosInversion(server: McpServer, env: CmfEnv): v
           env,
         );
         const filas = htmlTablaAJson(html);
-        const texto = filas.length
-          ? `Comisiones máximas FI (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
-          : "Informe disponible sin tablas parseables (puede ser PDF).";
-        return toolOkPaginado(texto, {  }, "filas", filas, offset, limit, "cmf_fondos_inversion_comisiones_maximas");
+        return toolOkTabla({
+          titulo: `Comisiones máximas FI`,
+          vacio: "Informe disponible sin tablas parseables (puede ser PDF).",
+          base: {  },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_fondos_inversion_comisiones_maximas",
+        });
       } catch (e) {
         return fromError(e);
       }

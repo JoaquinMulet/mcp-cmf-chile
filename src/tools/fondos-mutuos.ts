@@ -6,7 +6,7 @@ import { pedirCaptchaCMF, obtenerCaptcha, ultimoCaptcha, consumirCaptcha } from 
 import { xlsAJson, txtCsvAJson, htmlTablaAJson } from "../client/parsers.js";
 import { fromError, toolError, toolErrorFuente, toolOk, resumirTabla } from "../util/errors.js";
 import { paginar } from "../util/paginate.js";
-import { avisoDeTramo, paginacion, toolOkPaginado } from "../util/tramos.js";
+import { avisoDeTramo, paginacion, toolOkPaginado, toolOkTabla } from "../util/tramos.js";
 import {
   anioSchema, carteraSchema, fechaSchema, mesSchema, offsetSchema, limitSchema, codigoSchema, enumTolerante } from "../util/schemas.js";
 
@@ -83,14 +83,15 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
       outputSchema: fondosSchema("filas"),
       title: "Cartera de inversiones de Fondos Mutuos",
       description:
-        "Descarga la cartera de inversiones de fondos mutuos de la CMF para un mes: posiciones por instrumento de cada fondo (columnas con códigos de la Circular 1333). Requiere cartera (NACI=nacional, EXTR=extranjera, OPCI=opciones, FUTU=futuros, OPLA=opciones largo plazo), anio en AAAA y mes en MM; la salida trae total y las primeras 50 filas de ejemplo. Use esta tool para ver las posiciones que componen cada fondo; para agregados por emisor/país use cmf_fondos_mutuos_inversiones.",
+        "Descarga la cartera de inversiones de fondos mutuos de la CMF para un mes: posiciones por instrumento de cada fondo (columnas con códigos de la Circular 1333). Requiere cartera (NACI=nacional, EXTR=extranjera, OPCI=opciones, FUTU=futuros, OPLA=opciones largo plazo), anio en AAAA y mes en MM; la salida trae total y las primeras 50 filas de ejemplo. Use esta tool para ver las posiciones que componen cada fondo; para agregados por emisor/país use cmf_fondos_mutuos_inversiones. La respuesta trae total y next_offset; sube limit, que no tiene máximo, para traer todas las filas de una vez.",
       inputSchema: z.object({
         anio: anioSchema,
         mes: mesSchema,
         cartera: carteraSchema,
+        ...paginacion(50),
       }),
     },
-    async ({ anio, mes, cartera }) => {
+    async ({ anio, mes, cartera , offset, limit }) => {
       try {
         const res = await postLegacy(
           "/institucional/estadisticas/ffm_download.php",
@@ -98,11 +99,17 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
           env,
         );
         const filas = txtCsvAJson(res);
-        const { filas: paginadas, paginado } = paginar(filas, 0, 50);
-        const texto = paginadas.length
-          ? `Cartera ${cartera} ${anio}-${mes}: ${paginado.total} fondos con posiciones. Ejemplo:\n${resumirTabla(paginadas.slice(0, 5), Object.keys(paginadas[0] ?? {}).slice(0, 6))}`
-          : `Sin cartera ${cartera} para ${anio}-${mes}.`;
-        return toolOk(texto + avisoDeTramo(paginadas.length, paginado, "cmf_fondos_mutuos_cartera"), {  anio, mes, cartera, total: paginado.total, filas: paginadas, next_offset: paginado.next_offset });
+        return toolOkTabla({
+          titulo: `Cartera ${cartera} ${anio}-${mes}`,
+          vacio: `Sin cartera ${cartera} para ${anio}-${mes}.`,
+          base: { anio, mes, cartera },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_fondos_mutuos_cartera",
+          unidad: "fondos con posiciones",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -116,16 +123,17 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
       outputSchema: fondosSchema("filas"),
       title: "Comisiones y remuneraciones de FM",
       description:
-        "Descarga la estructura de comisiones de fondos mutuos de la CMF: comisión de colocación, remuneración de administración y gastos de operación por fondo/serie. Filtre por anio en AAAA, mes en MM (default 12), admin (RUT de administradora, 0=todas), tipo_fondo (0-8, 0=todos) y moneda (0=todas, $$, PROM o EUR). Use esta tool para comparar cobros entre fondos; para el costo total anual (TAC) use cmf_fondos_mutuos_costos.",
+        "Descarga la estructura de comisiones de fondos mutuos de la CMF: comisión de colocación, remuneración de administración y gastos de operación por fondo/serie. Filtre por anio en AAAA, mes en MM (default 12), admin (RUT de administradora, 0=todas), tipo_fondo (0-8, 0=todos) y moneda (0=todas, $$, PROM o EUR). Use esta tool para comparar cobros entre fondos; para el costo total anual (TAC) use cmf_fondos_mutuos_costos. La respuesta trae total y next_offset; sube limit, que no tiene máximo, para traer todas las filas de una vez.",
       inputSchema: z.object({
         anio: anioSchema,
         mes: mesSchema.optional(),
         admin: z.string().optional().describe("RUT de administradora (0=todas)"),
         tipo_fondo: z.string().optional().describe("Código de tipo de fondo (0=todos, 1-8 según la clasificación de la CMF)"),
         moneda: z.enum(["0", "$$", "PROM", "EUR"]).optional().describe("Moneda: 0=todas, $$=pesos chilenos, PROM=promedio, EUR=euros"),
+        ...paginacion(50),
       }),
     },
-    async ({ anio, mes, admin, tipo_fondo, moneda }) => {
+    async ({ anio, mes, admin, tipo_fondo, moneda , offset, limit }) => {
       try {
         const res = await getLegacyBinario(
           "/institucional/estadisticas/fm.fm_comision.php",
@@ -133,11 +141,16 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
           env,
         );
         const filas = xlsAJson(res);
-        const { filas: paginadas, paginado } = paginar(filas, 0, 50);
-        const texto = paginadas.length
-          ? `Comisiones FM ${anio}-${mes ?? "12"} (${paginado.total} filas):\n${resumirTabla(paginadas.slice(0, 5), Object.keys(paginadas[0] ?? {}).slice(0, 8))}`
-          : `Sin comisiones para ${anio}-${mes}.`;
-        return toolOk(texto + avisoDeTramo(paginadas.length, paginado, "cmf_fondos_mutuos_comisiones"), {  anio, mes, total: paginado.total, filas: paginadas, next_offset: paginado.next_offset });
+        return toolOkTabla({
+          titulo: `Comisiones FM ${anio}-${mes ?? "12"}`,
+          vacio: `Sin comisiones para ${anio}-${mes}.`,
+          base: { anio, mes },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_fondos_mutuos_comisiones",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -151,15 +164,16 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
       outputSchema: fondosSchema("filas"),
       title: "Inversiones de Fondos Mutuos",
       description:
-        "Descarga las inversiones de fondos mutuos de la CMF por período, en instrumentos nacionales o extranjeros, agregadas según el nivel pedido. Requiere anio en AAAA, tipo (nacio=nacionales, inter=extranjeros; default nacio) y consulta (fondos, default; emisores o pais_transaccion); mes en MM opcional (default 12). La salida trae total y las primeras 50 filas de ejemplo. Use esta tool para agregados de inversión; para el detalle de la cartera por fondo use cmf_fondos_mutuos_cartera.",
+        "Descarga las inversiones de fondos mutuos de la CMF por período, en instrumentos nacionales o extranjeros, agregadas según el nivel pedido. Requiere anio en AAAA, tipo (nacio=nacionales, inter=extranjeros; default nacio) y consulta (fondos, default; emisores o pais_transaccion); mes en MM opcional (default 12). Use esta tool para agregados de inversión; para el detalle de la cartera por fondo use cmf_fondos_mutuos_cartera. La respuesta trae total y next_offset; sube limit, que no tiene máximo, para traer todas las filas de una vez.",
       inputSchema: z.object({
         anio: anioSchema,
         mes: mesSchema.optional(),
         tipo: z.enum(["nacio", "inter"]).default("nacio").describe("Ámbito de inversión: nacio=nacionales, inter=extranjeros (default nacio)"),
         consulta: z.enum(["fondos", "emisores", "pais_transaccion"]).optional().describe("Nivel de agregación: fondos, emisores o pais_transaccion (default fondos)"),
+        ...paginacion(50),
       }),
     },
-    async ({ anio, mes, tipo, consulta }) => {
+    async ({ anio, mes, tipo, consulta , offset, limit }) => {
       try {
         const path =
           tipo === "nacio"
@@ -177,9 +191,16 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
             `https://www.cmfchile.cl/institucional/estadisticas/fm.inversiones_${tipo}.php`,
           );
         }
-        const { filas: paginadas, paginado } = paginar(filas, 0, 50);
-        const texto = `Inversiones ${tipo} FM ${anio}-${mes ?? "12"} (${paginado.total} filas):\n${resumirTabla(paginadas.slice(0, 5), Object.keys(paginadas[0] ?? {}).slice(0, 8))}`;
-        return toolOk(texto + avisoDeTramo(paginadas.length, paginado, "cmf_fondos_mutuos_inversiones"), {  anio, mes, tipo, total: paginado.total, filas: paginadas, next_offset: paginado.next_offset });
+        return toolOkTabla({
+          titulo: `Inversiones ${tipo} FM ${anio}-${mes ?? "12"}`,
+          vacio: `Sin inversiones para ${anio}-${mes}.`,
+          base: { anio, mes, tipo },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_fondos_mutuos_inversiones",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -193,14 +214,15 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
       outputSchema: fondosSchema("filas"),
       title: "Patrimonio, rentabilidad y partícipes de FM",
       description:
-        "Descarga el Boletín de Patrimonio y Rentabilidad (BPR) de fondos mutuos de la CMF: patrimonio, variación, rentabilidad nominal mensual, número de partícipes y valor cuota por serie. Filtre por anio en AAAA, mes en MM (default 12) y admin (RUT de administradora; omitir = todas). Use esta tool para datos por serie; para el agregado del sistema use cmf_fondos_mutuos_antecedentes.",
+        "Descarga el Boletín de Patrimonio y Rentabilidad (BPR) de fondos mutuos de la CMF: patrimonio, variación, rentabilidad nominal mensual, número de partícipes y valor cuota por serie. Filtre por anio en AAAA, mes en MM (default 12) y admin (RUT de administradora; omitir = todas). Use esta tool para datos por serie; para el agregado del sistema use cmf_fondos_mutuos_antecedentes. La respuesta trae total y next_offset; sube limit, que no tiene máximo, para traer todas las filas de una vez.",
       inputSchema: z.object({
         anio: anioSchema,
         mes: mesSchema.optional(),
         admin: z.string().optional().describe("RUT de administradora (omitir = todas)"),
+        ...paginacion(50),
       }),
     },
-    async ({ anio, mes, admin }) => {
+    async ({ anio, mes, admin , offset, limit }) => {
       try {
         const res = await getLegacyBinario(
           "/institucional/estadisticas/fm.fm_bpr.php",
@@ -208,11 +230,18 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
           env,
         );
         const filas = xlsAJson(res);
-        const { filas: paginadas, paginado } = paginar(filas, 0, 50);
-        const texto = paginadas.length
-          ? `BPR FM ${anio}-${mes ?? "12"} (${paginado.total} series):\n${resumirTabla(paginadas.slice(0, 5), ["Run Fondo", "Nombre Fondo", "Patrimonio", "Valor cuota", "Partícipes", "Rentabilidad nominal mensual"])}`
-          : `Sin BPR para ${anio}-${mes}.`;
-        return toolOk(texto + avisoDeTramo(paginadas.length, paginado, "cmf_fondos_mutuos_bpr"), {  anio, mes, total: paginado.total, filas: paginadas, next_offset: paginado.next_offset });
+        return toolOkTabla({
+          titulo: `BPR FM ${anio}-${mes ?? "12"}`,
+          vacio: `Sin BPR para ${anio}-${mes}.`,
+          base: { anio, mes },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_fondos_mutuos_bpr",
+          columnas: ["Run Fondo", "Nombre Fondo", "Patrimonio", "Valor cuota", "Partícipes", "Rentabilidad nominal mensual"],
+          unidad: "series",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -226,14 +255,15 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
       outputSchema: fondosSchema("filas"),
       title: "Cuadro de costos de FM (TAC)",
       description:
-        "Descarga el cuadro estadístico de costos de fondos mutuos de la CMF: remuneración fija/variable, gastos de operación y TAC (costo total anual) por serie. Filtre por anio en AAAA, mes en MM (default 12) y admin (RUT de administradora; omitir = todas). Use esta tool para comparar el costo total anual entre series; para la estructura de comisiones de colocación use cmf_fondos_mutuos_comisiones.",
+        "Descarga el cuadro estadístico de costos de fondos mutuos de la CMF: remuneración fija/variable, gastos de operación y TAC (costo total anual) por serie. Filtre por anio en AAAA, mes en MM (default 12) y admin (RUT de administradora; omitir = todas). Use esta tool para comparar el costo total anual entre series; para la estructura de comisiones de colocación use cmf_fondos_mutuos_comisiones. La respuesta trae total y next_offset; sube limit, que no tiene máximo, para traer todas las filas de una vez.",
       inputSchema: z.object({
         anio: anioSchema,
         mes: mesSchema.optional(),
         admin: z.string().optional().describe("RUT de administradora (omitir = todas)"),
+        ...paginacion(50),
       }),
     },
-    async ({ anio, mes, admin }) => {
+    async ({ anio, mes, admin , offset, limit }) => {
       try {
         const res = await postLegacyBinario(
           "/institucional/estadisticas/fmdfm_excel2.php",
@@ -242,11 +272,16 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
           { lang: "es" },
         );
         const filas = xlsAJson(res);
-        const { filas: paginadas, paginado } = paginar(filas, 0, 50);
-        const texto = paginadas.length
-          ? `Costos FM ${anio}-${mes ?? "12"} (${paginado.total} filas):\n${resumirTabla(paginadas.slice(0, 5), Object.keys(paginadas[0] ?? {}).slice(0, 8))}`
-          : `Sin costos para ${anio}-${mes}.`;
-        return toolOk(texto + avisoDeTramo(paginadas.length, paginado, "cmf_fondos_mutuos_costos"), {  anio, mes, total: paginado.total, filas: paginadas, next_offset: paginado.next_offset });
+        return toolOkTabla({
+          titulo: `Costos FM ${anio}-${mes ?? "12"}`,
+          vacio: `Sin costos para ${anio}-${mes}.`,
+          base: { anio, mes },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_fondos_mutuos_costos",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -260,10 +295,10 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
       outputSchema: fondosSchema("filas"),
       title: "Antecedentes generales del sistema FM",
       description:
-        "Devuelve los antecedentes generales del sistema de fondos mutuos de la CMF: número de administradoras y fondos, patrimonio total y partícipes (corte a diciembre de cada año). Filtre por anio en AAAA (opcional; default 2025). Use esta tool para la evolución agregada del sistema; para datos por fondo use cmf_fondos_mutuos_bpr.",
-      inputSchema: z.object({ anio: anioSchema.optional() }),
+        "Devuelve los antecedentes generales del sistema de fondos mutuos de la CMF: número de administradoras y fondos, patrimonio total y partícipes (corte a diciembre de cada año). Filtre por anio en AAAA (opcional; default 2025). Use esta tool para la evolución agregada del sistema; para datos por fondo use cmf_fondos_mutuos_bpr. La respuesta trae total y next_offset; sube limit, que no tiene máximo, para traer todas las filas de una vez.",
+      inputSchema: z.object({ anio: anioSchema.optional(), ...paginacion(50) }),
     },
-    async ({ anio }) => {
+    async ({ anio , offset, limit }) => {
       try {
         const res = await getLegacyBinario(
           "/institucional/estadisticas/fm.ffmm_agenerales.php",
@@ -271,11 +306,16 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
           env,
         );
         const filas = xlsAJson(res);
-        const { filas: paginadas, paginado } = paginar(filas, 0, 50);
-        const texto = paginadas.length
-          ? `Antecedentes generales FM (${paginado.total} filas):\n${resumirTabla(paginadas.slice(0, 10), Object.keys(paginadas[0] ?? {}).slice(0, 5))}`
-          : "Sin antecedentes.";
-        return toolOk(texto + avisoDeTramo(paginadas.length, paginado, "cmf_fondos_mutuos_antecedentes"), {  total: paginado.total, filas: paginadas, next_offset: paginado.next_offset });
+        return toolOkTabla({
+          titulo: `Antecedentes generales FM`,
+          vacio: "Sin antecedentes.",
+          base: {},
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_fondos_mutuos_antecedentes",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -339,10 +379,17 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
           return toolError("Captcha inválido o expirado para la cartola (la CMF devolvió el formulario). Solicite un nuevo captcha y reintente; si el código era correcto, verifique el rango de fechas.");
         }
         const filas = htmlTablaAJson(html);
-        const texto = filas.length
-          ? `Cartola diaria fondo ${fondo} (${filas.length} días):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
-          : "Sin cartola para el fondo en el rango.";
-        return toolOkPaginado(texto, { fondo, desde, hasta }, "filas", filas, offset, limit, "cmf_fondos_mutuos_cartola");
+        return toolOkTabla({
+          titulo: `Cartola diaria fondo ${fondo}`,
+          vacio: "Sin cartola para el fondo en el rango.",
+          base: { fondo, desde, hasta },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_fondos_mutuos_cartola",
+          unidad: "días",
+        });
       } catch (e) {
         return fromError(e);
       }

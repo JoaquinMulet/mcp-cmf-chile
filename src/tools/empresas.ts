@@ -9,7 +9,7 @@ import { paginar } from "../util/paginate.js";
 import { bytesABase64 } from "../util/zip.js";
 import { pdfAMarkdown } from "../pdf.js";
 import { procesarTablasEEFF, textoVerificacion, textoAviso } from "../eeff-tables.js";
-import { avisoDeTramo, paginacion, toolOkPaginado } from "../util/tramos.js";
+import { avisoDeTramo, paginacion, toolOkPaginado, toolOkTabla } from "../util/tramos.js";
 import {
   anioSchema,
   enumTolerante,
@@ -253,15 +253,16 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
           `https://www.cmfchile.cl/institucional/mercados/entidad.php?mercado=V&rut=${rut}&pestania=1`,
           () => toolOk(`Sin datos de identificación para RUT ${rut}.`, { rut, total: 0, next_offset: null, datos: [] }),
           () =>
-            toolOkPaginado(
-              `Ficha identificación RUT ${rut}:\n${resumirTabla(filas.slice(0, 3), Object.keys(filas[0]))}`,
-              { rut },
-              "datos",
+            toolOkTabla({
+              titulo: `Ficha identificación RUT ${rut}`,
+              vacio: `Sin datos de identificación para RUT ${rut}.`,
+              base: { rut },
+              campo: "datos",
               filas,
               offset,
               limit,
-              "cmf_empresa_info",
-            ),
+              tool: "cmf_empresa_info",
+            }),
         );
       } catch (e) {
         return fromError(e);
@@ -741,10 +742,17 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
           return toolError("Captcha inválido o expirado (la CMF devolvió el formulario, no los resultados). Solicite un nuevo captcha y reintente; si el código era correcto, verifique el período de la consulta.");
         }
         const filas = htmlTablaAJson(html, COLS_HECHOS);
-        const texto = filas.length
-          ? `Hechos esenciales ${mercado} (${filas.length}):\n${resumirTabla(filas.slice(0, 10), ["fecha_hora", "numero", "entidad", "materia"])}`
-          : "Sin hechos en el período.";
-        return toolOkPaginado(texto, { mercado, desde, hasta }, "hechos", filas, offset, limit, "cmf_hechos_globales");
+        return toolOkTabla({
+          titulo: `Hechos esenciales ${mercado}`,
+          vacio: "Sin hechos en el período.",
+          base: { mercado, desde, hasta },
+          campo: "hechos",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_hechos_globales",
+          columnas: ["fecha_hora", "numero", "entidad", "materia"],
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -953,10 +961,16 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
           env,
         );
         const tablas = htmlTablaAJson(html);
-        const texto = tablas.length
-          ? `EEFF IFRS SA ${anio1}-${mes1 ?? "12"} → ${anio2}-${mes2 ?? "12"} (${tablas.length} filas):\n${resumirTabla(tablas.slice(0, 10), Object.keys(tablas[0] ?? {}).slice(0, 6))}`
-          : "Sin resultados EEFF IFRS SA.";
-        return toolOkPaginado(texto, { sociedades, anio1, anio2 }, "filas", tablas, offset, limit, "cmf_eeff_ifrs_sa");
+        return toolOkTabla({
+          titulo: `EEFF IFRS SA ${anio1}-${mes1 ?? "12"} → ${anio2}-${mes2 ?? "12"}`,
+          vacio: "Sin resultados EEFF IFRS SA.",
+          base: { sociedades, anio1, anio2 },
+          campo: "filas",
+          filas: tablas,
+          offset,
+          limit,
+          tool: "cmf_eeff_ifrs_sa",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -982,10 +996,16 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
           env,
         );
         const filas = htmlTablaAJson(html);
-        const texto = filas.length
-          ? `Indicadores IFRS SA corte ${fecha_max} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
-          : "Sin indicadores para el corte.";
-        return toolOkPaginado(texto, { fecha_max }, "filas", filas, offset, limit, "cmf_indicadores_financieros_sa");
+        return toolOkTabla({
+          titulo: `Indicadores IFRS SA corte ${fecha_max}`,
+          vacio: "Sin indicadores para el corte.",
+          base: { fecha_max },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_indicadores_financieros_sa",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -1026,10 +1046,16 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
           env,
         );
         const tablas = htmlTablaAJson(html);
-        const texto = tablas.length
-          ? `EEFF NCH SA ${anio1}-${mes1 ?? "12"} → ${anio2}-${mes2 ?? "12"} (${tablas.length} filas):\n${resumirTabla(tablas.slice(0, 10), Object.keys(tablas[0] ?? {}).slice(0, 6))}`
-          : "Sin resultados EEFF NCH.";
-        return toolOkPaginado(texto, { sociedades, anio1, anio2 }, "filas", tablas, offset, limit, "cmf_empresa_eeff_nch");
+        return toolOkTabla({
+          titulo: `EEFF NCH SA ${anio1}-${mes1 ?? "12"} → ${anio2}-${mes2 ?? "12"}`,
+          vacio: "Sin resultados EEFF NCH.",
+          base: { sociedades, anio1, anio2 },
+          campo: "filas",
+          filas: tablas,
+          offset,
+          limit,
+          tool: "cmf_empresa_eeff_nch",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -1070,10 +1096,16 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
           env,
         );
         const filas = htmlTablaAJson(html);
-        const texto = filas.length
-          ? `Indicadores NCH SA (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
-          : "Sin indicadores NCH.";
-        return toolOkPaginado(texto, {  }, "filas", filas, offset, limit, "cmf_indicadores_financieros_nch");
+        return toolOkTabla({
+          titulo: `Indicadores NCH SA`,
+          vacio: "Sin indicadores NCH.",
+          base: {  },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_indicadores_financieros_nch",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -1115,10 +1147,17 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         if (html.includes("dataAsJson")) {
           const { filas: filasGrid } = gridGoogleVisAJson(html);
           const filas = filasGrid as Record<string, unknown>[];
-          const texto = filas.length
-            ? `Dividendos ${anio} (${filas.length} registros):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
-            : `Sin dividendos para la selección.`;
-          return toolOkPaginado(texto, { anio }, "filas", filas, offset, limit, "cmf_dividendos");
+          return toolOkTabla({
+            titulo: `Dividendos ${anio}`,
+            vacio: `Sin dividendos para la selección.`,
+            base: { anio },
+            campo: "filas",
+            filas,
+            offset,
+            limit,
+            tool: "cmf_dividendos",
+            unidad: "registros",
+          });
         }
         if (/no se encuentran datos/i.test(html)) {
           return toolOk(`Sin dividendos para las sociedades seleccionadas en el período ${anio} (la CMF no encontró datos).`, { anio, filas: [] });
@@ -1130,8 +1169,16 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
           );
         }
         const filas = htmlTablaAJson(html);
-        const texto = `Dividendos ${anio} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`;
-        return toolOkPaginado(texto, { anio }, "filas", filas, offset, limit, "cmf_dividendos");
+        return toolOkTabla({
+          titulo: `Dividendos ${anio}`,
+          vacio: "Sin resultados.",
+          base: { anio },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_dividendos",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -1161,10 +1208,16 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
               : "/institucional/estadisticas/acc_liberadaspago1.php";
         const html = await postLegacy(path, { "sociedad[]": sociedades, anno3: anio, enviar: "Buscar" }, env);
         const filas = htmlTablaAJson(html);
-        const texto = filas.length
-          ? `${tipo === "reparto" ? "Repartos" : tipo === "canje" ? "Canjes" : "Liberadas"} ${anio} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
-          : `Sin ${tipo}s de capital para ${anio}.`;
-        return toolOkPaginado(texto, { tipo, anio }, "filas", filas, offset, limit, "cmf_operaciones_capital");
+        return toolOkTabla({
+          titulo: `${tipo === "reparto" ? "Repartos" : tipo === "canje" ? "Canjes" : "Liberadas"} ${anio}`,
+          vacio: `Sin ${tipo}s de capital para ${anio}.`,
+          base: { tipo, anio },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_operaciones_capital",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -1219,10 +1272,16 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
           const bytes = await getLegacyBinario(`/institucional/estadisticas/exportacion_excel_cuadros.php?${qs}`, {}, env);
           if (bytes.length > 5000) xlsBase64 = bytesABase64(bytes);
         }
-        const texto = filas.length
-          ? `Valores APV cuadro ${cuadro} ${anio_desde}-${anio_hasta} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
-          : `Sin información para el cuadro ${cuadro} en el período (la CMF no tiene datos para la combinación pedida).`;
-        return toolOkPaginado(texto, { anio_desde, anio_hasta, cuadro, ...(xlsBase64 ? { xls_base64: xlsBase64 } : {}) }, "filas", filas, offset, limit, "cmf_apv");
+        return toolOkTabla({
+          titulo: `Valores APV cuadro ${cuadro} ${anio_desde}-${anio_hasta}`,
+          vacio: `Sin información para el cuadro ${cuadro} en el período (la CMF no tiene datos para la combinación pedida).`,
+          base: { anio_desde, anio_hasta, cuadro, ...(xlsBase64 ? { xls_base64: xlsBase64 } : {}) },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_apv",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -1243,10 +1302,16 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       try {
         const html = await getLegacy("/institucional/mercados/tomas_detalle.php", { tipo: "TDC", orden: orden ?? 1 }, env);
         const filas = htmlTablaAJson(html);
-        const texto = filas.length
-          ? `Tomas de control (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
-          : "Sin tomas de control.";
-        return toolOkPaginado(texto, {  }, "filas", filas, offset, limit, "cmf_tomas_control");
+        return toolOkTabla({
+          titulo: `Tomas de control`,
+          vacio: "Sin tomas de control.",
+          base: {  },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_tomas_control",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -1276,10 +1341,16 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
                 : "/institucional/mercados/ifrs_resp_ofc485.php";
         const html = await getLegacy(path, tipo_listado === "ofc485" ? { mercado: "V" } : {}, env);
         const filas = htmlTablaAJson(html);
-        const texto = filas.length
-          ? `Listado EEFF IFRS ${tipo_listado} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 5))}`
-          : "Sin listado.";
-        return toolOkPaginado(texto, { tipo_listado }, "filas", filas, offset, limit, "cmf_listados_eeff_ifrs");
+        return toolOkTabla({
+          titulo: `Listado EEFF IFRS ${tipo_listado}`,
+          vacio: "Sin listado.",
+          base: { tipo_listado },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_listados_eeff_ifrs",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -1300,10 +1371,16 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       try {
         const html = await getLegacy("/institucional/mercados/novedades_envio_fechas_eeff.php", { aaaa: anio }, env);
         const filas = htmlTablaAJson(html);
-        const texto = filas.length
-          ? `Fechas divulgación EEFF ${anio} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 5))}`
-          : `Sin fechas para ${anio}.`;
-        return toolOkPaginado(texto, { anio }, "filas", filas, offset, limit, "cmf_fechas_divulgacion_eeff");
+        return toolOkTabla({
+          titulo: `Fechas divulgación EEFF ${anio}`,
+          vacio: `Sin fechas para ${anio}.`,
+          base: { anio },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_fechas_divulgacion_eeff",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -1346,10 +1423,16 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
           env,
         );
         const filas = htmlTablaAJson(html);
-        const texto = filas.length
-          ? `EEFF IFRS intermediarios ${anio1}-${anio2} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
-          : "Sin resultados de intermediarios.";
-        return toolOkPaginado(texto, { sociedades, anio1, anio2 }, "filas", filas, offset, limit, "cmf_intermediarios_eeff_ifrs");
+        return toolOkTabla({
+          titulo: `EEFF IFRS intermediarios ${anio1}-${anio2}`,
+          vacio: "Sin resultados de intermediarios.",
+          base: { sociedades, anio1, anio2 },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_intermediarios_eeff_ifrs",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -1389,10 +1472,16 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
           env,
         );
         const filas = htmlTablaAJson(html);
-        const texto = filas.length
-          ? `Indicadores IFRS intermediarios (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
-          : "Sin indicadores de intermediarios.";
-        return toolOkPaginado(texto, {  }, "filas", filas, offset, limit, "cmf_intermediarios_indicadores_ifrs");
+        return toolOkTabla({
+          titulo: `Indicadores IFRS intermediarios`,
+          vacio: "Sin indicadores de intermediarios.",
+          base: {  },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_intermediarios_indicadores_ifrs",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -1438,8 +1527,16 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
             "https://www.cmfchile.cl/institucional/estadisticas/valores_agentes_cuadro.php",
           );
         }
-        const texto = `Cuadro ${tipo} ${aa}-${mm} (${filas.length} filas, tablas corredores/agentes):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`;
-        return toolOkPaginado(texto, { tipo, anio: aa, mes: mm }, "filas", filas, offset, limit, "cmf_resultados_av_cb");
+        return toolOkTabla({
+          titulo: `Cuadro ${tipo} ${aa}-${mm}, tablas corredores y agentes`,
+          vacio: "Sin resultados.",
+          base: { tipo, anio: aa, mes: mm },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_resultados_av_cb",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -1479,10 +1576,16 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
           env,
         );
         const filas = htmlTablaAJson(html);
-        const texto = filas.length
-          ? `Índices liquidez/solvencia (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
-          : "Sin índices.";
-        return toolOkPaginado(texto, {  }, "filas", filas, offset, limit, "cmf_liquidez_intermediarios");
+        return toolOkTabla({
+          titulo: `Índices liquidez/solvencia`,
+          vacio: "Sin índices.",
+          base: {  },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_liquidez_intermediarios",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -1518,8 +1621,16 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
             { anio: aa, mes: mm, filas: [] },
           );
         }
-        const texto = `Préstamos otorgados ${aa}-${mm} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`;
-        return toolOkPaginado(texto, { anio: aa, mes: mm }, "filas", filas, offset, limit, "cmf_prestamos_otorgados");
+        return toolOkTabla({
+          titulo: `Préstamos otorgados ${aa}-${mm}`,
+          vacio: "Sin resultados.",
+          base: { anio: aa, mes: mm },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_prestamos_otorgados",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -1533,10 +1644,14 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Actos y resoluciones publicados (dictámenes)",
       description:
-        "Lista los actos administrativos y resoluciones publicados por la CMF (tabla de publicidad de actos según Ley 19.880, art. 45 y siguientes): tipo de acto, denominación, número, fecha de publicación, medio de comunicación, efectos generales o particulares y vínculo al documento. Fije el rango con desde/hasta opcionales en YYYY-MM-DD (default 2000-01-01 al año actual; solo se usa el año de cada fecha); la tool consulta los últimos 5 años del rango y entrega hasta 300 filas. Use esta tool para resoluciones generales publicadas; para sanciones a un emisor específico use cmf_empresa_sanciones y para resoluciones del mercado cmf_resoluciones_globales.",
-      inputSchema: z.object({ desde: fechaSchema.optional(), hasta: fechaSchema.optional() }),
+        "Lista los actos administrativos y resoluciones publicados por la CMF (tabla de publicidad de actos según Ley 19.880, art. 45 y siguientes): tipo de acto, denominación, número, fecha de publicación, medio de comunicación, efectos generales o particulares y vínculo al documento. Fije el rango con desde/hasta opcionales en YYYY-MM-DD (default 2000-01-01 al año actual; solo se usa el año de cada fecha); la tool consulta los últimos 5 años del rango. La respuesta trae total y next_offset; sube limit, que no tiene máximo, para traer todas las filas. Use esta tool para resoluciones generales publicadas; para sanciones a un emisor específico use cmf_empresa_sanciones y para resoluciones del mercado cmf_resoluciones_globales.",
+      inputSchema: z.object({
+        desde: fechaSchema.optional(),
+        hasta: fechaSchema.optional(),
+        ...paginacion(300),
+      }),
     },
-    async ({ desde, hasta }) => {
+    async ({ desde, hasta, offset, limit }) => {
       try {
         const anioDesde = Number((desde ?? "2000-01-01").slice(0, 4));
         const anioHasta = Number((hasta ?? String(new Date().getFullYear())).slice(0, 4));
@@ -1554,9 +1669,19 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
               "Verifique el año en https://www.cmfchile.cl/institucional/inc/dictamenes_consulta.php y reintente.",
           );
         }
-        const filas = todas.slice(0, 300);
-        const texto = `Actos y resoluciones publicados (${filas.length} filas, años ${anios.slice(-5).join("/")}):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 5))}`;
-        return toolOk(texto, { filas });
+        // Antes esto era `todas.slice(0, 300)` y devolvia un toolOk sin
+        // paginacion, o sea un techo duro sin ninguna forma de pedir el
+        // resto. Ahora 300 es solo el valor por defecto del limit.
+        return toolOkTabla({
+          titulo: `Actos y resoluciones publicados, años ${anios.slice(-5).join("/")}`,
+          vacio: "Sin actos publicados en el rango.",
+          base: {},
+          campo: "filas",
+          filas: todas,
+          offset,
+          limit,
+          tool: "cmf_dictamenes",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -1577,10 +1702,16 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       try {
         const html = await getLegacy("/institucional/sanciones/sanciones_cursadas_mes.php", {}, env);
         const filas = htmlTablaAJson(html);
-        const texto = filas.length
-          ? `Sanciones cursadas (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 5))}`
-          : "Sin sanciones cursadas.";
-        return toolOkPaginado(texto, {  }, "filas", filas, offset, limit, "cmf_sanciones_cursadas");
+        return toolOkTabla({
+          titulo: `Sanciones cursadas`,
+          vacio: "Sin sanciones cursadas.",
+          base: {  },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_sanciones_cursadas",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -1604,10 +1735,16 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
           : "/institucional/resoluciones/resoluciones_cursadas.php";
         const html = await getLegacy(path, {}, env);
         const filas = htmlTablaAJson(html);
-        const texto = filas.length
-          ? `Resoluciones cursadas (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 5))}`
-          : "Sin resoluciones.";
-        return toolOkPaginado(texto, { historico }, "filas", filas, offset, limit, "cmf_resoluciones_cursadas");
+        return toolOkTabla({
+          titulo: `Resoluciones cursadas`,
+          vacio: "Sin resoluciones.",
+          base: { historico },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_resoluciones_cursadas",
+        });
       } catch (e) {
         return fromError(e);
       }

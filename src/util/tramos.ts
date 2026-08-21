@@ -27,7 +27,7 @@
  */
 import * as z from "zod/v4";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { toolOk } from "./errors.js";
+import { resumirTabla, toolOk } from "./errors.js";
 import { paginar } from "./paginate.js";
 
 /**
@@ -78,6 +78,73 @@ export function toolOkPaginado(
   tool: string,
 ): CallToolResult {
   const { filas: tramo, paginado } = paginar(filas, offset, limit);
+  return toolOk(texto + avisoDeTramo(tramo.length, paginado, tool), {
+    ...base,
+    total: paginado.total,
+    next_offset: paginado.next_offset,
+    [campo]: tramo,
+  });
+}
+
+/**
+ * Arma el resultado de una tool que devuelve una TABLA, con el texto
+ * renderizado DESPUES de paginar.
+ *
+ * Por que existe, y por que no basta con `toolOkPaginado`.
+ *
+ * `toolOkPaginado` recibe el texto ya escrito por quien llama, y 28
+ * operaciones lo escribian asi.
+ *
+ *     resumirTabla(filas.slice(0, 10), Object.keys(filas[0]).slice(0, 6))
+ *
+ * O sea 10 filas y 6 columnas clavadas, sin mirar el `limit` que pidio
+ * el agente. Medido el 21 de agosto de 2026 con `cmf_sanciones_cursadas`.
+ * la fuente tenia 30 filas, los datos llevaban las 30, y al TEXTO
+ * llegaban 10. Y sin ningun aviso, porque el aviso de continuacion solo
+ * aparece cuando queda una pagina siguiente, y 30 cabian en el `limit`.
+ * El modelo veia 10 de 30 y nada le decia que faltaban 20.
+ *
+ * Es peor que el recorte que ya habiamos cerrado, porque aquel al menos
+ * publicaba el total. Este es mudo, y un agente lee el silencio como
+ * "esto es todo lo que hay".
+ *
+ * La cura no es subir el 10. Es que el texto NO SE PUEDA escribir antes
+ * de paginar. Aca el texto se renderiza desde el tramo ya paginado, asi
+ * que decir una cantidad distinta de la que se entrega es imposible por
+ * construccion, no por disciplina.
+ *
+ * Y las columnas van TODAS por defecto. Elegir 6 por orden de aparicion
+ * es la misma decision que escondio la columna `url` durante semanas.
+ * Quien llama puede fijarlas cuando de verdad conoce la tabla.
+ */
+export function toolOkTabla(opciones: {
+  /** Encabezado del texto, sin el conteo. Ej. "Indicadores NCH SA". */
+  titulo: string;
+  /** Que decir cuando la fuente no devolvio nada. */
+  vacio: string;
+  /** El resto del `structuredContent` (rut, año, y lo que sea). */
+  base: Record<string, unknown>;
+  /** Nombre del campo que lleva las filas. */
+  campo: string;
+  /** TODAS las filas que trajo la fuente, sin recortar. */
+  filas: Record<string, unknown>[];
+  offset: number;
+  limit: number;
+  tool: string;
+  /** Columnas a mostrar. Por defecto todas las que traiga la fila. */
+  columnas?: string[];
+  /** Como se llaman las filas en el texto. Ej. "registros". */
+  unidad?: string;
+}): CallToolResult {
+  const { titulo, vacio, base, campo, filas, offset, limit, tool, columnas, unidad } = opciones;
+  if (filas.length === 0) {
+    return toolOkPaginado(vacio, base, campo, filas, offset, limit, tool);
+  }
+  const { filas: tramo, paginado } = paginar(filas, offset, limit);
+  const cols = columnas ?? Object.keys(tramo[0] ?? filas[0] ?? {});
+  const texto =
+    `${titulo} (${filas.length} ${unidad ?? "filas"}):\n`
+    + resumirTabla(tramo as Record<string, unknown>[], cols);
   return toolOk(texto + avisoDeTramo(tramo.length, paginado, tool), {
     ...base,
     total: paginado.total,

@@ -20,7 +20,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { construirRegistro } from "../src/registro.js";
-import { paginacion, toolOkPaginado, avisoDeTramo } from "../src/util/tramos.js";
+import { paginacion, toolOkPaginado, toolOkTabla, avisoDeTramo } from "../src/util/tramos.js";
 
 const DIR = join(import.meta.dirname, "..", "src", "tools");
 const ARCHIVOS = readdirSync(DIR).filter((f) => f.endsWith(".ts"));
@@ -222,4 +222,82 @@ test("ninguna descripción anuncia un máximo que ya no existe", () => {
     }
   }
   assert.deepEqual(culpables, [], `estas descripciones anuncian un techo inexistente: ${culpables.join(" | ")}`);
+});
+
+/**
+ * El TEXTO no puede mentir sobre cuántas filas entrega.
+ *
+ * El 21 de agosto de 2026, 28 operaciones armaban su texto ANTES de
+ * paginar, con un `resumirTabla(filas.slice(0, 10), ...)` clavado. El
+ * `structuredContent` llevaba lo que pediste y el TEXTO llevaba 10, sin
+ * ningún aviso cuando el total cabía dentro del `limit`. Medido con
+ * `cmf_sanciones_cursadas`: 30 filas en la fuente, 30 en los datos, 10
+ * en el texto, y cero señales de que faltaban 20.
+ *
+ * Es peor que el recorte de arriba, porque aquel al menos publicaba el
+ * total. Este es MUDO, y un agente lee el silencio como "esto es todo".
+ *
+ * La cura fue estructural. `toolOkTabla` renderiza el texto DESDE el
+ * tramo ya paginado, así que el desacuerdo es imposible por
+ * construcción. Esta comprobación existe para que nadie vuelva a armar
+ * el texto a mano con un recorte adentro.
+ */
+test("ningún texto se arma recortando las filas antes de paginar", () => {
+  const culpables: string[] = [];
+  for (const archivo of ARCHIVOS) {
+    const fuente = readFileSync(join(DIR, archivo), "utf8");
+    fuente.split("\n").forEach((linea, i) => {
+      if (/resumirTabla\(\s*\w+\.slice\(0,\s*\d+\)/.test(linea)) {
+        culpables.push(`${archivo}:${i + 1}`);
+      }
+    });
+  }
+  assert.deepEqual(
+    culpables,
+    [],
+    `Estos sitios recortan las filas al armar el texto, así que el texto dice`
+      + ` una cantidad y la respuesta entrega otra. Usa toolOkTabla, que`
+      + ` renderiza después de paginar:\n  ${culpables.join("\n  ")}`,
+  );
+});
+
+test("la comprobación del texto recortado SÍ puede fallar", () => {
+  const patron = /resumirTabla\(\s*\w+\.slice\(0,\s*\d+\)/;
+  assert.equal(patron.test('const t = resumirTabla(filas.slice(0, 10), cols);'), true);
+  assert.equal(patron.test('const t = resumirTabla(tramo, cols);'), false);
+});
+
+/**
+ * Y el texto tiene que decir la MISMA cantidad que entrega. Esto no
+ * mira el código fuente, ejerce la función, que es la prueba fuerte.
+ */
+test("toolOkTabla muestra en el texto exactamente las filas que entrega", () => {
+  const filas = Array.from({ length: 30 }, (_, i) => ({ n: String(i), dato: `d${i}` }));
+  for (const limit of [5, 10, 30, 200]) {
+    const r = toolOkTabla({
+      titulo: "Prueba",
+      vacio: "vacio",
+      base: {},
+      campo: "filas",
+      filas,
+      offset: 0,
+      limit,
+      tool: "cmf_prueba",
+    });
+    const texto = (r.content as Array<{ type: string; text?: string }>)
+      .filter((b) => b.type === "text")
+      .map((b) => b.text ?? "")
+      .join("\n");
+    const entregadas = (r.structuredContent?.["filas"] as unknown[]).length;
+    // Las filas del texto son las que llevan el separador, menos el encabezado.
+    const enTexto = texto.split("\n").filter((l) => l.includes(" | ")).length - 1;
+    assert.equal(
+      enTexto,
+      entregadas,
+      `Con limit=${limit} el texto muestra ${enTexto} filas y la respuesta entrega ${entregadas}.`,
+    );
+    // Y todas las columnas, porque el servidor no elige cuál importa.
+    const encabezado = texto.split("\n").find((l) => l.includes(" | ")) ?? "";
+    assert.equal(encabezado.split(" | ").length, 2, "faltan columnas en el texto");
+  }
 });

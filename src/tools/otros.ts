@@ -14,7 +14,7 @@ function decodificarLatin1(bytes: ArrayBuffer): string {
 import { pdfAMarkdown } from "../pdf.js";
 import { procesarTablasEEFF, textoVerificacion, textoAviso } from "../eeff-tables.js";
 import { paginar } from "../util/paginate.js";
-import { avisoDeTramo, paginacion, toolOkPaginado } from "../util/tramos.js";
+import { avisoDeTramo, paginacion, toolOkPaginado, toolOkTabla } from "../util/tramos.js";
 import {
   anioSchema, codigoSchema, fechaSchema, mesSchema, offsetSchema, limitSchema, rutSchema, tipoNormaSchema } from "../util/schemas.js";
 
@@ -177,10 +177,16 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
           env,
         );
         const filas = htmlTablaAJson(html);
-        const texto = filas.length
-          ? `EEFF seguros ${tipo} ${anio1}-${anio2} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
-          : "Sin resultados de EEFF de seguros.";
-        return toolOkPaginado(texto, { tipo }, "filas", filas, offset, limit, "cmf_seguros_eeff");
+        return toolOkTabla({
+          titulo: `EEFF seguros ${tipo} ${anio1}-${anio2}`,
+          vacio: "Sin resultados de EEFF de seguros.",
+          base: { tipo },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_seguros_eeff",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -303,10 +309,16 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
           env,
         );
         const filas = htmlTablaAJson(html);
-        const texto = filas.length
-          ? `RGCRI ${anio}-${mes ?? "12"} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
-          : "Sin clasificaciones de riesgo para el período.";
-        return toolOkPaginado(texto, { anio }, "filas", filas, offset, limit, "cmf_seguros_clasificacion_riesgo");
+        return toolOkTabla({
+          titulo: `RGCRI ${anio}-${mes ?? "12"}`,
+          vacio: "Sin clasificaciones de riesgo para el período.",
+          base: { anio },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_seguros_clasificacion_riesgo",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -446,8 +458,16 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
             "https://www.cmfchile.cl/institucional/estadisticas/merc_seguros/sv_cumplimientos/seg_cumplimiento_index.php",
           );
         }
-        const texto = `Cumplimiento ${anio}-${mes ?? "12"} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`;
-        return toolOkPaginado(texto, { anio }, "filas", filas, offset, limit, "cmf_seguros_cumplimiento");
+        return toolOkTabla({
+          titulo: `Cumplimiento ${anio}-${mes ?? "12"}`,
+          vacio: "Sin resultados.",
+          base: { anio },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_seguros_cumplimiento",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -476,7 +496,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
           const periodos = await getLegacy(base, { tipoentidad, fnAjax: "per_u" }, env);
           try {
             const lista = JSON.parse(periodos) as Record<string, unknown>[];
-            const texto = `Períodos disponibles de cartera de inversiones ${tipoentidad} (${lista.length}):\n${resumirTabla(lista.slice(0, 10), Object.keys(lista[0] ?? {}))}`;
+            const texto = `Períodos disponibles de cartera de inversiones ${tipoentidad} (${lista.length}):\n${resumirTabla(lista, Object.keys(lista[0] ?? {}))}`;
             return toolOk(texto, { tipoentidad, periodos: lista });
           } catch {
             return toolErrorFuente(
@@ -586,10 +606,16 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
           env,
         );
         const filas = htmlTablaAJson(html);
-        const texto = filas.length
-          ? `Estadísticas SIC (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
-          : "Sin estadísticas SIC.";
-        return toolOkPaginado(texto, { desde, hasta }, "filas", filas, offset, limit, "cmf_seguros_sic");
+        return toolOkTabla({
+          titulo: `Estadísticas SIC`,
+          vacio: "Sin estadísticas SIC.",
+          base: { desde, hasta },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_seguros_sic",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -637,10 +663,16 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
           env,
         );
         const filas = htmlTablaAJson(html);
-        const texto = filas.length
-          ? `Taxonomía ${taxonomia} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 4))}`
-          : `Visor de ${taxonomia} cargado (${html.length} bytes); estructura no tabular.`;
-        return toolOkPaginado(texto, { taxonomia, fecha }, "filas", filas, offset, limit, "cmf_xbrl_visor");
+        return toolOkTabla({
+          titulo: `Taxonomía ${taxonomia}`,
+          vacio: `Visor de ${taxonomia} cargado (${html.length} bytes); estructura no tabular.`,
+          base: { taxonomia, fecha },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_xbrl_visor",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -970,10 +1002,16 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
             "el servlet InfoFinanciera no devolvió tablas para esa combinación",
           );
         }
-        const texto = filas.length
-          ? `Tasas (${filas.length} filas, índice ${indice}, fecha ${f.dd}/${f.mm}/${f.aa}):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
-          : `El índice ${indice} no devolvió tablas parseables (puede ser un formulario o un PDF).`;
-        return toolOkPaginado(texto, { indice, fecha: `${f.aa}-${f.mm}-${f.dd}` }, "filas", filas, offset, limit, "cmf_bancos_tasas");
+        return toolOkTabla({
+          titulo: `Tasas del indice ${indice} al ${f.dd}/${f.mm}/${f.aa}`,
+          vacio: `El índice ${indice} no devolvió tablas parseables (puede ser un formulario o un PDF).`,
+          base: { indice, fecha: `${f.aa}-${f.mm}-${f.dd}` },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_bancos_tasas",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -998,10 +1036,16 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
           env,
         );
         const filas = htmlTablaAJson(html);
-        const texto = filas.length
-          ? `Cronología bancaria (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 5))}`
-          : "Cronología cargada; contenido no tabular.";
-        return toolOkPaginado(texto, { indice }, "filas", filas, offset, limit, "cmf_bancos_cronologia");
+        return toolOkTabla({
+          titulo: `Cronología bancaria`,
+          vacio: "Cronología cargada; contenido no tabular.",
+          base: { indice },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_bancos_cronologia",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -1037,10 +1081,16 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
             `el servlet BaseDato no devolvió tablas (${textoRaw.length} bytes; puede ser el challenge anti-bot)`,
           );
         }
-        const texto = filas.length
-          ? `Reporte ${reporte} ${per} (${filas.length} filas):\n${resumirTabla(filas.slice(0, 10), Object.keys(filas[0] ?? {}).slice(0, 6))}`
-          : `El reporte ${reporte} no devolvió tablas parseables para ${per}.`;
-        return toolOkPaginado(texto, { reporte, indice, periodo: per }, "filas", filas, offset, limit, "cmf_bancos_reportes");
+        return toolOkTabla({
+          titulo: `Reporte ${reporte} ${per}`,
+          vacio: `El reporte ${reporte} no devolvió tablas parseables para ${per}.`,
+          base: { reporte, indice, periodo: per },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_bancos_reportes",
+        });
       } catch (e) {
         return fromError(e);
       }
