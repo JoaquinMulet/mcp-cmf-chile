@@ -4,8 +4,14 @@
   "compatibility_date": "2026-07-28",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
-  "custom_domains": [
-    { "domain": "cmf-mcp.kumocloud.cl" }
+  // El dominio propio va como ruta con custom_domain, que es la forma
+  // que wrangler entiende. Antes esto decia "custom_domains", un campo
+  // que NO existe, asi que wrangler lo descartaba con una advertencia y
+  // el dominio funcionaba solo porque estaba puesto a mano en el panel.
+  // Un archivo de configuracion que declara algo inerte es peor que uno
+  // que no lo declara, porque nadie vuelve a mirarlo.
+  "routes": [
+    { "pattern": "cmf-mcp.kumocloud.cl", "custom_domain": true }
   ],
   "observability": {
     "enabled": true
