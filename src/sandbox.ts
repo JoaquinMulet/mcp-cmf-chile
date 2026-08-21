@@ -40,7 +40,89 @@ export interface Ejecutor {
 }
 
 /** Presupuesto de la caja. Un programa del modelo no puede colgar el Worker. */
-const LIMITES = { cpuMs: 10_000, subRequests: 60 };
+export const LIMITES = { cpuMs: 10_000, subRequests: 60 };
+
+/** Tope del valor devuelto, en caracteres. Ver `recortarValor`. */
+const TOPE_VALOR = 40_000;
+
+/**
+ * Lo que se le dice al modelo cuando su código no retornó nada.
+ *
+ * Antes esto devolvía el texto "null" para las 3 causas y también para
+ * una búsqueda vacía legítima, así que olvidar el `return` se leía como
+ * "la CMF no tiene ese dato". En una corredora eso es un daño.
+ *
+ * Desde acá las 3 causas no se distinguen, porque en JavaScript caerse
+ * del final de una función y devolver `undefined` a propósito son lo
+ * mismo. Por eso el mensaje las nombra las 3 en vez de adivinar una.
+ */
+const SIN_RETURN = [
+  "Tu código no devolvió ningún valor.",
+  "Hay 3 causas y desde acá no se distinguen, así que revisa las 3.",
+  "1. Olvidaste el return.",
+  "2. Escribiste una función completa en vez del CUERPO. Así sí, return catalogo.length. Así no, async function main() { ... }.",
+  "3. Tu búsqueda no encontró nada y devolviste undefined, por ejemplo con find. En ese caso devuelve un arreglo vacío o un objeto que lo diga, para que se note la diferencia entre no hay dato y el código falló.",
+].join(" ");
+
+/**
+ * Quita el cerco de markdown que los modelos ponen por costumbre.
+ *
+ * Sin esto, los acentos graves se leen como plantilla etiquetada y el
+ * error es `"" is not a function`, que no le dice nada a nadie. Es un
+ * problema del formato de entrada, no del programa, así que se corrige
+ * antes de ejecutar en vez de fallar.
+ */
+export function limpiarCodigo(codigo: string): string {
+  const t = codigo.trim();
+  const CERCO = "```";
+  if (!t.startsWith(CERCO) || !t.endsWith(CERCO) || t.length < CERCO.length * 2) return codigo;
+  const SALTO = String.fromCharCode(10);
+  const primerSalto = t.indexOf(SALTO);
+  if (primerSalto === -1) return codigo;
+  // La primera línea es el cerco con su etiqueta de lenguaje, si la trae.
+  const cuerpo = t.slice(primerSalto + 1, t.length - CERCO.length);
+  return cuerpo.endsWith(SALTO) ? cuerpo.slice(0, -1) : cuerpo;
+}
+
+/**
+ * Acota el valor devuelto y dice cómo pedir el resto.
+ *
+ * La regla del proyecto prohíbe que el servidor decida qué parte del
+ * dato merece verse. Esto no decide nada. el programa puede devolver
+ * cualquier parte que quiera, y acá solo se evita que un `return r`
+ * accidental gaste 60 mil tokens de una vez. El corte viaja con su
+ * forma exacta de continuar, que en modo código es el propio código.
+ */
+export function recortarValor(texto: string): string {
+  if (texto.length <= TOPE_VALOR) return texto;
+  return [
+    texto.slice(0, TOPE_VALOR),
+    "",
+    `[CORTE. tu código devolvió ${texto.length} caracteres y el tope de una respuesta es ${TOPE_VALOR}.`,
+    "No se perdió nada en el servidor, solo en esta respuesta. Vuelve a llamar filtrando en el código,",
+    "o devuelve por partes, por ejemplo return todo.slice(200, 400).]",
+  ].join(String.fromCharCode(10));
+}
+
+/**
+ * Traduce los errores de infraestructura del runtime.
+ *
+ * Los originales están en inglés, son jerga de Cloudflare, y el de
+ * subpeticiones le manda al MODELO un enlace para configurar wrangler,
+ * que es una instrucción dirigida a otro actor.
+ */
+export function traducirErrorDeCaja(bruto: string): string {
+  if (/Too many subrequests/i.test(bruto)) {
+    return `Tu programa hizo más de ${LIMITES.subRequests} llamadas a la CMF, que es el techo de un solo programa. Parte el trabajo en varias llamadas a cmf_ejecutar y devuelve el offset al que llegaste para continuar en la siguiente.`;
+  }
+  if (/exceeded CPU time/i.test(bruto)) {
+    return `Tu programa pasó los ${LIMITES.cpuMs / 1000} segundos de CPU. Revisa si hay un bucle sin salida, y si el trabajo es legítimo, pártelo en varias llamadas a cmf_ejecutar.`;
+  }
+  if (/exceeded memory/i.test(bruto)) {
+    return "Tu programa se quedó sin memoria. No acumules todos los resultados; filtra dentro del bucle y guarda solo lo que vas a devolver.";
+  }
+  return bruto;
+}
 
 /**
  * Expone las operaciones al programa sin mentir sobre lo que existe.
@@ -103,7 +185,8 @@ export function mejorarError(e: unknown): string {
  * El código va TAL CUAL adentro de una función async. No se sanitiza,
  * porque el aislamiento no lo da el texto, lo da el borde del Worker.
  */
-function moduloDelPrograma(codigo: string): string {
+function moduloDelPrograma(codigoCrudo: string): string {
+  const codigo = limpiarCodigo(codigoCrudo);
   return `
 const registros = [];
 const console = { log: (...a) => registros.push(a.map(x => typeof x === "string" ? x : JSON.stringify(x)).join(" ")) };
@@ -119,7 +202,8 @@ export default {
       const cmf = new Proxy({}, { get: () => sinRed, has: () => false, ownKeys: () => [] });
       try {
         const valor = await (async () => { ${codigo} })();
-        return Response.json({ valor: valor ?? null, registros });
+        if (valor === undefined) return Response.json({ valor: null, registros, error: ${JSON.stringify(SIN_RETURN)} });
+        return Response.json({ valor, registros });
       } catch (e) {
         return Response.json({ valor: null, registros, error: e instanceof Error ? e.message : String(e) });
       }
@@ -135,7 +219,8 @@ export default {
     });
     try {
       const valor = await (async () => { ${codigo} })();
-      return Response.json({ valor: valor ?? null, registros });
+      if (valor === undefined) return Response.json({ valor: null, registros, error: ${JSON.stringify(SIN_RETURN)} });
+      return Response.json({ valor, registros });
     } catch (e) {
       const bruto = e instanceof Error ? e.message : String(e);
       const malo = /cmf\\.([A-Za-z0-9_]+) is not a function/.exec(bruto);
@@ -190,9 +275,19 @@ export function ejecutorDeWorker(
         limits: LIMITES,
       }));
       // El stub no se llama directo: expone el Worker por su entrypoint.
-      const entrada = stub.getEntrypoint(undefined, { limits: LIMITES });
-      const respuesta = await entrada.fetch("https://caja.invalid/");
-      return (await respuesta.json()) as Resultado;
+      //
+      // El try envuelve la INVOCACIÓN, no solo el programa. Un error de
+      // sintaxis impide compilar el módulo, y los topes del runtime lo
+      // matan desde afuera, así que los 2 revientan antes de que corra
+      // el try de adentro y llegaban crudos, en inglés y sin contexto.
+      try {
+        const entrada = stub.getEntrypoint(undefined, { limits: LIMITES });
+        const respuesta = await entrada.fetch("https://caja.invalid/");
+        return (await respuesta.json()) as Resultado;
+      } catch (e) {
+        const bruto = e instanceof Error ? e.message : String(e);
+        return { valor: null, registros: [], error: traducirErrorDeCaja(bruto) };
+      }
     },
   };
 }
@@ -238,10 +333,11 @@ export function ejecutorLocalDePrueba(permitirInseguro: boolean): Ejecutor {
           "catalogo",
           "cmf",
           "console",
-          `return (async () => { ${codigo} })()`,
+          `return (async () => { ${limpiarCodigo(codigo)} })()`,
         ) as (c: unknown, m: unknown, k: unknown) => Promise<unknown>;
         const valor = await fn(prestamos.catalogo, cmf, consola);
-        return { valor: valor ?? null, registros };
+        if (valor === undefined) return { valor: null, registros, error: SIN_RETURN };
+        return { valor, registros };
       } catch (e) {
         return { valor: null, registros, error: mejorarError(e) };
       }

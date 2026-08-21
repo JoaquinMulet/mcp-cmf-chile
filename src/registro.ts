@@ -62,6 +62,20 @@ interface EsquemaEntrada {
 function validadorDe(nombre: string, esquema: EsquemaEntrada | undefined, params: Param[]) {
   return (args: Record<string, unknown>): Record<string, unknown> => {
     if (typeof esquema?.parse !== "function") return args;
+    // Una clave desconocida se DESCARTA en silencio por defecto, y eso
+    // produce el peor resultado posible. el modelo cree que filtró y
+    // recibe datos sin filtrar. Pedí pólizas de una compañía y volvieron
+    // 3 aseguradoras distintas, presentadas como si el filtro hubiera
+    // corrido. Un error que enseña vale más que un dato corrupto.
+    const validas = new Set(params.map((p) => p.nombre));
+    const invento = Object.keys(args ?? {}).filter((k) => !validas.has(k));
+    if (invento.length > 0) {
+      throw new Error(
+        `La operación ${nombre} no acepta ${invento.map((k) => `"${k}"`).join(", ")}. ` +
+          `Sus parámetros son: ${[...validas].join(", ")}. ` +
+          "Un parámetro que no existe se ignoraría y creerías haber filtrado.",
+      );
+    }
     try {
       return esquema.parse(args ?? {});
     } catch (e) {

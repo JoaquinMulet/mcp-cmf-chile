@@ -17,7 +17,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import type { CmfEnv } from "../client/cmf-client.js";
 import { construirRegistro, derivarCatalogo, type Operacion } from "../registro.js";
-import type { Ejecutor, Prestamos } from "../sandbox.js";
+import { recortarValor, type Ejecutor, type Prestamos } from "../sandbox.js";
 
 /** Resultado MCP crudo, tal como lo devuelven las operaciones existentes. */
 interface ResultadoCrudo {
@@ -63,46 +63,68 @@ function textoDeResultado(r: { valor: unknown; registros: string[]; error?: stri
     partes.push(`ERROR del programa: ${r.error}`);
     partes.push("Corrige el código y vuelve a intentar. El catálogo está en la variable catalogo.");
   } else {
-    partes.push(typeof r.valor === "string" ? r.valor : JSON.stringify(r.valor, null, 1));
+    // Compacto. La sangría inflaba el pago un 12 por ciento sin
+    // comprarle legibilidad a nadie.
+    partes.push(recortarValor(typeof r.valor === "string" ? r.valor : JSON.stringify(r.valor)));
   }
   return partes.join("\n\n");
 }
 
+const CONTRATO = [
+  "Escribe SOLO el cuerpo de una función async, y termina con return.",
+  "Así sí. return catalogo.length",
+  "Así no. async function main() { return catalogo.length }  (una función completa no se ejecuta)",
+  "Nada de cercos de markdown. Manda el código pelado.",
+];
+
+const PRESUPUESTO = [
+  "Presupuesto de un programa. hasta 60 llamadas a la CMF, 10 segundos de CPU, y menos de 60 segundos de reloj,",
+  "que en la práctica son unas 15 llamadas porque cada una tarda 1 segundo o más.",
+  "Si necesitas más, parte el trabajo en varias llamadas a esta herramienta y devuelve el offset al que llegaste.",
+  "Usa console.log antes de cada llamada. Si el programa muere, los registros son lo único que sobrevive.",
+];
+
 const DESC_BUSCAR = [
   "Descubre qué operaciones de la CMF existen, ejecutando código contra el catálogo.",
-  "El catálogo NO entra a tu contexto: lo filtras tú y solo recibes lo que devuelvas.",
+  ...CONTRATO,
   "",
-  "Dentro del código tienes la variable `catalogo`, un arreglo de",
-  "{ nombre, resumen, params }. Escribe el CUERPO de una función async y usa return.",
+  "Tienes la variable catalogo, un arreglo de { nombre, resumen, detalle, params }.",
+  "detalle es la descripción completa de la operación, con los códigos y los casos de uso.",
+  "params es un arreglo de { nombre, descripcion }, con los enums y los formatos de cada parámetro.",
+  "El catálogo NO entra a tu contexto. Solo recibes lo que devuelvas, así que filtra y devuelve poco.",
   "",
-  "Ejemplo. return catalogo.filter(o => /poliza|seguros/i.test(o.nombre + o.resumen)).map(o => ({ nombre: o.nombre, params: o.params }))",
+  "Ejemplo. return catalogo.filter(o => /poliza|seguros/i.test(o.nombre + o.resumen)).map(o => o.nombre)",
+  "Y después, para una sola. return catalogo.find(o => o.nombre === 'seguros_deposito_polizas')",
   "",
-  "Úsala siempre antes de cmf_ejecutar, para saber el nombre exacto de la operación y sus parámetros.",
-].join("\n");
+  "Esta herramienta NO llama operaciones ni toca la red. Solo filtra el catálogo.",
+  "Úsala siempre antes de cmf_ejecutar, para saber el nombre exacto y qué acepta cada parámetro.",
+].join(String.fromCharCode(10));
 
 const DESC_EJECUTAR = [
   "Ejecuta operaciones de la CMF escribiendo código, y devuelve SOLO lo que tu código retorne.",
+  ...CONTRATO,
   "",
-  "Dentro del código tienes `cmf`, con una función async por operación del catálogo,",
-  "y también `catalogo`. Cada operación devuelve su JSON COMPLETO, sin recortes:",
-  "todas las filas que pediste y todos sus campos, incluida la url del documento cuando existe.",
-  "Escribe el CUERPO de una función async y usa return. console.log también se te muestra.",
+  "Tienes cmf, con una función async por operación del catálogo, y también catalogo.",
+  "Cada operación devuelve su JSON completo, con todos sus campos, incluida la url del documento.",
+  "Un parámetro que no esté en params se RECHAZA con error. No inventes nombres, míralos con cmf_buscar.",
+  "",
+  ...PRESUPUESTO,
   "",
   "Ejemplo. const r = await cmf.seguros_deposito_polizas({ texto: 'vehiculos motorizados', limit: 500 });",
-  "return r.polizas.filter(p => /VEHICULOS MOTORIZADOS/i.test(p.texto)).map(p => ({ codigo: p.codigo, entidad: p.entidad, url: p.url }))",
+  "return r.polizas.map(p => ({ codigo: p.codigo, entidad: p.entidad, url: p.url }))",
   "",
-  "Para leer un PDF entero, recórrelo por tramos y filtra dentro de la caja.",
-  "  let off = 0, hallazgos = []",
+  "Para leer un PDF entero, recórrelo por tramos y filtra adentro.",
+  "  let off = 0, hallazgos = [];",
   "  while (off !== null) {",
-  "    const d = await cmf.documento_markdown({ url, offset_chars: off })",
-  "    hallazgos.push(...d.markdown.split('\n').filter(l => /deducible/i.test(l)))",
-  "    off = d.siguiente_offset_chars",
+  "    const d = await cmf.documento_markdown({ url, offset_chars: off });",
+  "    hallazgos.push(...d.markdown.split(String.fromCharCode(10)).filter(l => /deducible/i.test(l)));",
+  "    off = d.siguiente_offset_chars;",
   "  }",
-  "  return { total_chars: hallazgos.length, hallazgos: hallazgos.slice(0, 20) }",
-  "Nunca cortes con slice sin mirar siguiente_offset_chars. perderías el resto sin saberlo.",
+  "  return hallazgos.slice(0, 20)",
+  "Nunca cortes con slice sin mirar siguiente_offset_chars. perderías el resto sin enterarte.",
   "",
-  "Filtra ANTES de devolver. Devolver todo desperdicia tu contexto; devolver de menos te obliga a repetir la llamada.",
-].join("\n");
+  "Filtra ANTES de devolver. Devolver el resultado crudo puede gastar tu contexto entero en una respuesta.",
+].join(String.fromCharCode(10));
 
 /**
  * Registra las 2 tools del modo código.

@@ -15,7 +15,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { createServer } from "../src/server.js";
 import { construirRegistro, derivarCatalogo, primeraFrase } from "../src/registro.js";
 import { datoDeOperacion } from "../src/tools/code-mode.js";
-import { ejecutorLocalDePrueba } from "../src/sandbox.js";
+import { ejecutorLocalDePrueba, traducirErrorDeCaja, recortarValor } from "../src/sandbox.js";
 
 const ENV = { CMF_RATE_LIMIT_MS: "0" };
 
@@ -125,8 +125,8 @@ test("el proxy de operaciones no miente sobre lo que existe", async () => {
     "cmf_ejecutar",
     "return { existe: typeof cmf.seguros_deposito_polizas, inventada: typeof cmf.no_existe_esta }",
   );
-  assert.match(texto, /"existe": "function"/);
-  assert.match(texto, /"inventada": "undefined"/, "una operación inexistente no puede parecer función");
+  assert.match(texto, /"existe":\s*"function"/);
+  assert.match(texto, /"inventada":\s*"undefined"/, "una operación inexistente no puede parecer función");
   await cerrar();
 });
 
@@ -299,4 +299,66 @@ test("las 2 superficies se identifican distinto", () => {
   const clasico = createServer(ENV);
   const nombre = (s: unknown) => (s as { server: { _serverInfo: { name: string } } }).server._serverInfo.name;
   assert.notEqual(nombre(codigo), nombre(clasico));
+});
+
+test("olvidar el return NO se confunde con no haber encontrado nada", async () => {
+  // El peor defecto que encontró la revisión adversarial. Las 2 causas
+  // más probables de error devolvían el texto "null", igual que una
+  // búsqueda vacía, así que el modelo leía "la CMF no tiene ese dato".
+  const ejecutor = ejecutorLocalDePrueba(true);
+  const sinReturn = await ejecutor.correr("catalogo.length;", { catalogo: [1, 2], cmf: {} });
+  assert.match(sinReturn.error ?? "", /no devolvió ningún valor/);
+  assert.match(sinReturn.error ?? "", /CUERPO/);
+
+  const funcionCompleta = await ejecutor.correr("async function main() { return 1 }", { catalogo: [], cmf: {} });
+  assert.match(funcionCompleta.error ?? "", /no devolvió ningún valor/);
+
+  // Un find sin resultado también devuelve undefined, y desde acá no se
+  // puede distinguir de las otras 2 causas. Así que el mensaje nombra
+  // las 3 y le dice cómo hacer visible la diferencia.
+  const buscoYNoHallo = await ejecutor.correr("return [].find(x => x)", { catalogo: [], cmf: {} });
+  assert.match(buscoYNoHallo.error ?? "", /no encontró nada/);
+
+  // Y un vacío bien expresado sí es un valor, no un error.
+  const vacioExplicito = await ejecutor.correr("return []", { catalogo: [], cmf: {} });
+  assert.equal(vacioExplicito.error, undefined);
+  assert.deepEqual(vacioExplicito.valor, []);
+});
+
+test("un parámetro inventado se RECHAZA, no se descarta en silencio", () => {
+  // Verificado contra el despliegue. pedí pólizas de una compañía con un
+  // parámetro que no existe y volvieron 3 aseguradoras distintas,
+  // presentadas como si el filtro hubiera corrido.
+  const op = construirRegistro(ENV).get("seguros_deposito_polizas");
+  assert.ok(op);
+  assert.throws(
+    () => op.prepararArgs({ texto: "vehiculos", compania: "BCI SEGUROS" }),
+    /no acepta "compania".*Sus parámetros son/s,
+  );
+});
+
+test("el cerco de markdown se quita en vez de reventar", async () => {
+  const ejecutor = ejecutorLocalDePrueba(true);
+  const cerco = String.fromCharCode(96, 96, 96);
+  const salto = String.fromCharCode(10);
+  const r = await ejecutor.correr(`${cerco}javascript${salto}return 42${salto}${cerco}`, { catalogo: [], cmf: {} });
+  assert.equal(r.error, undefined, `no debía fallar: ${r.error}`);
+  assert.equal(r.valor, 42);
+});
+
+test("los errores de infraestructura se traducen y no mandan al modelo a wrangler", () => {
+  const subpeticiones = traducirErrorDeCaja("Too many subrequests by single Worker invocation. To configure this limit, refer to https://developers.cloudflare.com/workers/wrangler/configuration/#limits");
+  assert.match(subpeticiones, /60 llamadas a la CMF/);
+  assert.doesNotMatch(subpeticiones, /wrangler/, "nunca mandar al modelo a configurar la cuenta");
+  assert.match(traducirErrorDeCaja("Worker exceeded CPU time limit."), /segundos de CPU/);
+  assert.equal(traducirErrorDeCaja("otra cosa"), "otra cosa", "lo que no reconoce pasa intacto");
+});
+
+test("un valor enorme se corta diciendo cuánto había y cómo seguir", () => {
+  const grande = "x".repeat(60_000);
+  const cortado = recortarValor(grande);
+  assert.ok(cortado.length < grande.length);
+  assert.match(cortado, /60000 caracteres/);
+  assert.match(cortado, /slice/, "el corte tiene que decir cómo pedir el resto");
+  assert.equal(recortarValor("corto"), "corto", "lo que cabe no se toca");
 });
