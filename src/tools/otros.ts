@@ -764,7 +764,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       inputSchema: z.object({
         token: z.string().min(10).optional().describe("Token s567 del documento (de hechos/sanciones/resoluciones)"),
         url: z.string().url().optional().describe("URL absoluta de un documento de la CMF (ej: ver_archivo.php del compendio)"),
-        max_chars: z.number().int().min(1000).max(100000).default(30000).describe("Tamaño del tramo en caracteres (default 30000)"),
+        max_chars: z.number().int().min(1000).max(2_000_000).default(30000).describe("Tamaño del tramo en caracteres (default 30000, máximo 2000000). En modo código puedes pedir el documento entero de una vez, porque el texto se queda dentro de tu programa y no entra a tu contexto. Ej: 200000"),
         offset_chars: z.number().int().min(0).default(0).describe("Carácter donde empieza el tramo; use el que indique la respuesta anterior para seguir leyendo"),
         validar_contable: z.boolean().default(false).describe("true = verifica la cuadratura contable (experimental)"),
       }),

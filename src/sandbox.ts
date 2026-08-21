@@ -30,6 +30,15 @@ export interface Resultado {
   valor: unknown;
   /** Lo que el código imprimió con console.log, en orden. */
   registros: string[];
+  /**
+   * Lo que el programa empujó a `parcial`. Sobrevive al error.
+   *
+   * Existe porque una sola llamada que falla a mitad de camino tiraba
+   * todo el trabajo anterior. El 21 de agosto de 2026 un agente bajó las
+   * 5.956 filas del registro, empezó a leer 6 pólizas, pidió un tramo
+   * más grande que el tope, y perdió los 40 segundos completos.
+   */
+  parcial?: unknown[];
   /** Mensaje de error legible por el modelo, si el código falló. */
   error?: string;
 }
@@ -189,6 +198,7 @@ function moduloDelPrograma(codigoCrudo: string): string {
   const codigo = limpiarCodigo(codigoCrudo);
   return `
 const registros = [];
+const parcial = [];
 const console = { log: (...a) => registros.push(a.map(x => typeof x === "string" ? x : JSON.stringify(x)).join(" ")) };
 export default {
   async fetch(peticion, env) {
@@ -202,10 +212,10 @@ export default {
       const cmf = new Proxy({}, { get: () => sinRed, has: () => false, ownKeys: () => [] });
       try {
         const valor = await (async () => { ${codigo} })();
-        if (valor === undefined) return Response.json({ valor: null, registros, error: ${JSON.stringify(SIN_RETURN)} });
-        return Response.json({ valor, registros });
+        if (valor === undefined) return Response.json({ valor: null, registros, parcial, error: ${JSON.stringify(SIN_RETURN)} });
+        return Response.json({ valor, registros, parcial });
       } catch (e) {
-        return Response.json({ valor: null, registros, error: e instanceof Error ? e.message : String(e) });
+        return Response.json({ valor: null, registros, parcial, error: e instanceof Error ? e.message : String(e) });
       }
     }
     const cmf = new Proxy({}, {
@@ -219,15 +229,15 @@ export default {
     });
     try {
       const valor = await (async () => { ${codigo} })();
-      if (valor === undefined) return Response.json({ valor: null, registros, error: ${JSON.stringify(SIN_RETURN)} });
-      return Response.json({ valor, registros });
+      if (valor === undefined) return Response.json({ valor: null, registros, parcial, error: ${JSON.stringify(SIN_RETURN)} });
+      return Response.json({ valor, registros, parcial });
     } catch (e) {
       const bruto = e instanceof Error ? e.message : String(e);
       const malo = /cmf\\.([A-Za-z0-9_]+) is not a function/.exec(bruto);
       const error = malo
         ? 'La operación "' + malo[1] + '" no existe en el catálogo. Búscala primero con cmf_buscar para saber su nombre exacto.'
         : bruto;
-      return Response.json({ valor: null, registros, error });
+      return Response.json({ valor: null, registros, parcial, error });
     }
   },
 };`;
@@ -327,19 +337,21 @@ export function ejecutorLocalDePrueba(permitirInseguro: boolean): Ejecutor {
         log: (...a: unknown[]) =>
           registros.push(a.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" ")),
       };
+      const parcial: unknown[] = [];
       const cmf = construirProxyCmf(prestamos.cmf);
       try {
         const fn = new Function(
           "catalogo",
           "cmf",
           "console",
+          "parcial",
           `return (async () => { ${limpiarCodigo(codigo)} })()`,
-        ) as (c: unknown, m: unknown, k: unknown) => Promise<unknown>;
-        const valor = await fn(prestamos.catalogo, cmf, consola);
-        if (valor === undefined) return { valor: null, registros, error: SIN_RETURN };
-        return { valor, registros };
+        ) as (c: unknown, m: unknown, k: unknown, p: unknown[]) => Promise<unknown>;
+        const valor = await fn(prestamos.catalogo, cmf, consola, parcial);
+        if (valor === undefined) return { valor: null, registros, parcial, error: SIN_RETURN };
+        return { valor, registros, parcial };
       } catch (e) {
-        return { valor: null, registros, error: mejorarError(e) };
+        return { valor: null, registros, parcial, error: mejorarError(e) };
       }
     },
   };

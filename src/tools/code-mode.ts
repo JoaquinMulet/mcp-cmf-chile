@@ -56,11 +56,18 @@ export function prestamosDe(operaciones: Map<string, Operacion>): Prestamos {
 }
 
 /** Da formato al resultado de la caja para que el modelo lo lea en TEXTO. */
-function textoDeResultado(r: { valor: unknown; registros: string[]; error?: string }): string {
+function textoDeResultado(r: { valor: unknown; registros: string[]; parcial?: unknown[]; error?: string }): string {
   const partes: string[] = [];
   if (r.registros.length > 0) partes.push(r.registros.join("\n"));
   if (r.error) {
     partes.push(`ERROR del programa: ${r.error}`);
+    // Lo que el programa alcanzó a guardar NO se pierde con el error.
+    if (r.parcial !== undefined && r.parcial.length > 0) {
+      partes.push(
+        `Alcanzaste a guardar ${r.parcial.length} elementos en parcial antes de fallar. No los pierdas:`,
+      );
+      partes.push(recortarValor(JSON.stringify(r.parcial)));
+    }
     partes.push("Corrige el código y vuelve a intentar. El catálogo está en la variable catalogo.");
   } else {
     // Compacto. La sangría inflaba el pago un 12 por ciento sin
@@ -104,7 +111,9 @@ const PRESUPUESTO = [
   "más de 1 segundo, así que un programa seguro hace 15 llamadas o menos. Si necesitas más, no adivines más",
   "términos. baja el universo con limit y offset, que son muchas menos llamadas para muchos más datos.",
   "Si necesitas más, parte el trabajo en varias llamadas a esta herramienta y devuelve el offset al que llegaste.",
-  "Usa console.log antes de cada llamada. Si el programa muere, los registros son lo único que sobrevive.",
+  "Usa console.log antes de cada llamada, y empuja a la variable `parcial` lo que ya tengas listo.",
+  "Los registros y `parcial` VUELVEN aunque el programa falle a mitad de camino, así que un error no te",
+  "cuesta todo el trabajo anterior. Ejemplo. parcial.push({ codigo, deducibles })",
 ];
 
 const DESC_BUSCAR = [

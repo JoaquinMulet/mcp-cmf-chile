@@ -370,3 +370,41 @@ test("un valor enorme se corta diciendo cuánto había y cómo seguir", () => {
   assert.match(cortado, /slice/, "el corte tiene que decir cómo pedir el resto");
   assert.equal(recortarValor("corto"), "corto", "lo que cabe no se toca");
 });
+
+test("lo guardado en parcial SOBREVIVE al error del programa", async () => {
+  // El caso real del 21 de agosto de 2026. un agente bajó las 5.956
+  // filas del registro, empezó a leer 6 pólizas, pidió un tramo más
+  // grande que el tope y perdió los 40 segundos completos. Un error a
+  // mitad de camino no puede costar todo el trabajo anterior.
+  const ejecutor = ejecutorLocalDePrueba(true);
+  const r = await ejecutor.correr(
+    "parcial.push({ paso: 1 }); parcial.push({ paso: 2 }); await cmf.no_existe({}); return 'nunca llego'",
+    { catalogo: [], cmf: { alguna: async () => ({}) } },
+  );
+  assert.ok(r.error, "el programa tenía que fallar");
+  assert.deepEqual(r.parcial, [{ paso: 1 }, { paso: 2 }]);
+});
+
+test("el texto le devuelve al modelo lo parcial cuando hubo error", async () => {
+  const { cliente, cerrar } = await clienteEnModoCodigo();
+  const texto = await llamar(
+    cliente,
+    "cmf_ejecutar",
+    "parcial.push({ codigo: 'POL1' }); throw new Error('se cayo')",
+  );
+  await cerrar();
+  assert.match(texto, /ERROR del programa/);
+  assert.match(texto, /1 elementos en parcial/);
+  assert.match(texto, /POL1/, "el dato guardado tiene que volver, no solo su conteo");
+});
+
+test("un documento entero cabe en una sola llamada", () => {
+  // El tope de 100000 venía del modo clásico, donde el texto entraba al
+  // contexto del modelo. En modo código el documento se queda dentro del
+  // programa, así que pedirlo entero es lo correcto y lo barato.
+  const op = construirRegistro(ENV).get("documento_markdown");
+  assert.ok(op);
+  assert.equal(op.prepararArgs({ url: "https://x", max_chars: 150000 }).max_chars, 150000);
+  assert.equal(op.prepararArgs({ url: "https://x" }).max_chars, 30000, "el default no cambia");
+  assert.throws(() => op.prepararArgs({ url: "https://x", max_chars: 5_000_000 }), /Argumentos inválidos/);
+});
