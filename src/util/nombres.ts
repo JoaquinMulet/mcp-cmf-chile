@@ -60,3 +60,28 @@ export function rutaUnica(ruta: string, usadas: Set<string>): string {
   }
   return ruta;
 }
+
+/**
+ * Arma la URL absoluta de un documento a partir del href relativo que
+ * publica la CMF.
+ *
+ * Por que existe. antes esto era `href.replace("../", "/institucional/")`
+ * repetido en 2 archivos, y `String.replace` con un patron de TEXTO
+ * cambia solo la PRIMERA aparicion. Con un href como `../../doc/x.pdf`
+ * quedaba `/institucional/../doc/x.pdf`, o sea una ruta que sube un nivel
+ * y sale del prefijo que acabamos de poner. Lo encontro CodeQL con la
+ * regla js/incomplete-sanitization el 21 de agosto de 2026.
+ *
+ * La cura no es poner la bandera global. Con `g` un `../../x` daria
+ * `/institucional//institucional/x`, que tampoco es la ruta. Lo correcto
+ * es anclar al inicio y despues NEGARSE a devolver una ruta que todavia
+ * contenga un salto de directorio, porque esa ruta ya no significa lo
+ * que dice.
+ */
+export function urlDocumentoCmf(href: string): string {
+  const ruta = href.replace(/^(?:\.\.\/)+/, "/institucional/");
+  if (ruta.includes("../")) {
+    throw new Error(`Ruta de documento con salto de directorio, no se puede resolver: ${href}`);
+  }
+  return `https://www.cmfchile.cl${ruta}`;
+}

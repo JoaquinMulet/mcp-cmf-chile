@@ -30,7 +30,7 @@ export function crearCookieJar(): CookieJar {
         if (eq > 0) cookies.set(par.slice(0, eq).trim(), par.slice(eq + 1).trim());
       }
     },
-    header(url: URL) {
+    header(_url: URL) {
       const partes: string[] = [];
       for (const [k, v] of cookies) {
         if (k.toLowerCase().startsWith("cookiesession") || k.startsWith("csb")) partes.push(`${k}=${v}`);

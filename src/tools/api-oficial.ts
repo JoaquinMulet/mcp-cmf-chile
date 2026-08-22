@@ -2,7 +2,7 @@
 import * as z from "zod/v4";
 import { apiSerieSchema, apiPeriodoSchema } from "../util/schemas-output.js";
 import { apiV3, type CmfEnv } from "../client/cmf-client.js";
-import { fromError, toolError, toolOk } from "../util/errors.js";
+import { fromError, toolOk } from "../util/errors.js";
 import { anioSchema, mesSchema, serieIndicadorSchema, diaSchema, codigoSchema } from "../util/schemas.js";
 import { paginacion, toolOkPaginado } from "../util/tramos.js";
 

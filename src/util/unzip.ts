@@ -31,8 +31,8 @@ export async function unzip(bytes: Uint8Array): Promise<ZipEntrada[]> {
       break;
     }
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    const metodo = view.getUint16(off + 10, true);
-    const tamComp = view.getUint32(off + 20, true);
+    const _metodo = view.getUint16(off + 10, true);
+    const _tamComp = view.getUint32(off + 20, true);
     const tamSin = view.getUint32(off + 28, true);
     const largoNombre = view.getUint16(off + 28, true);
     const extra = view.getUint16(off + 30, true);

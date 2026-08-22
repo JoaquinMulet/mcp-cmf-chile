@@ -6,6 +6,7 @@ import { gridGoogleVisAJson, htmlTablaAJson, xlsAJson, fechaLegacy, fechaLegacyC
 import { pedirCaptchaCMF, obtenerCaptcha, ultimoCaptcha, consumirCaptcha } from "../captcha.js";
 import { fromError, toolOk, toolError, toolErrorFuente, sinDatosOFuente, resumirTabla, paginarTexto } from "../util/errors.js";
 import { paginar } from "../util/paginate.js";
+import { urlDocumentoCmf } from "../util/nombres.js";
 import { bytesABase64 } from "../util/zip.js";
 import { pdfAMarkdown } from "../pdf.js";
 import { procesarTablasEEFF, textoVerificacion, textoAviso } from "../eeff-tables.js";
@@ -316,7 +317,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         while ((dm = reDoc.exec(html)) !== null) {
           documentos.push({
             nombre: fixMojibake(dm[2].replace(/\s+/g, " ").trim()),
-            url: `https://www.cmfchile.cl${dm[1].replace("../", "/institucional/")}`,
+            url: urlDocumentoCmf(dm[1]),
           });
         }
         const periodo = `${anio}${mes}`;

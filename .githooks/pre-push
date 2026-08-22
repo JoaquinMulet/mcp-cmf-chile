@@ -26,3 +26,11 @@ echo "[pre-push] verde. Esto es lo mismo que va a correr el CI."
 
 echo "[pre-push] trinquete de calidad..."
 node herramientas/trinquete.mjs
+
+# INFORMA, no bloquea, y la razon importa. las alertas reflejan el
+# ULTIMO commit ya analizado, o sea una senal ATRASADA. Bloquear el push
+# con ella impediria empujar justamente el commit que la arregla. El que
+# BLOQUEA corre en la nube, despues del analisis del commit nuevo.
+# Aca se imprimen para que dejen de vivir en una pagina que nadie abre.
+echo "[pre-push] alertas de seguridad abiertas (informativo)..."
+node herramientas/alertas.mjs --listar

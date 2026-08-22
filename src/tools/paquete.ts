@@ -3,9 +3,9 @@ import { paqueteSchema, paqueteDocumentosSchema, fondosPaqueteSchema } from "../
 import type { McpServer } from "@modelcontextprotocol/server";
 import { getLegacy, postLegacy, getLegacyBinario, postLegacyBinario, fetchCmfBinarioCached, type CmfEnv } from "../client/cmf-client.js";
 import { fixMojibake, decodificarEntidades, htmlTablaAJson, xlsAJson } from "../client/parsers.js";
-import { fromError, toolOk, resumirTabla } from "../util/errors.js";
+import { fromError, toolOk, } from "../util/errors.js";
 import { barrerPeriodos, conSemafotoGlobal, estimarTiempoS, mb } from "../util/paquete.js";
-import { carpetaEmpresa, extensionDeContentType, rutaUnica, tipoDocumento } from "../util/nombres.js";
+import { carpetaEmpresa, extensionDeContentType, rutaUnica, tipoDocumento, urlDocumentoCmf } from "../util/nombres.js";
 import { construirZip, zipABase64, bytesABase64 } from "../util/zip.js";
 import {
   anioSchema, mesSchema, rutSchema } from "../util/schemas.js";
@@ -76,7 +76,7 @@ async function eeffPeriodo(
   while ((dm = reDoc.exec(html)) !== null) {
     documentos.push({
       nombre: fixMojibake(dm[2].replace(/\s+/g, " ").trim()),
-      url: `https://www.cmfchile.cl${dm[1].replace("../", "/institucional/")}`,
+      url: urlDocumentoCmf(dm[1]),
       indice: documentos.length,
     });
   }

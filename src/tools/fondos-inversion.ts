@@ -5,7 +5,7 @@ import { getLegacy, postLegacy, type CmfEnv } from "../client/cmf-client.js";
 import { htmlTablaAJson, gridGoogleVisAJson } from "../client/parsers.js";
 import { fromError, toolOk, resumirTabla } from "../util/errors.js";
 import { paginar } from "../util/paginate.js";
-import { avisoDeTramo, paginacion, toolOkPaginado, toolOkTabla } from "../util/tramos.js";
+import { avisoDeTramo, paginacion, toolOkTabla } from "../util/tramos.js";
 import {
   anioSchema, mesSchema, offsetSchema, limitSchema } from "../util/schemas.js";
 

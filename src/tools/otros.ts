@@ -5,7 +5,7 @@ import { getLegacy, postLegacy, getLegacyBinario, fetchCmf, fetchCmfBinario, typ
 import { htmlTablaAJson, fechaLegacyCompleta, fechaLegacy, xlsAJson } from "../client/parsers.js";
 import { fromError, toolError, toolErrorFuente, toolOk, resumirTabla, paginarTexto } from "../util/errors.js";
 import { bytesABase64 } from "../util/zip.js";
-import { unzip, type ZipEntrada } from "../util/unzip.js";
+import { unzip, } from "../util/unzip.js";
 
 /** Decodifica páginas legacy (latin1) de los hosts de datos bancarios. */
 function decodificarLatin1(bytes: ArrayBuffer): string {
@@ -570,7 +570,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
           return toolError(`No se encontró la sección ${seccion} en el ZIP del período ${peri}. Secciones: ${entradas.map((e) => e.nombre).join(", ")}`);
         }
         const lineas = new TextDecoder("latin1").decode(objetivo.bytes).split(/\r?\n/).filter((l) => l.trim().length > 0);
-        const filas: Record<string, unknown>[] = lineas.slice(1).map((l, i) => {
+        const filas: Record<string, unknown>[] = lineas.slice(1).map((l, _i) => {
           if (seccion === "identifi") {
             return { cod_corredor: l.slice(0, 10).trim(), nombre: l.slice(10, 85).trim(), detalle: l.slice(85).trim() };
           }

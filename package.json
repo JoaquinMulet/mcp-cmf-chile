@@ -24,7 +24,8 @@
     "preparar-hooks": "git config core.hooksPath .githooks",
     "limpieza": "node herramientas/oportunidades.mjs",
     "trinquete": "node herramientas/trinquete.mjs",
-    "lint": "biome lint src test"
+    "lint": "biome lint src test",
+    "alertas": "node herramientas/alertas.mjs"
   },
   "engines": {
     "node": ">=20"

@@ -30,7 +30,7 @@ jobs:
       - uses: github/codeql-action/init@v3
         with:
           languages: javascript-typescript
-          queries: security-and-quality
+          config-file: ./.github/codeql/config.yml
       - uses: github/codeql-action/analyze@v3
 
   dependencias:
@@ -47,3 +47,23 @@ jobs:
       # y mezclarlas hace que nadie mire ninguna de las dos.
       - name: Vulnerabilidades conocidas en dependencias de produccion
         run: npm audit --omit=dev --audit-level=high
+
+  # El porton que SI bloquea. Corre despues del analisis del commit
+  # actual, asi que su senal no esta atrasada, a diferencia del hook
+  # local. Falla si quedan alertas de severidad alta en codigo que se
+  # despliega.
+  porton-alertas:
+    runs-on: ubuntu-latest
+    needs: codeql
+    permissions:
+      security-events: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Alertas de severidad alta en codigo desplegado
+        run: node herramientas/alertas.mjs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

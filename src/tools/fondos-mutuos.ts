@@ -6,7 +6,7 @@ import { pedirCaptchaCMF, obtenerCaptcha, ultimoCaptcha, consumirCaptcha } from 
 import { xlsAJson, txtCsvAJson, htmlTablaAJson } from "../client/parsers.js";
 import { fromError, toolError, toolErrorFuente, toolOk, resumirTabla } from "../util/errors.js";
 import { paginar } from "../util/paginate.js";
-import { avisoDeTramo, paginacion, toolOkPaginado, toolOkTabla } from "../util/tramos.js";
+import { avisoDeTramo, paginacion, toolOkTabla } from "../util/tramos.js";
 import {
   anioSchema, carteraSchema, fechaSchema, mesSchema, offsetSchema, limitSchema, codigoSchema, enumTolerante } from "../util/schemas.js";
 

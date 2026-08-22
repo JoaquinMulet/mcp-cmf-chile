@@ -18,11 +18,15 @@ export function decodificarEntidades(s: string): string {
     .replace(/&Ntilde;/g, "Ñ")
     .replace(/&uuml;/g, "ü")
     .replace(/&Uuml;/g, "Ü")
-    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    // El ampersand va AL FINAL, siempre. Si se decodifica antes, un texto
+    // que la fuente escapo 2 veces (&amp;lt;) termina convertido en un <
+    // de verdad, y ahi ya no se puede distinguir del marcado real. Lo
+    // encontro CodeQL con js/double-escaping el 21 de agosto de 2026.
+    .replace(/&amp;/g, "&")
     .replace(/\u00a0/g, " ")
     .replace(/\s+/g, " ")
     .trim();

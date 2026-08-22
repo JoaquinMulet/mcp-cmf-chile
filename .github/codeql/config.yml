@@ -1,0 +1,24 @@
+# Acota QUE se analiza, antes de creerle a la primera cifra.
+#
+# Sin esto, 65 de 74 alertas venian de test/investigacion, que son
+# scripts de exploracion de un rato y HTML capturado del sitio de la CMF
+# guardado como evidencia de pruebas. Nada de eso se despliega, nada de
+# eso se va a arreglar, y su volumen tapaba las 3 alertas de severidad
+# alta que SI estaban en codigo del Worker.
+#
+# La regla que hay detras. una medicion que incluye lo que no puedes
+# arreglar no sirve para arreglar nada, y encima entrena a ignorar la
+# lista entera.
+name: "CodeQL para el codigo que se despliega"
+
+paths-ignore:
+  - test/investigacion
+  - dist
+  - node_modules
+
+# security-and-quality trae ademas las reglas de calidad, y valen la
+# pena. Encontraron 6 declaraciones sin usar que ni el linter local ni el
+# detector de codigo muerto veian, que es justo el punto de tener capas
+# con agujeros en lugares distintos.
+queries:
+  - uses: security-and-quality
