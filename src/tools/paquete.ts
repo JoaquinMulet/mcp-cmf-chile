@@ -12,7 +12,12 @@ import {
 
 const FICHA_BASE = "/institucional/mercados/entidad.php";
 
-function fichaUrl(rut: string, pestania: number): string {
+/**
+ * La URL de una pestana de la ficha de un emisor en el sitio de la CMF.
+ * Exportada para poder probarla. es pura y no toca la red, asi que es
+ * justo lo que una prueba puede fijar sin depender del regulador.
+ */
+export function fichaUrl(rut: string, pestania: number): string {
   return `${FICHA_BASE}?mercado=V&rut=${rut}&grupo=&tipoentidad=RVEMI&row=&vig=VI&control=svs&pestania=${pestania}`;
 }
 
@@ -84,7 +89,15 @@ async function eeffPeriodo(
 }
 
 /** Filas de una tabla con el link ver_sgd capturado por fila (header robusto). */
-function filasConLinks(html: string, columnas: string[]): { fila: Record<string, string>; url?: string }[] {
+/**
+ * Convierte una tabla HTML de la CMF en filas, y rescata el enlace al
+ * documento firmado cuando la fila lo trae.
+ *
+ * Exportada para poder probarla. Es la pieza que decide si el agente ve
+ * o no el enlace al documento, y esa columna ya se perdio una vez, asi
+ * que merece prueba propia y no llegar por casualidad.
+ */
+export function filasConLinks(html: string, columnas: string[]): { fila: Record<string, string>; url?: string }[] {
   const out: { fila: Record<string, string>; url?: string }[] = [];
   const reRow = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
   let rm: RegExpExecArray | null;

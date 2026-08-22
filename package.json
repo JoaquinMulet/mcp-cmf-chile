@@ -25,7 +25,9 @@
     "limpieza": "node herramientas/oportunidades.mjs",
     "trinquete": "node herramientas/trinquete.mjs",
     "lint": "biome lint src test",
-    "alertas": "node herramientas/alertas.mjs"
+    "alertas": "node herramientas/alertas.mjs",
+    "hallazgos": "node herramientas/hallazgos.mjs",
+    "semgrep": "uvx semgrep scan --config .semgrep/reglas-propias.yml src test"
   },
   "engines": {
     "node": ">=20"

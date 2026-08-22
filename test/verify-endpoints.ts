@@ -119,7 +119,7 @@ const TOOLS: Record<string, ToolDef> = {
   cmf_catalogo_entidades: { args: { nombre: "COPEC", offset: 0, limit: 3 }, expect: { entidades: "array", total: "number", cache: "string" } },
 };
 
-function validarExpect(sc: Record<string, unknown> | undefined, expect: ToolDef["expect"], tool: string): string[] {
+function validarExpect(sc: Record<string, unknown> | undefined, expect: ToolDef["expect"]): string[] {
   const problemas: string[] = [];
   if (!sc) return ["structuredContent ausente"];
   for (const [k, tipo] of Object.entries(expect ?? {})) {
@@ -203,7 +203,7 @@ async function main() {
           problemas.push(`isError inesperado: ${texto.slice(0, 200)}`);
         }
         if (!texto) problemas.push("content[0].text vacío");
-        problemas.push(...validarExpect(sc, def.expect, name));
+        problemas.push(...validarExpect(sc, def.expect));
       }
       reporte.push({ tool: name, ok: problemas.length === 0, detalle: problemas.join("; ") || `OK (${sc ? Object.keys(sc).join(",") : "sin sc"})`, ms });
     } catch (e) {
@@ -224,7 +224,7 @@ async function main() {
     ["cmf://captcha/inexistente", "id"],
     ["cmf://skill/uso", ""],
   ];
-  for (const [uri, varName] of lecturas) {
+  for (const [uri] of lecturas) {
     try {
       const r = await client.readResource({ uri });
       const text = r.contents?.[0]?.text ?? "";

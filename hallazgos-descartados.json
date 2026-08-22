@@ -1,0 +1,176 @@
+{
+ "8ba86d714709": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "src/client/cmf-client.ts:106"
+ },
+ "b683c9b20152": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "src/client/parsers.ts:155"
+ },
+ "d02d09f762f8": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "src/client/parsers.ts:70"
+ },
+ "569e34f8013e": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "src/client/parsers.ts:100"
+ },
+ "c32c130e4639": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "src/eeff-tables.ts:113"
+ },
+ "635645a1267b": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "src/eeff-tables.ts:169"
+ },
+ "d5f72533391f": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "src/eeff-tables.ts:278"
+ },
+ "e49854c7725e": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "src/tools/empresas.ts:307"
+ },
+ "b8538ac3e3b7": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "src/tools/empresas.ts:59"
+ },
+ "0757fdc65d2b": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "src/tools/empresas.ts:714"
+ },
+ "ddf66ddae295": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "src/tools/empresas.ts:1246"
+ },
+ "8e5219fff09e": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "src/tools/empresas.ts:1505"
+ },
+ "b8723b8b5905": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "src/tools/empresas.ts:1778"
+ },
+ "b6eb88504f48": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "src/tools/otros.ts:47"
+ },
+ "494e25b87fbc": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "src/tools/otros.ts:804"
+ },
+ "e858f4a564ab": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "src/tools/otros.ts:885"
+ },
+ "6cc190c99664": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "src/tools/paquete.ts:140"
+ },
+ "6dc5c32a9423": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "src/tools/paquete.ts:177"
+ },
+ "d7a508d88206": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "src/tools/paquete.ts:416"
+ },
+ "8e168281faea": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "test/banco-pruebas.ts:25"
+ },
+ "185f995b828e": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "test/sin-recortes.test.ts:180"
+ },
+ "ae1d73e5a56b": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "test/verify-endpoints.ts:122"
+ },
+ "d5b439dc018d": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "test/verify-endpoints.ts:140"
+ },
+ "90e4c6f242dd": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "test/verify-proto.ts:52"
+ },
+ "f139186c339a": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "test/verify-proto.ts:28"
+ },
+ "fde130f24da8": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "test/verify-remote.ts:21"
+ },
+ "152e4f7e8e91": {
+  "estado": "deuda",
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
+  "fecha": "2026-08-21",
+  "donde": "test/verify-remote.ts:46"
+ },
+ "1dca506ecfc0": {
+  "estado": "deuda",
+  "razon": "Ya arreglado en el arbol de trabajo el 21 de agosto de 2026, pero las alertas de la nube reflejan el ULTIMO commit analizado, o sea una senal atrasada. Esta entrada se vuelve inerte sola en cuanto el analisis corra sobre el commit nuevo.",
+  "fecha": "2026-08-21",
+  "donde": "test/verify-endpoints.ts:227"
+ },
+ "fca01b2487df": {
+  "estado": "deuda",
+  "razon": "Ya arreglado en el arbol de trabajo el 21 de agosto de 2026, pero las alertas de la nube reflejan el ULTIMO commit analizado, o sea una senal atrasada. Esta entrada se vuelve inerte sola en cuanto el analisis corra sobre el commit nuevo.",
+  "fecha": "2026-08-21",
+  "donde": "test/verify-endpoints.ts:227"
+ }
+}

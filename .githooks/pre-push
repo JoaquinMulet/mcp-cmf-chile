@@ -34,3 +34,11 @@ node herramientas/trinquete.mjs
 # Aca se imprimen para que dejen de vivir en una pagina que nadie abre.
 echo "[pre-push] alertas de seguridad abiertas (informativo)..."
 node herramientas/alertas.mjs --listar
+
+# La bandeja de hallazgos. BLOQUEA si hay alguno sin triar.
+#
+# Cada hallazgo se arregla, se marca falso positivo o se acepta como
+# deuda, y los 2 ultimos con su razon escrita. No hay cuarta opcion, y
+# esa es toda la idea. un hallazgo que vive donde nadie mira no existe.
+echo "[pre-push] bandeja de hallazgos..."
+node herramientas/hallazgos.mjs

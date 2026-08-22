@@ -1,0 +1,88 @@
+# Reglas propias. cada una nace de un defecto que ya nos costo caro.
+#
+# Por que Semgrep y no otra prueba de clase. las que ya tenemos en la
+# suite leen el codigo como TEXTO con expresiones regulares, y eso las
+# hace fragiles ante un salto de linea o un espacio de mas. Semgrep
+# entiende la SINTAXIS, asi que `x.slice(0,10)` y `x .slice( 0 , 10 )`
+# son el mismo patron para el, y un comentario que contenga el texto no
+# lo confunde.
+#
+# La regla para agregar una regla aca. tiene que venir de un defecto
+# REAL, con su fecha, y tiene que ser imposible de escribir como prueba
+# corriente sin dolor. Si una prueba normal la expresa mejor, va como
+# prueba.
+rules:
+  # -------------------------------------------------------------------
+  - id: texto-recortado-antes-de-paginar
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      El texto que ve el modelo se arma recortando las filas. El bloque de
+      texto es lo UNICO que un modelo lee, asi que este recorte le entrega
+      menos de lo que la respuesta dice traer, y sin ningun aviso cuando
+      el total cabe en el limit. Usa toolOkTabla, que renderiza DESPUES de
+      paginar. Medido el 21 de agosto de 2026 con cmf_sanciones_cursadas.
+      30 filas en la fuente, 30 en los datos, 10 en el texto.
+    patterns:
+      - pattern-either:
+          - pattern: resumirTabla($X.slice(...), ...)
+          - pattern: resumirTabla($X.slice(...))
+
+  # -------------------------------------------------------------------
+  - id: paginar-con-offset-clavado
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      Se pagina con el offset y el limit clavados en vez de los que pidio
+      quien llama, asi que la tool tiene un techo duro que el agente no
+      puede pasar. Y si ademas el aviso le dice que reintente con offset,
+      le esta prometiendo un parametro que no existe. Agrega paginacion()
+      al esquema y pasa offset y limit. Medido el 21 de agosto de 2026 en
+      6 tools de fondos mutuos.
+    pattern-regex: 'paginar\(\s*\w+\s*,\s*\d+\s*,\s*\d+\s*\)'
+
+  # -------------------------------------------------------------------
+  # -------------------------------------------------------------------
+  - id: replace-de-texto-donde-hay-varias-apariciones
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: >-
+      String.replace con un patron de TEXTO cambia solo la PRIMERA
+      aparicion. Si de verdad quieres una sola, dejalo y agrega un
+      comentario y la marca // nosemgrep, que es la supresion estandar de
+      Semgrep. Si querias todas, usa una expresion regular
+      con la bandera g, o anclala al inicio. Lo encontro CodeQL el 21 de
+      agosto de 2026 en la ruta de los documentos de la CMF, donde
+      '../../x' quedaba como '/institucional/../x'.
+    # Acotada a las RUTAS, que es el unico caso donde el patron puede
+    # repetirse de verdad. Sin acotar marcaba 5 sitios del codigo real y
+    # los 5 eran correctos (un separador decimal, un prefijo conocido),
+    # o sea 100 por ciento de falsos. Una regla asi se ignora entera, y
+    # con ella se pierde el caso que si importa.
+    patterns:
+      - pattern: $S.replace("$A", "$B")
+      - metavariable-regex:
+          metavariable: $A
+          regex: .*(\.\./|^/|/$).*
+
+  # -------------------------------------------------------------------
+  - id: techo-elegido-por-el-servidor
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      Un .max() sobre el limit o el numero de filas es un techo que el
+      SERVIDOR le impone a quien llama. La regla del proyecto es que una
+      herramienta jamas decide por el agente que parte del dato merece
+      verse. El valor por DEFECTO protege a quien no pide nada, el TECHO
+      le prohibe pedir mas a quien sabe lo que quiere, y solo el techo
+      esta mal.
+    pattern-regex: '\b(limit|max_chars|max_rows|offset_chars)\b[^;\n]{0,80}\.max\('
+
+# REGLA QUITADA el 21 de agosto de 2026, y la razon queda escrita para que
+# nadie la vuelva a escribir. «mandar-al-modelo-a-structuredcontent»
+# buscaba la palabra dentro de cualquier cadena y marco 14 sitios, los 14
+# comentarios que EXPLICAN la regla. Una regla con 14 falsos en su primera
+# corrida se ignora para siempre, y ademas la suite ya cubre ese defecto
+# mejor, con la comprobacion «ninguna tool manda al modelo a leer
+# structuredContent», que mira las descripciones de las tools y no el
+# codigo entero.
