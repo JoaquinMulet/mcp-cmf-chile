@@ -149,8 +149,17 @@ un texto y recibe un resultado.
 - Si tu cliente ya integró las 86 herramientas y no quieres tocarlo.
 - Si tu modelo escribe JavaScript poco fiable. En modo código, un
   programa mal escrito cuesta un reintento.
-- Si necesitas las herramientas con captcha. Su imagen viaja como
-  recurso MCP y ese camino solo existe en modo clásico.
+- Si necesitas una de las 2 herramientas con captcha. Su imagen viaja
+  como recurso MCP y ese camino solo existe en modo clásico. Son estas 2
+  de las 86, y ninguna más.
+
+  | Herramienta | Qué trae | Por qué la CMF le pone captcha |
+  |---|---|---|
+  | `cmf_hechos_globales` | Hechos esenciales de todo el mercado en un rango de fechas | Es la consulta masiva del registro, y el sitio la protege del raspado |
+  | `cmf_fondos_mutuos_cartola` | La cartola diaria de un fondo mutuo por su RUN | Igual, y ademas es por fondo y por dia |
+
+  Para el resto, incluida `cmf_empresa_hechos`, que trae los hechos
+  esenciales de UNA empresa, el modo código funciona sin captcha.
 
 ---
 
