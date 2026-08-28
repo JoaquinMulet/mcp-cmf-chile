@@ -237,6 +237,30 @@ export function separarTotales<T extends Record<string, unknown>>(filas: T[]): {
   return { datos, totales };
 }
 
+/**
+ * Une los 2 pisos de una cabecera en un nombre por columna.
+ *
+ * Cuando el piso de arriba viene vacío, la columna pertenece al grupo que
+ * abrió la última celda no vacía a su izquierda, que es como se leen las
+ * celdas combinadas de una planilla. Con un solo piso el nombre queda
+ * exactamente igual que antes, y eso importa. casi todas las planillas de la
+ * CMF tienen 1 solo piso, así que tocar ese camino habría cambiado los
+ * nombres de columna de varias operaciones de una vez.
+ */
+function unirPisos(arriba: string[], abajo: string[]): string[] {
+  if (abajo.length === 0) return arriba;
+  const largo = Math.max(arriba.length, abajo.length);
+  const nombres: string[] = [];
+  let grupo = "";
+  for (let j = 0; j < largo; j++) {
+    const a = arriba[j] ?? "";
+    const b = abajo[j] ?? "";
+    if (a !== "") grupo = a;
+    nombres.push([a !== "" ? a : grupo, b].filter((x) => x !== "").join(" "));
+  }
+  return nombres;
+}
+
 /** Normaliza una clave de columna a snake_case (quita tildes, espacios y caracteres especiales). */
 function normalizarClave(h: string): string {
   return fixMojibake(h)
@@ -283,7 +307,17 @@ export function xlsAJson(bytes: ArrayBuffer | Uint8Array): Record<string, unknow
     }
   }
   const inicio = idxHeader >= 0 ? idxHeader + 1 : 1;
-  const header = crudas[Math.max(0, idxHeader === -1 ? 0 : idxHeader)].map(limpiar);
+  const fila1 = crudas[Math.max(0, idxHeader === -1 ? 0 : idxHeader)].map(limpiar);
+  // Cabecera de 2 pisos, como una planilla con celdas combinadas. El piso de
+  // arriba agrupa y el de abajo detalla, y usar solo el de arriba dejaba sin
+  // nombre a toda columna cuya celda de arriba viene vacía. Medido el 28 de
+  // agosto de 2026 en el cuadro de costos. `col_8`, `col_15` y `col_17`, y la
+  // última es la comisión por rescate anticipado, que llegaba como un número
+  // suelto sin decir si era un porcentaje, un monto o un plazo. Unir los 2
+  // pisos arregla además una etiqueta que mentía. la columna que se llamaba
+  // «Comisión de Colocación» trae la CONDICIÓN, y así lo dice su piso de abajo.
+  const fila2 = idxHeader >= 0 && esHeader(crudas[idxHeader + 1] ?? []) ? (crudas[idxHeader + 1] ?? []).map(limpiar) : [];
+  const header = unirPisos(fila1, fila2);
 
   const out: Record<string, unknown>[] = [];
   for (let i = inicio; i < crudas.length; i++) {

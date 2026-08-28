@@ -260,3 +260,70 @@ test("parser: con cabecera th y enlaces, la url sigue viajando fila por fila", (
   assert.ok(filas[0].url.includes("AAA"));
   assert.equal(filas[1].url, "", "la fila sin documento conserva la columna, vacía");
 });
+
+/**
+ * Una cabecera de 2 pisos deja columnas sin nombre.
+ *
+ * El cuadro de costos de la CMF trae su cabecera en 2 filas. La de arriba
+ * agrupa y la de abajo detalla, como una planilla con celdas combinadas.
+ * `xlsAJson` usaba solo la de arriba y descartaba la de abajo, así que las
+ * columnas cuya celda de arriba viene vacía se quedaban sin nombre y salían
+ * como `col_8`, `col_15` y `col_17`.
+ *
+ * La peor es `col_17`. lleva la comisión que te cobran si rescatas antes de
+ * tiempo, y llegaba como un 1.19 suelto al lado de una columna que dice
+ * «0 a 180». Sin nombre no se puede saber si ese número es un porcentaje, un
+ * monto o un plazo.
+ *
+ * Y unir los 2 pisos arregla además una etiqueta que MENTÍA. la columna 14
+ * se llamaba «Comisión de Colocación» y su valor es «0 a 180», que es la
+ * condición, no la comisión. Su piso de abajo dice «Condición».
+ *
+ * Las 2 filas de abajo son la cabecera REAL del cuadro de costos de
+ * diciembre de 2025, copiadas del Excel de la CMF.
+ */
+const CABECERA_COSTOS = [
+  ["Cuadro estadístico de Costos"],
+  [],
+  ["Periodo", "Administradora", "Nombre Fondo", "Tipo Fondo", "Moneda", "Serie", "Caract.", "Remuneración", "", "Gastos OP.", "TAC Rem. Fija", "TAC Rem. Var.", "TAC Gastos Op.", "TAC Total", "Comisión de Colocación", "", "Comisión de Colocación Dif", ""],
+  ["", "", "", "", "", "", "", "Rem. Fija", "Rem. Var.", "", "%", "%", "%", "%", "Condición", "Comisión", "Condición", "Comisión"],
+  ["20251231", "Administradora General De Fondos Security S.A.", "Fondo Mutuo Fondo Activo 2", "6", "PESOS", "B", "Serie para constituir planes", "Hasta un 2,000 % anual", "NA", "2,5", "1.99", "NA", "0.18", "2.17", "NA", "NA", "0 a 180", "2.38%"],
+];
+
+function comoExcel(aoa: unknown[][]): Uint8Array {
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "Costos");
+  return XLSX.write(wb, { type: "array", bookType: "xlsx" }) as Uint8Array;
+}
+
+test("xls: la cabecera de 2 pisos no deja ninguna columna sin nombre", () => {
+  const [fila] = xlsAJson(comoExcel(CABECERA_COSTOS));
+  const sinNombre = Object.keys(fila).filter((k) => /^col_\d+$/.test(k));
+  assert.deepEqual(sinNombre, [], `estas columnas quedaron sin nombre: ${sinNombre.join(", ")}`);
+});
+
+test("xls: la comisión por rescate anticipado llega con su nombre", () => {
+  const [fila] = xlsAJson(comoExcel(CABECERA_COSTOS));
+  assert.equal(fila["Comisión de Colocación Dif Comisión"], "2.38%", "era col_17");
+  assert.equal(fila["Comisión de Colocación Dif Condición"], "0 a 180", "y su condición al lado");
+});
+
+test("xls: los 2 pisos se unen y la etiqueta deja de mentir", () => {
+  const [fila] = xlsAJson(comoExcel(CABECERA_COSTOS));
+  assert.equal(fila["Remuneración Rem. Fija"], "Hasta un 2,000 % anual");
+  assert.equal(fila["Remuneración Rem. Var."], "NA", "era col_8");
+  assert.equal(fila["TAC Total %"], "2.17", "el piso de abajo dice que es un porcentaje");
+});
+
+test("xls: una cabecera de 1 solo piso queda exactamente igual", () => {
+  // El lado opuesto. Casi todas las planillas de la CMF tienen 1 piso, y
+  // cambiarles los nombres habría roto varias tools de una vez.
+  const unPiso = [
+    ["Informe"],
+    [],
+    ["RUN", "Nombre Fondo", "Patrimonio", "Partícipes"],
+    ["12345-6", "Fondo Test A", "1.234.567", "12"],
+  ];
+  const [fila] = xlsAJson(comoExcel(unPiso));
+  assert.deepEqual(Object.keys(fila), ["RUN", "Nombre Fondo", "Patrimonio", "Partícipes"]);
+});
