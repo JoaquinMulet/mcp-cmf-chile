@@ -186,3 +186,19 @@ test("las tools de fondos mutuos nombran el recurso de tipos", async () => {
     assert.match(String(t.description), /cmf:\/\/fondos-mutuos\/tipos/, `${nombre} debe nombrar el recurso`);
   }
 });
+
+test("el recurso de uso dice cómo armar una serie histórica y cuál es la vía de escape", async () => {
+  // Lo pidió una prueba externa el 28 de agosto de 2026. no hay tool que
+  // entregue el valor cuota mes a mes, y quien la necesita tiene que
+  // descubrir solo que la vía es repetir el boletín por cada mes. Sin eso
+  // escrito, cada agente vuelve a perder el mismo rato.
+  // Se lee por el cliente, no del archivo fuente, para probar lo que de
+  // verdad recibe un agente y no lo que el código parece decir.
+  const { client } = await clienteConectado();
+  const r = await client.readResource({ uri: "cmf://skill/uso" });
+  const skill = String(r.contents?.[0]?.text ?? "");
+  assert.match(skill, /serie hist/i, "tiene que decir cómo se arma una serie de varios meses");
+  assert.match(skill, /fm\.fm_bpr\.php/, "y nombrar el archivo original de la CMF como vía de escape");
+  assert.match(skill, /cmf:\/\/fondos-mutuos\/tipos/, "y apuntar al diccionario de tipos");
+  assert.match(skill, /notas/, "y decir dónde viaja la unidad de las cifras");
+});

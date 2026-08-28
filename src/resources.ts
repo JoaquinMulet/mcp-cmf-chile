@@ -173,6 +173,28 @@ description: Procedimiento para consultar datos públicos de la CMF de Chile (em
 3. \`cmf_fondos_mutuos_costos\` (anio, mes): TAC y remuneraciones.
 4. \`cmf_fondos_comisiones_maximas\` (tipo fm/fi, circular 1951/1965, anio): comisiones máximas a fondos de pensiones.
 
+### Qué significan los códigos y en qué unidad vienen las cifras
+
+- El tipo de fondo es un código de 1 a 8. Su significado está en el resource \`cmf://fondos-mutuos/tipos\`.
+- Las cifras NO vienen en pesos. El boletín viene en millones y las inversiones en miles.
+- La unidad exacta de cada respuesta viaja en su campo \`notas\`, copiada del pie de esa planilla, y también en el texto. Esa es la fuente, el resource es la guía.
+- Las filas de agregado («Total consulta», «Total Sistema») viajan en el campo \`totales\`, fuera de las filas de datos. No las sume junto a las series.
+
+### Serie histórica de varios meses
+
+No hay una tool que entregue el valor cuota mes a mes. La cartola diaria (\`cmf_fondos_mutuos_cartola\`) sí lo tiene, pero pide captcha, así que no sirve para recorrer muchos períodos.
+
+La vía es repetir la tool mensual, una llamada por mes, y unir los resultados. Para volatilidad o rentabilidad acumulada, \`cmf_fondos_mutuos_bpr\` con el mismo \`admin\` y el \`mes\` cambiando.
+
+Vía de escape cuando necesita muchos períodos o todas las filas de una vez: baje el archivo original de la CMF y procéselo usted. Son estas rutas, bajo \`https://www.cmfchile.cl\`.
+
+- Boletín BPR: \`/institucional/estadisticas/fm.fm_bpr.php?out=excel&admins=0&tipofondo=0&moneda=0&mes_peri=MM&anio_peri=AAAA\`
+- Costos (TAC): \`/institucional/estadisticas/fmdfm_excel2.php\` (POST con admins, tipofondo, moneda, mes2, anno2)
+- Catálogo de fondos: \`/institucional/estadisticas/fm_ident2.php\` (POST, devuelve CSV con punto y coma)
+- Cartera de inversiones: \`/institucional/estadisticas/ffm_download.php\` (POST con aa, mm, cartera)
+
+Ojo con 2 cosas al procesarlos a mano, porque el servidor ya las corrige y usted no las tendría. el catálogo repite cada fondo hasta 3 veces, y las planillas traen sus notas al pie como si fueran filas de datos.
+
 ## Indicadores y economía
 
 - \`cmf_api_indicador_valor\` (serie: uf, dolar, euro, tab, utm, ipc, tip, tmc; anio, mes, dia opcional).
