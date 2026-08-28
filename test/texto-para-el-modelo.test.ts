@@ -114,3 +114,73 @@ test("ninguna tool manda al modelo a leer structuredContent", () => {
   }
   assert.deepEqual(culpables, [], `estas líneas mandan al modelo a structuredContent: ${culpables.join(", ")}`);
 });
+
+/**
+ * Una columna FANTASMA es una celda vacía que no significa "vacío".
+ *
+ * `String(f[c] ?? "")` trata igual "la columna no existe" y "la columna
+ * está vacía". Quien escribe la lista de columnas a mano se equivoca de
+ * nombre y el resultado no es un error: es una tabla en blanco que se ve
+ * bien formada. Medido el 28 de agosto de 2026 en `cmf_fondos_mutuos_bpr`,
+ * que pedía `Run Fondo`, `Nombre Fondo`, `Patrimonio` y `Partícipes`
+ * mientras el dato traía `col_0`, `RUN`, `Patrimonio (1)` y `Participes`.
+ * 4 columnas de 6 salían vacías, con el dato completo en el JSON.
+ *
+ * La cura no es corregir esos 4 nombres. Es que la lista escrita a mano
+ * NO PUEDA producir una tabla en blanco: si nombra una columna que ningún
+ * dato tiene, esa lista está probada como equivocada y se descarta entera
+ * a favor de las columnas reales. El error degrada hacia MÁS información,
+ * nunca hacia menos.
+ */
+const FILA_BPR = {
+  col_0: "SECURITY PLUS",
+  RUN: "8253-8",
+  "Patrimonio (1)": "121,651.67",
+  Participes: "7,877",
+  "Valor cuota": "2,213.30",
+};
+
+test("resumirTabla no imprime una columna que ninguna fila trae", () => {
+  const texto = resumirTabla([FILA_BPR], ["Run Fondo", "Patrimonio", "Valor cuota"]);
+  assert.ok(!texto.includes("Run Fondo"), "una columna que no existe no se anuncia en la cabecera");
+  assert.ok(!/\|\s*\|/.test(texto), "ninguna celda queda vacía por un nombre equivocado");
+});
+
+test("resumirTabla cae de vuelta a las columnas REALES cuando la lista miente", () => {
+  const texto = resumirTabla([FILA_BPR], ["Run Fondo", "Patrimonio", "Valor cuota"]);
+  for (const real of Object.keys(FILA_BPR)) {
+    assert.ok(texto.includes(real), `la columna real ${real} debe llegar al modelo`);
+  }
+  assert.ok(texto.includes("SECURITY PLUS"), "y su dato también");
+});
+
+test("una lista de columnas correcta se respeta tal cual", () => {
+  // El lado opuesto. Quien conoce la tabla puede acotarla, y el rescate
+  // solo se dispara cuando la lista nombra algo que no existe.
+  const texto = resumirTabla([FILA_BPR], ["col_0", "Valor cuota"]);
+  assert.equal(texto.split("\n")[0], "col_0 | Valor cuota");
+  assert.ok(!texto.includes("Participes"), "no se agregan columnas que no pidieron");
+});
+
+test("una columna vacía DE VERDAD se sigue mostrando", () => {
+  // El riesgo del rescate es tapar el vacío legítimo. Una columna que
+  // existe y viene sin valor es un dato, y tiene que verse.
+  const texto = resumirTabla([{ rut: "96639280", nombre: "" }], ["rut", "nombre"]);
+  assert.equal(texto.split("\n")[0], "rut | nombre");
+  assert.ok(texto.includes("96639280 | "), "la celda vacía se imprime, la columna no desaparece");
+});
+
+/*
+ * Por qué acá NO hay una comprobación de clase sobre el fuente.
+ *
+ * La tentación era barrer `src/tools` buscando listas de columnas escritas
+ * a mano y marcarlas. No sirve: un nombre correcto de planilla y uno
+ * equivocado se ven idénticos en el texto. `Valor cuota` existe y
+ * `Nombre Fondo` no, y ninguna regla sobre mayúsculas o espacios los
+ * separa. Ese control marcaría código bueno, y un control con falsos
+ * positivos se termina ignorando entero.
+ *
+ * El instrumento que SÍ distingue es el dato real, y vive en
+ * `test/verify-endpoints.ts`, que llama cada tool contra la CMF. Ahí la
+ * comprobación compara la lista pedida contra las claves que llegaron.
+ */

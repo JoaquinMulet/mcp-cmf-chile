@@ -125,10 +125,19 @@ export function resumirTabla<T extends Record<string, unknown>>(
   columnas: string[],
 ): string {
   if (filas.length === 0) return "(sin datos)";
+  // Una columna que ninguna fila trae imprimiría una celda vacía, y esa
+  // celda no significa "vacío": significa que el nombre está equivocado.
+  // Los 2 casos se ven idénticos, así que el defecto es mudo. Cuando la
+  // lista pedida nombra algo que el dato no tiene, esa lista queda
+  // probada como equivocada y se descarta ENTERA a favor de las columnas
+  // reales. El error degrada hacia más información, nunca hacia menos.
+  const reales = new Set<string>();
+  for (const f of filas) for (const k of Object.keys(f)) reales.add(k);
+  const pedidas = columnas.some((c) => !reales.has(c)) ? [...reales] : columnas;
   // El enlace es el único camino del agente hacia el documento original,
   // así que nunca se omite cuando la fila lo trae.
   const conUrl = filas.some((f) => typeof f["url"] === "string" && f["url"] !== "");
-  const cols = conUrl && !columnas.includes("url") ? [...columnas, "url"] : columnas;
+  const cols = conUrl && !pedidas.includes("url") ? [...pedidas, "url"] : pedidas;
   const header = cols.join(" | ");
   const body = filas
     .map((f) => cols.map((c) => String(f[c] ?? "")).join(" | "))
