@@ -230,3 +230,50 @@ test("sin notas no se inventa una sección de notas", () => {
   const texto = r.content[0].type === "text" ? r.content[0].text : "";
   assert.ok(!/Notas de la planilla/.test(texto), "sin notas el texto no cambia");
 });
+
+/**
+ * Las filas de agregado se ven, pero fuera de la lista de datos.
+ *
+ * Sacarlas de `filas` arregla el conteo y el promedio. Botarlas sería otro
+ * defecto, porque «Total Sistema» es el dato con el que se compara un fondo
+ * contra el mercado. Van en su propio campo y en su propia sección del
+ * texto, con el nombre dicho, para que nadie las sume sin querer.
+ */
+test("los totales viajan aparte y el conteo no los incluye", () => {
+  const r = toolOkTabla({
+    titulo: "BPR FM 2025-12",
+    vacio: "sin datos",
+    base: {},
+    campo: "filas",
+    filas: [{ col_0: "SECURITY PLUS", "Patrimonio (1)": "121,651.67" }],
+    totales: [{ col_0: "Total Sistema", "Patrimonio (1)": "89,033,781.94" }],
+    offset: 0,
+    limit: 10,
+    tool: "cmf_fondos_mutuos_bpr",
+    unidad: "series",
+  });
+  const texto = r.content[0].type === "text" ? r.content[0].text : "";
+  assert.match(texto, /1 series/, "el conteo cuenta solo las series, no el total");
+  assert.match(texto, /Total Sistema/, "y el agregado igual se ve");
+  assert.match(texto, /agregado/i, "dicho como lo que es, para que nadie lo sume");
+  const sc = r.structuredContent as Record<string, unknown>;
+  assert.equal(sc.total, 1);
+  assert.equal((sc.filas as unknown[]).length, 1, "la lista de datos no lo lleva");
+  assert.equal((sc.totales as unknown[]).length, 1);
+});
+
+test("sin totales no se inventa una sección de totales", () => {
+  const r = toolOkTabla({
+    titulo: "BPR FM 2025-12",
+    vacio: "sin datos",
+    base: {},
+    campo: "filas",
+    filas: [{ col_0: "SECURITY PLUS" }],
+    offset: 0,
+    limit: 10,
+    tool: "cmf_fondos_mutuos_bpr",
+  });
+  const texto = r.content[0].type === "text" ? r.content[0].text : "";
+  assert.ok(!/agregado/i.test(texto));
+  assert.ok(!("totales" in (r.structuredContent as Record<string, unknown>)));
+});

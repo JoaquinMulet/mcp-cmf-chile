@@ -74,21 +74,28 @@ test("la cadena vacía se lee como el valor por defecto, y eso está elegido", (
  * un `inputSchema` describe lo que aceptamos, y ahí rechaza a quien manda
  * "50" en vez de 50.
  */
-test("ningún parámetro de entrada exige un número estricto", () => {
-  const dirTools = join(import.meta.dirname, "..", "src", "tools");
+/** Los `z.number()` de ENTRADA de un archivo, con su número de línea. */
+function numerosEstrictosDeEntrada(fuente: string): string[] {
   const culpables: string[] = [];
-  for (const archivo of readdirSync(dirTools).filter((f) => f.endsWith(".ts"))) {
-    const fuente = readFileSync(join(dirTools, archivo), "utf8");
-    let dentroDeEntrada = false;
-    for (const [i, linea] of fuente.split("\n").entries()) {
-      if (linea.includes("inputSchema")) dentroDeEntrada = true;
-      if (linea.includes("outputSchema")) dentroDeEntrada = false;
-      if (/^\s*(\/\/|\*|\/\*)/.test(linea)) continue;
-      if (dentroDeEntrada && /z\.number\(\)/.test(linea)) {
-        culpables.push(`${archivo}:${i + 1} -> ${linea.trim().slice(0, 90)}`);
-      }
+  let dentroDeEntrada = false;
+  for (const [i, linea] of fuente.split("\n").entries()) {
+    if (linea.includes("inputSchema")) dentroDeEntrada = true;
+    else if (linea.includes("outputSchema")) dentroDeEntrada = false;
+    const esComentario = /^\s*(\/\/|\*|\/\*)/.test(linea);
+    if (dentroDeEntrada && !esComentario && /z\.number\(\)/.test(linea)) {
+      culpables.push(`${i + 1} -> ${linea.trim().slice(0, 90)}`);
     }
   }
+  return culpables;
+}
+
+test("ningún parámetro de entrada exige un número estricto", () => {
+  const dirTools = join(import.meta.dirname, "..", "src", "tools");
+  const culpables = readdirSync(dirTools)
+    .filter((f) => f.endsWith(".ts"))
+    .flatMap((archivo) =>
+      numerosEstrictosDeEntrada(readFileSync(join(dirTools, archivo), "utf8")).map((c) => `${archivo}:${c}`),
+    );
   assert.deepEqual(
     culpables,
     [],
@@ -99,27 +106,13 @@ test("ningún parámetro de entrada exige un número estricto", () => {
 test("la comprobación anterior SÍ puede fallar", () => {
   // Una prueba que no puede fallar da confianza falsa. Esta es la prueba de
   // la prueba, con el patrón exacto que se está prohibiendo.
-  const falso = ["      inputSchema: z.object({", "        limite: z.number().int().min(1).default(5),", "      }),"];
-  let dentroDeEntrada = false;
-  const encontrados: string[] = [];
-  for (const linea of falso) {
-    if (linea.includes("inputSchema")) dentroDeEntrada = true;
-    if (linea.includes("outputSchema")) dentroDeEntrada = false;
-    if (dentroDeEntrada && /z\.number\(\)/.test(linea)) encontrados.push(linea.trim());
-  }
-  assert.equal(encontrados.length, 1, "el barrido tiene que ver un z.number() de entrada");
+  const falso = "      inputSchema: z.object({\n        limite: z.number().int().min(1).default(5),\n      }),";
+  assert.equal(numerosEstrictosDeEntrada(falso).length, 1, "el barrido tiene que ver un z.number() de entrada");
 });
 
 test("un z.number() de SALIDA no se marca como culpable", () => {
   // El otro lado. Un control que marca código correcto se termina ignorando
   // entero, y con él se pierden los hallazgos de verdad.
-  const bueno = ["      outputSchema: z.object({", "        total: z.number(),", "      }),"];
-  let dentroDeEntrada = false;
-  const encontrados: string[] = [];
-  for (const linea of bueno) {
-    if (linea.includes("inputSchema")) dentroDeEntrada = true;
-    if (linea.includes("outputSchema")) dentroDeEntrada = false;
-    if (dentroDeEntrada && /z\.number\(\)/.test(linea)) encontrados.push(linea.trim());
-  }
-  assert.deepEqual(encontrados, [], "un total de salida no es un parámetro de entrada");
+  const bueno = "      outputSchema: z.object({\n        total: z.number(),\n      }),";
+  assert.deepEqual(numerosEstrictosDeEntrada(bueno), [], "un total de salida no es un parámetro de entrada");
 });

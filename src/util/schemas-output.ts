@@ -90,6 +90,9 @@ export const fondosSchema = (campo: string) =>
       // Llevan la unidad de las cifras y el significado de los códigos, así
       // que el contrato las declara en vez de dejarlas pasar por passthrough.
       notas: z.array(z.string()).optional(),
+      // Filas de agregado de la planilla, fuera de las de datos para que
+      // nadie las sume junto a las series.
+      totales: z.array(rec()).optional(),
       [campo]: z.array(rec()).optional(),
     })
     .passthrough();

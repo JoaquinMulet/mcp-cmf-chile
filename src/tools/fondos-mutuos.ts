@@ -3,7 +3,7 @@ import * as z from "zod/v4";
 import { fondosSchema, comisionesMaximasSchema } from "../util/schemas-output.js";
 import { postLegacy, postLegacyConCookies, getLegacyBinario, postLegacyBinario, type CmfEnv } from "../client/cmf-client.js";
 import { pedirCaptchaCMF, obtenerCaptcha, ultimoCaptcha, consumirCaptcha } from "../captcha.js";
-import { xlsAJson, txtCsvAJson, htmlTablaAJson, separarNotas } from "../client/parsers.js";
+import { xlsAJson, txtCsvAJson, htmlTablaAJson, separarNotas, separarTotales } from "../client/parsers.js";
 import { fromError, toolError, toolErrorFuente, toolOk, resumirTabla } from "../util/errors.js";
 import { paginar } from "../util/paginate.js";
 import { avisoDeTramo, paginacion, toolOkTabla } from "../util/tramos.js";
@@ -66,6 +66,28 @@ export function filtrarCatalogo<T extends Record<string, unknown>>(
     salida = salida.filter((f) => String(f.tipo_de_fondo_mutuo ?? "").trim() === t);
   }
   return salida;
+}
+
+/**
+ * Le pone nombre a la primera columna cuando la planilla la dejó sin cabecera.
+ *
+ * El Excel del boletín no nombra su primera columna, así que `xlsAJson` la
+ * llama `col_0`, que es lo fiel. Pero es la columna que identifica la fila, y
+ * un agente que lee `col_0` no tiene cómo saber qué hay ahí.
+ *
+ * Solo se usa donde está medido qué contiene esa columna. En el boletín de
+ * una administradora trae el nombre del fondo y en el del sistema completo
+ * trae el tipo agregado, «FM Tipo 1», así que el nombre elegido es `Nombre`
+ * y no `Nombre Fondo`, que sería falso en el segundo caso.
+ *
+ * Si la planilla ya trae cabecera, la fila se devuelve intacta.
+ */
+export function nombrarPrimeraColumna<T extends Record<string, unknown>>(filas: T[], nombre: string): T[] {
+  return filas.map((fila) => {
+    if (!("col_0" in fila)) return fila;
+    const { col_0, ...resto } = fila;
+    return { [nombre]: col_0, ...resto } as unknown as T;
+  });
 }
 
 /** Descarga y parsea el catálogo completo de FM (fm_ident2) con caché en KV (24h) cuando está disponible. */
@@ -235,7 +257,8 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
           { out: "excel", lang: "es", consulta: consulta ?? "fondos", admins: "0", tipofondo: "0", moneda: "0", mes: mes ?? "12", anio, tipoinversion: tipo === "nacio" ? "naci" : "inter", ...(tipo === "nacio" ? { eminaci: "0" } : { eminter: "0" }) },
           env,
         );
-        const { datos: filas, notas } = separarNotas(xlsAJson(res));
+        const { datos, notas } = separarNotas(xlsAJson(res));
+        const { datos: filas, totales } = separarTotales(datos);
         if (filas.length === 0) {
           return toolErrorFuente(
             `Inversiones ${tipo} de fondos mutuos ${anio}-${mes ?? "12"}`,
@@ -249,6 +272,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
           campo: "filas",
           filas,
           notas,
+          totales,
           offset,
           limit,
           tool: "cmf_fondos_mutuos_inversiones",
@@ -281,7 +305,9 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
           { out: "excel", admins: admin ?? "0", tipofondo: "0", moneda: "0", mes_peri: mes ?? "12", anio_peri: anio },
           env,
         );
-        const { datos: filas, notas } = separarNotas(xlsAJson(res));
+        const { datos, notas } = separarNotas(xlsAJson(res));
+        const { datos: series, totales } = separarTotales(datos);
+        const filas = nombrarPrimeraColumna(series, "Nombre");
         return toolOkTabla({
           titulo: `BPR FM ${anio}-${mes ?? "12"}`,
           vacio: `Sin BPR para ${anio}-${mes}.`,
@@ -289,13 +315,15 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
           campo: "filas",
           filas,
           notas,
+          totales: nombrarPrimeraColumna(totales, "Nombre"),
           offset,
           limit,
           tool: "cmf_fondos_mutuos_bpr",
           // Los nombres salen de la planilla real de la CMF, no de cómo se
-          // leen en pantalla. `col_0` es el nombre del fondo, `Patrimonio (1)`
-          // lleva su llamada al pie, y `Participes` viene sin tilde.
-          columnas: ["col_0", "RUN", "Serie de fondo", "Patrimonio (1)", "Valor cuota", "Participes", "Rentabilidad nominal mensual"],
+          // leen en pantalla. `Patrimonio (1)` lleva su llamada al pie y
+          // `Participes` viene sin tilde. `Nombre` es la primera columna, que
+          // la planilla deja sin cabecera.
+          columnas: ["Nombre", "RUN", "Serie de fondo", "Patrimonio (1)", "Valor cuota", "Participes", "Rentabilidad nominal mensual"],
           unidad: "series",
         });
       } catch (e) {

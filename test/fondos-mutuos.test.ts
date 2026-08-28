@@ -23,8 +23,8 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sinRepetidas, filtrarCatalogo } from "../src/tools/fondos-mutuos.js";
-import { separarNotas } from "../src/client/parsers.js";
+import { sinRepetidas, filtrarCatalogo, nombrarPrimeraColumna } from "../src/tools/fondos-mutuos.js";
+import { separarNotas, separarTotales } from "../src/client/parsers.js";
 
 /** Fila real de la descarga del 28 de agosto de 2026. Tipo 6. */
 const DIVERSIFICACION = {
@@ -160,4 +160,90 @@ test("sin notas al pie la lista de datos queda intacta", () => {
   const { datos, notas } = separarNotas([SERIE, SERIE]);
   assert.equal(datos.length, 2);
   assert.deepEqual(notas, []);
+});
+
+/**
+ * Las filas de agregado NO son fondos.
+ *
+ * El boletín termina con «Total consulta» y «Total Sistema», que son sumas
+ * de las filas anteriores y vienen mezcladas con ellas. Quien promedia
+ * rentabilidades o cuenta fondos sobre esa lista se contamina, y no tiene
+ * cómo notarlo. Lo tapaba el corte en 50 filas, porque los totales van al
+ * final y casi nadie llegaba.
+ *
+ * Medido el 28 de agosto de 2026 contra el servidor desplegado.
+ *   boletín de una administradora  192 filas, 2 son total
+ *   boletín del sistema completo     9 filas, 1 es total
+ *   inversiones del sistema          9 filas, 1 es total
+ *   costos, comisiones, antecedentes  ninguna
+ *
+ * El criterio es que la PRIMERA columna empiece con «Total». Se midió el
+ * riesgo del lado opuesto antes de elegirlo. de los 1350 fondos del
+ * catálogo, 0 tienen un nombre que empiece con esa palabra, aunque varios
+ * la lleven adentro, como «FONDO MUTUO EUROAMERICA RETORNO TOTAL».
+ */
+const TOTAL_CONSULTA = { col_0: "Total consulta", RUN: "-", "Patrimonio (1)": "1,234.00" };
+const TOTAL_SISTEMA = { col_0: "Total Sistema", RUN: "-", "Patrimonio (1)": "89,033,781.94" };
+
+test("las filas de total salen aparte de las series", () => {
+  const { datos, totales } = separarTotales([SERIE, TOTAL_CONSULTA, TOTAL_SISTEMA]);
+  assert.equal(datos.length, 1, "una sola serie de verdad");
+  assert.equal(datos[0].RUN, "8253-8");
+  assert.equal(totales.length, 2);
+  assert.deepEqual(totales.map((t) => t.col_0), ["Total consulta", "Total Sistema"]);
+});
+
+test("un fondo con Total en el nombre NO se confunde con un agregado", () => {
+  // El riesgo del lado opuesto, y es el que duele. Perder un fondo real no
+  // se ve, porque el total baja sin decir por qué.
+  const retornoTotal = { col_0: "EUROAMERICA RETORNO TOTAL", RUN: "8123-4", "Patrimonio (1)": "500.00" };
+  const { datos, totales } = separarTotales([retornoTotal]);
+  assert.equal(datos.length, 1, "la palabra va adentro del nombre, no al principio");
+  assert.deepEqual(totales, []);
+});
+
+test("sin filas de total la lista queda intacta", () => {
+  const { datos, totales } = separarTotales([SERIE, SERIE]);
+  assert.equal(datos.length, 2);
+  assert.deepEqual(totales, []);
+});
+
+test("una planilla sin ninguna fila no rompe la separación", () => {
+  const { datos, totales } = separarTotales([]);
+  assert.deepEqual(datos, []);
+  assert.deepEqual(totales, []);
+});
+
+/**
+ * La columna más importante del boletín llegaba sin nombre.
+ *
+ * El Excel de la CMF no le pone cabecera a su primera columna, así que
+ * `xlsAJson` la nombra `col_0`, que es lo fiel. Pero es la columna del
+ * nombre del fondo, o sea la que identifica cada fila, y un agente que lee
+ * `col_0` no tiene cómo saber qué hay ahí.
+ *
+ * Se renombra solo en el boletín, donde está medido qué contiene. En el
+ * boletín de una administradora trae el nombre del fondo, y en el del
+ * sistema completo trae el tipo agregado, «FM Tipo 1». Por eso el nombre
+ * elegido es `Nombre` y no `Nombre Fondo`, que sería falso en el segundo.
+ */
+test("la primera columna del boletín deja de llamarse col_0", () => {
+  const [fila] = nombrarPrimeraColumna([SERIE], "Nombre");
+  assert.equal(fila.Nombre, "SECURITY PLUS");
+  assert.ok(!("col_0" in fila), "el nombre viejo no sobrevive al lado del nuevo");
+});
+
+test("el renombre respeta el orden y no toca el resto de las columnas", () => {
+  const [fila] = nombrarPrimeraColumna([SERIE], "Nombre");
+  assert.equal(Object.keys(fila)[0], "Nombre", "sigue siendo la primera");
+  assert.equal(fila.RUN, "8253-8");
+  assert.equal(fila["Patrimonio (1)"], "121,651.67");
+  assert.equal(Object.keys(fila).length, Object.keys(SERIE).length, "ni una columna de más ni de menos");
+});
+
+test("una fila que ya trae cabecera de verdad no se toca", () => {
+  // Si algún día la CMF le pone nombre a esa columna, el renombre tiene que
+  // dejarla en paz en vez de pisar el nombre bueno.
+  const conCabecera = { "Nombre Fondo": "SECURITY PLUS", RUN: "8253-8" };
+  assert.deepEqual(nombrarPrimeraColumna([conCabecera], "Nombre")[0], conCabecera);
 });

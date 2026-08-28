@@ -204,6 +204,39 @@ export function separarNotas<T extends Record<string, unknown>>(filas: T[]): { d
   return { datos, notas };
 }
 
+/**
+ * Separa las filas de AGREGADO de las filas de datos.
+ *
+ * El boletín de fondos mutuos termina con «Total consulta» y «Total
+ * Sistema», que son sumas de las filas anteriores y vienen mezcladas con
+ * ellas. Quien promedia rentabilidades o cuenta fondos sobre esa lista se
+ * contamina y no tiene cómo notarlo. Lo tapaba el corte por defecto en 50
+ * filas, porque los totales van al final y casi nadie llegaba.
+ *
+ * Medido el 28 de agosto de 2026 contra el servidor desplegado. el boletín
+ * de una administradora trae 2, el del sistema completo trae 1, las
+ * inversiones traen 1, y costos, comisiones y antecedentes no traen ninguna.
+ *
+ * El criterio es que la PRIMERA columna empiece con «Total». Se midió el
+ * riesgo del lado opuesto antes de elegirlo. de los 1350 fondos del
+ * catálogo, 0 tienen un nombre que empiece con esa palabra, aunque varios la
+ * lleven adentro, como «FONDO MUTUO EUROAMERICA RETORNO TOTAL».
+ *
+ * No se mira el campo `RUN`, que en estas filas viene con un guion, porque
+ * la planilla de inversiones no tiene esa columna y la de fondos del sistema
+ * la trae con guion en TODAS sus filas, que sí son datos.
+ */
+export function separarTotales<T extends Record<string, unknown>>(filas: T[]): { datos: T[]; totales: T[] } {
+  const datos: T[] = [];
+  const totales: T[] = [];
+  for (const fila of filas) {
+    const primera = String(Object.values(fila)[0] ?? "").trim();
+    if (/^total\b/i.test(primera)) totales.push(fila);
+    else datos.push(fila);
+  }
+  return { datos, totales };
+}
+
 /** Normaliza una clave de columna a snake_case (quita tildes, espacios y caracteres especiales). */
 function normalizarClave(h: string): string {
   return fixMojibake(h)

@@ -25,7 +25,6 @@
  *    `structuredContent` Y escribe el aviso de continuación en el TEXTO,
  *    que es lo único que un modelo ve.
  */
-import * as z from "zod/v4";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { resumirTabla, toolOk } from "./errors.js";
 import { enteroSchema } from "./schemas.js";
@@ -81,6 +80,30 @@ export function toolOkPaginado(
     next_offset: paginado.next_offset,
     [campo]: tramo,
   });
+}
+
+/** Un campo del structuredContent que solo existe cuando tiene algo que decir. */
+function soloSiHay<T>(nombre: string, valor: T[] | undefined): Record<string, T[]> {
+  return valor && valor.length > 0 ? { [nombre]: valor } : {};
+}
+
+/**
+ * Lo que va DESPUES de la tabla y del aviso de tramo.
+ *
+ * Los agregados y las notas pertenecen a la consulta entera y no al tramo,
+ * asi que se repiten en todas las paginas. Quien pide el tramo 3 necesita
+ * saber que el patrimonio va en millones tanto como quien pidio el tramo 1.
+ */
+function pieDeTabla(
+  notas: string[] | undefined,
+  totales: Record<string, unknown>[] | undefined,
+  unidad: string,
+): string {
+  const agregados = totales?.length
+    ? `\n\nFilas de agregado de la planilla, NO son ${unidad} y no entran en el total de arriba:\n${resumirTabla(totales, Object.keys(totales[0] ?? {}))}`
+    : "";
+  const alPie = notas?.length ? `\n\nNotas de la planilla de la CMF:\n${notas.join("\n")}` : "";
+  return agregados + alPie;
 }
 
 /**
@@ -140,15 +163,23 @@ export function toolOkTabla(opciones: {
    * pidió el tramo 1.
    */
   notas?: string[];
+  /**
+   * Filas de AGREGADO, ya separadas de las de datos con `separarTotales`.
+   * Van aparte porque sumarlas junto a las series contamina cualquier
+   * conteo o promedio, y se muestran igual porque «Total Sistema» es el dato
+   * con el que se compara un fondo contra el mercado. No se paginan. son 1 o
+   * 2 filas y pertenecen a la consulta entera, no a este tramo.
+   */
+  totales?: Record<string, unknown>[];
 }): CallToolResult {
-  const { titulo, vacio, base, campo, filas, offset, limit, tool, columnas, unidad, notas } = opciones;
-  const conNotas = notas && notas.length > 0 ? { ...base, notas } : base;
+  const { titulo, vacio, base, campo, filas, offset, limit, tool, columnas, unidad, notas, totales } = opciones;
+  const conNotas = { ...base, ...soloSiHay("notas", notas), ...soloSiHay("totales", totales) };
   if (filas.length === 0) {
     return toolOkPaginado(vacio, conNotas, campo, filas, offset, limit, tool);
   }
   const { filas: tramo, paginado } = paginar(filas, offset, limit);
   const cols = columnas ?? Object.keys(tramo[0] ?? filas[0] ?? {});
-  const pie = notas && notas.length > 0 ? `\n\nNotas de la planilla de la CMF:\n${notas.join("\n")}` : "";
+  const pie = pieDeTabla(notas, totales, unidad ?? "filas");
   const texto =
     `${titulo} (${filas.length} ${unidad ?? "filas"}):\n`
     + resumirTabla(tramo as Record<string, unknown>[], cols);
