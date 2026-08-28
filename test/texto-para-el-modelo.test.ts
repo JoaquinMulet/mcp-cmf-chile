@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { resumirTabla, paginarTexto } from "../src/util/errors.js";
+import { toolOkTabla } from "../src/util/tramos.js";
 
 const FILA_CON_URL = {
   codigo: "POL120260128",
@@ -184,3 +185,48 @@ test("una columna vacía DE VERDAD se sigue mostrando", () => {
  * `test/verify-endpoints.ts`, que llama cada tool contra la CMF. Ahí la
  * comprobación compara la lista pedida contra las claves que llegaron.
  */
+
+/**
+ * Las notas al pie de la planilla tienen que LLEGAR al modelo.
+ *
+ * Separarlas de las filas de datos arregla el total y la suma de montos,
+ * pero botarlas sería peor que el defecto original. Esas notas llevan la
+ * unidad de las cifras y el significado de los códigos, o sea lo único que
+ * permite leer la tabla sin equivocarse por un factor de un millón. Y como
+ * el modelo solo ve el texto, publicarlas nada más en el
+ * `structuredContent` es lo mismo que botarlas.
+ */
+test("las notas al pie de la planilla llegan al texto, no solo al JSON", () => {
+  const r = toolOkTabla({
+    titulo: "BPR FM 2025-12",
+    vacio: "sin datos",
+    base: {},
+    campo: "filas",
+    filas: [{ fondo: "SECURITY PLUS", patrimonio: "121,651.67" }],
+    notas: ["(1) Cifras en millones de pesos", "5: FM DE INVERSION EN INSTRUMENTOS DE CAPITALIZACION,"],
+    offset: 0,
+    limit: 10,
+    tool: "cmf_fondos_mutuos_bpr",
+  });
+  const texto = r.content[0].type === "text" ? r.content[0].text : "";
+  assert.match(texto, /Cifras en millones de pesos/, "la unidad tiene que verse");
+  assert.match(texto, /INSTRUMENTOS DE CAPITALIZACION/, "y el significado del código también");
+  const sc = r.structuredContent as Record<string, unknown>;
+  assert.equal(sc.total, 1, "el total cuenta solo las filas de datos");
+  assert.equal((sc.notas as string[]).length, 2, "y las notas viajan aparte en el JSON");
+});
+
+test("sin notas no se inventa una sección de notas", () => {
+  const r = toolOkTabla({
+    titulo: "BPR FM 2025-12",
+    vacio: "sin datos",
+    base: {},
+    campo: "filas",
+    filas: [{ fondo: "SECURITY PLUS" }],
+    offset: 0,
+    limit: 10,
+    tool: "cmf_fondos_mutuos_bpr",
+  });
+  const texto = r.content[0].type === "text" ? r.content[0].text : "";
+  assert.ok(!/Notas de la planilla/.test(texto), "sin notas el texto no cambia");
+});

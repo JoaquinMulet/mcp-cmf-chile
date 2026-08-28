@@ -227,6 +227,65 @@ description: Procedimiento para consultar datos públicos de la CMF de Chile (em
     },
   );
 
+  /**
+   * Tipos de fondo mutuo y unidad de las cifras.
+   *
+   * Los 8 nombres están copiados textuales del pie de la planilla del
+   * Boletín de Patrimonio y Rentabilidad de diciembre de 2025. Hasta el 28
+   * de agosto de 2026 ese diccionario solo existía ahí, revuelto con las
+   * filas de datos, así que un agente leía el tipo como un número sin
+   * significado. Es la pregunta más común que se le hace a este servidor,
+   * porque separa la renta fija corta de las acciones.
+   *
+   * La unidad NO es la misma en todos los informes: el boletín viene en
+   * millones y las inversiones en miles. Por eso acá no hay un enunciado
+   * global, y la unidad exacta de cada respuesta viaja en su campo `notas`.
+   */
+  server.registerResource(
+    "fondos-mutuos-tipos",
+    "cmf://fondos-mutuos/tipos",
+    {
+      title: "Tipos de fondo mutuo y unidad de las cifras (CMF)",
+      description:
+        "Significado de los 8 códigos de tipo de fondo mutuo de la CMF y en qué unidad vienen las cifras de cada informe. Use estos códigos en el parámetro tipo de cmf_fondos_mutuos_catalogo y en tipo_fondo de cmf_fondos_mutuos_comisiones.",
+      mimeType: "application/json",
+    },
+    async (uri: URL) => ({
+      contents: [
+        {
+          uri: uri.href,
+          text: JSON.stringify(
+            {
+              nota: "Nombres copiados textuales del pie de la planilla del Boletín de Patrimonio y Rentabilidad de la CMF. Como filtro, 0 significa todos los tipos y no es un tipo de fondo.",
+              tipos: [
+                { codigo: "1", nombre: "FM DE INV.EN INST.DE DEUDA DE C/P CON DURACION <= 90 DIAS" },
+                { codigo: "2", nombre: "FM DE INV.EN INST.DE DEUDA DE C/P CON DURACION <= 365 DIAS" },
+                { codigo: "3", nombre: "FM DE INV.EN INST.DE DEUDA DE MEDIANO Y LARGO PLAZO" },
+                { codigo: "4", nombre: "FM MIXTO" },
+                { codigo: "5", nombre: "FM DE INVERSION EN INSTRUMENTOS DE CAPITALIZACION" },
+                { codigo: "6", nombre: "FM DE LIBRE INVERSION" },
+                { codigo: "7", nombre: "FM ESTRUCTURADO" },
+                { codigo: "8", nombre: "FM DIRIGIDO A INVERSIONISTAS CALIFICADOS" },
+              ],
+              unidades: {
+                advertencia:
+                  "La unidad cambia según el informe, así que no hay una sola. Leer un patrimonio en millones como si fueran pesos se equivoca por un factor de un millón y nada avisa.",
+                cmf_fondos_mutuos_bpr:
+                  "Millones de pesos, o de la moneda que corresponda al fondo. Los fondos que llevan contabilidad en moneda extranjera se convierten al tipo de cambio de la fecha de la estadística.",
+                cmf_fondos_mutuos_inversiones: "Miles de pesos.",
+                donde_confirmarla:
+                  "El pie exacto de cada planilla viaja en el campo notas de la respuesta de esa tool, y también en su texto. Esa es la fuente, y esta ficha es solo la guía.",
+              },
+            },
+            null,
+            2,
+          ),
+          mimeType: "application/json",
+        },
+      ],
+    }),
+  );
+
   // Códigos SBIF de instituciones financieras (verificados contra la API oficial v3 de la CMF)
   server.registerResource(
     "bancos-codigos",

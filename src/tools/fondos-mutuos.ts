@@ -3,7 +3,7 @@ import * as z from "zod/v4";
 import { fondosSchema, comisionesMaximasSchema } from "../util/schemas-output.js";
 import { postLegacy, postLegacyConCookies, getLegacyBinario, postLegacyBinario, type CmfEnv } from "../client/cmf-client.js";
 import { pedirCaptchaCMF, obtenerCaptcha, ultimoCaptcha, consumirCaptcha } from "../captcha.js";
-import { xlsAJson, txtCsvAJson, htmlTablaAJson } from "../client/parsers.js";
+import { xlsAJson, txtCsvAJson, htmlTablaAJson, separarNotas } from "../client/parsers.js";
 import { fromError, toolError, toolErrorFuente, toolOk, resumirTabla } from "../util/errors.js";
 import { paginar } from "../util/paginate.js";
 import { avisoDeTramo, paginacion, toolOkTabla } from "../util/tramos.js";
@@ -99,7 +99,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
       annotations: { readOnlyHint: true, destructiveHint: false },
       title: "Catálogo de Fondos Mutuos",
       description:
-        "Devuelve el catálogo completo de fondos mutuos de la CMF (RUT administradora, RUN fondo, nombre, tipo de fondo, moneda, fechas de inicio/término), filtrable por nombre y tipo y paginado con offset/limit. Use esta tool para encontrar el RUN de un fondo antes de consultar su cartola (cmf_fondos_mutuos_cartola) o su cartera (cmf_fondos_mutuos_cartera). Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Devuelve el catálogo completo de fondos mutuos de la CMF (RUT administradora, RUN fondo, nombre, tipo de fondo, moneda, fechas de inicio/término), filtrable por nombre y tipo y paginado con offset/limit. Use esta tool para encontrar el RUN de un fondo antes de consultar su cartola (cmf_fondos_mutuos_cartola) o su cartera (cmf_fondos_mutuos_cartera). Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset. El significado de los codigos de tipo de fondo esta en el recurso cmf://fondos-mutuos/tipos.",
       inputSchema: z.object({
         nombre: z.string().optional().describe("Filtro por nombre del fondo (parcial)"),
         tipo: z.string().optional().describe("Filtro por tipo de fondo: compara el CÓDIGO numérico (0-8), no el nombre"),
@@ -173,7 +173,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
       outputSchema: fondosSchema("filas"),
       title: "Comisiones y remuneraciones de FM",
       description:
-        "Descarga la estructura de comisiones de fondos mutuos de la CMF: comisión de colocación, remuneración de administración y gastos de operación por fondo/serie. Filtre por anio en AAAA, mes en MM (default 12), admin (RUT de administradora, 0=todas), tipo_fondo (0-8, 0=todos) y moneda (0=todas, $$, PROM o EUR). Use esta tool para comparar cobros entre fondos; para el costo total anual (TAC) use cmf_fondos_mutuos_costos. La respuesta trae total y next_offset; sube limit, que no tiene máximo, para traer todas las filas de una vez.",
+        "Descarga la estructura de comisiones de fondos mutuos de la CMF: comisión de colocación, remuneración de administración y gastos de operación por fondo/serie. Filtre por anio en AAAA, mes en MM (default 12), admin (RUT de administradora, 0=todas), tipo_fondo (0-8, 0=todos) y moneda (0=todas, $$, PROM o EUR). Use esta tool para comparar cobros entre fondos; para el costo total anual (TAC) use cmf_fondos_mutuos_costos. La respuesta trae total y next_offset; sube limit, que no tiene máximo, para traer todas las filas de una vez. El significado de los codigos de tipo de fondo esta en el recurso cmf://fondos-mutuos/tipos.",
       inputSchema: z.object({
         anio: anioSchema,
         mes: mesSchema.optional(),
@@ -190,13 +190,14 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
           { out: "excel", admins: admin ?? "0", tipofondo: tipo_fondo ?? "0", moneda: moneda ?? "0", mes: mes ?? "12", anio },
           env,
         );
-        const filas = xlsAJson(res);
+        const { datos: filas, notas } = separarNotas(xlsAJson(res));
         return toolOkTabla({
           titulo: `Comisiones FM ${anio}-${mes ?? "12"}`,
           vacio: `Sin comisiones para ${anio}-${mes}.`,
           base: { anio, mes },
           campo: "filas",
           filas,
+          notas,
           offset,
           limit,
           tool: "cmf_fondos_mutuos_comisiones",
@@ -214,7 +215,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
       outputSchema: fondosSchema("filas"),
       title: "Inversiones de Fondos Mutuos",
       description:
-        "Descarga las inversiones de fondos mutuos de la CMF por período, en instrumentos nacionales o extranjeros, agregadas según el nivel pedido. Requiere anio en AAAA, tipo (nacio=nacionales, inter=extranjeros; default nacio) y consulta (fondos, default; emisores o pais_transaccion); mes en MM opcional (default 12). Use esta tool para agregados de inversión; para el detalle de la cartera por fondo use cmf_fondos_mutuos_cartera. La respuesta trae total y next_offset; sube limit, que no tiene máximo, para traer todas las filas de una vez.",
+        "Descarga las inversiones de fondos mutuos de la CMF por período, en instrumentos nacionales o extranjeros, agregadas según el nivel pedido. Requiere anio en AAAA, tipo (nacio=nacionales, inter=extranjeros; default nacio) y consulta (fondos, default; emisores o pais_transaccion); mes en MM opcional (default 12). Use esta tool para agregados de inversión; para el detalle de la cartera por fondo use cmf_fondos_mutuos_cartera. La respuesta trae total y next_offset; sube limit, que no tiene máximo, para traer todas las filas de una vez. El significado de los codigos de tipo de fondo esta en el recurso cmf://fondos-mutuos/tipos. Las cifras NO vienen en pesos: la unidad esta en el recurso cmf://fondos-mutuos/tipos y el pie exacto de la planilla viaja en el campo notas de la respuesta.",
       inputSchema: z.object({
         anio: anioSchema,
         mes: mesSchema.optional(),
@@ -234,7 +235,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
           { out: "excel", lang: "es", consulta: consulta ?? "fondos", admins: "0", tipofondo: "0", moneda: "0", mes: mes ?? "12", anio, tipoinversion: tipo === "nacio" ? "naci" : "inter", ...(tipo === "nacio" ? { eminaci: "0" } : { eminter: "0" }) },
           env,
         );
-        const filas = xlsAJson(res);
+        const { datos: filas, notas } = separarNotas(xlsAJson(res));
         if (filas.length === 0) {
           return toolErrorFuente(
             `Inversiones ${tipo} de fondos mutuos ${anio}-${mes ?? "12"}`,
@@ -247,6 +248,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
           base: { anio, mes, tipo },
           campo: "filas",
           filas,
+          notas,
           offset,
           limit,
           tool: "cmf_fondos_mutuos_inversiones",
@@ -264,7 +266,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
       outputSchema: fondosSchema("filas"),
       title: "Patrimonio, rentabilidad y partícipes de FM",
       description:
-        "Descarga el Boletín de Patrimonio y Rentabilidad (BPR) de fondos mutuos de la CMF: patrimonio, variación, rentabilidad nominal mensual, número de partícipes y valor cuota por serie. Filtre por anio en AAAA, mes en MM (default 12) y admin (RUT de administradora; omitir = todas). Use esta tool para datos por serie; para el agregado del sistema use cmf_fondos_mutuos_antecedentes. La respuesta trae total y next_offset; sube limit, que no tiene máximo, para traer todas las filas de una vez.",
+        "Descarga el Boletín de Patrimonio y Rentabilidad (BPR) de fondos mutuos de la CMF: patrimonio, variación, rentabilidad nominal mensual, número de partícipes y valor cuota por serie. Filtre por anio en AAAA, mes en MM (default 12) y admin (RUT de administradora; omitir = todas). Use esta tool para datos por serie; para el agregado del sistema use cmf_fondos_mutuos_antecedentes. La respuesta trae total y next_offset; sube limit, que no tiene máximo, para traer todas las filas de una vez. El significado de los codigos de tipo de fondo esta en el recurso cmf://fondos-mutuos/tipos. Las cifras NO vienen en pesos: la unidad esta en el recurso cmf://fondos-mutuos/tipos y el pie exacto de la planilla viaja en el campo notas de la respuesta.",
       inputSchema: z.object({
         anio: anioSchema,
         mes: mesSchema.optional(),
@@ -279,13 +281,14 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
           { out: "excel", admins: admin ?? "0", tipofondo: "0", moneda: "0", mes_peri: mes ?? "12", anio_peri: anio },
           env,
         );
-        const filas = xlsAJson(res);
+        const { datos: filas, notas } = separarNotas(xlsAJson(res));
         return toolOkTabla({
           titulo: `BPR FM ${anio}-${mes ?? "12"}`,
           vacio: `Sin BPR para ${anio}-${mes}.`,
           base: { anio, mes },
           campo: "filas",
           filas,
+          notas,
           offset,
           limit,
           tool: "cmf_fondos_mutuos_bpr",
@@ -324,13 +327,14 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
           env,
           { lang: "es" },
         );
-        const filas = xlsAJson(res);
+        const { datos: filas, notas } = separarNotas(xlsAJson(res));
         return toolOkTabla({
           titulo: `Costos FM ${anio}-${mes ?? "12"}`,
           vacio: `Sin costos para ${anio}-${mes}.`,
           base: { anio, mes },
           campo: "filas",
           filas,
+          notas,
           offset,
           limit,
           tool: "cmf_fondos_mutuos_costos",
@@ -358,13 +362,14 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
           { out: "excel", lang: "es", filtertipofondo: "0", filtermoneda: "0", moneda: "0", mes: anio ? "12" : "12", anio: anio ?? "2025" },
           env,
         );
-        const filas = xlsAJson(res);
+        const { datos: filas, notas } = separarNotas(xlsAJson(res));
         return toolOkTabla({
           titulo: `Antecedentes generales FM`,
           vacio: "Sin antecedentes.",
           base: {},
           campo: "filas",
           filas,
+          notas,
           offset,
           limit,
           tool: "cmf_fondos_mutuos_antecedentes",

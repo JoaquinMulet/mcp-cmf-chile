@@ -86,6 +86,10 @@ export const fondosSchema = (campo: string) =>
       anio: z.string().optional(),
       mes: z.string().optional(),
       total: z.number().optional(),
+      // Las llamadas al pie de la planilla, separadas de las filas de datos.
+      // Llevan la unidad de las cifras y el significado de los códigos, así
+      // que el contrato las declara en vez de dejarlas pasar por passthrough.
+      notas: z.array(z.string()).optional(),
       [campo]: z.array(rec()).optional(),
     })
     .passthrough();

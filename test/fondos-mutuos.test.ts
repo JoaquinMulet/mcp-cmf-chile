@@ -24,6 +24,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sinRepetidas, filtrarCatalogo } from "../src/tools/fondos-mutuos.js";
+import { separarNotas } from "../src/client/parsers.js";
 
 /** Fila real de la descarga del 28 de agosto de 2026. Tipo 6. */
 const DIVERSIFICACION = {
@@ -95,4 +96,68 @@ test("el filtro por nombre no distingue tildes ni mayúsculas", () => {
 test("sin filtros el catálogo sale entero", () => {
   const filas = [DIVERSIFICACION, GLOBAL_INVESTMENT];
   assert.equal(filtrarCatalogo(filas, {}).length, 2);
+});
+
+/**
+ * Las notas al pie de la planilla NO son fondos.
+ *
+ * Las 5 planillas de fondos mutuos de la CMF terminan con sus llamadas al
+ * pie, y `xlsAJson` las devuelve como filas más. Medido el 28 de agosto de
+ * 2026: el boletín de Security de diciembre de 2025 trae 206 filas, y 14
+ * son notas. Sin administradora trae 23 filas y 14 son notas, o sea más de
+ * la mitad. Las otras planillas igual. costos 8 notas, comisiones 14,
+ * antecedentes 2, inversiones 12.
+ *
+ * Hace 2 daños. El total miente sobre cuántas series hay, y quien suma la
+ * columna de patrimonio suma texto.
+ *
+ * El criterio sale del dato real, no de una corazonada. Una fila de datos
+ * del boletín trae 13 o 14 celdas con valor. Una nota trae exactamente 1,
+ * y siempre en `col_0`. La separación mira cuántas celdas tienen valor, no
+ * el texto de la fila, porque el texto de las notas cambia de planilla en
+ * planilla y de mes en mes.
+ */
+/** Fila real del boletín de diciembre de 2025. */
+const SERIE = {
+  col_0: "SECURITY PLUS",
+  RUN: "8253-8",
+  "Tipo de fondo (2)": "1",
+  Administradora: "ADMINISTRADORA GENERAL DE FONDOS SECURITY S.A.",
+  "Serie de fondo": "A",
+  Moneda: "PESOS",
+  "Patrimonio (1)": "121,651.67",
+  Participes: "7,877",
+  "Valor cuota": "2,213.30",
+};
+
+/** Notas reales del pie de esa misma planilla. */
+const NOTA_UNIDAD = { col_0: "(1) Cifras en millones de pesos o de la moneda que corresponda" };
+const NOTA_TIPO = { col_0: "5: FM DE INVERSION EN INSTRUMENTOS DE CAPITALIZACION," };
+
+test("las notas al pie no viajan como si fueran fondos", () => {
+  const { datos, notas } = separarNotas([SERIE, NOTA_UNIDAD, NOTA_TIPO]);
+  assert.equal(datos.length, 1, "una sola serie de verdad");
+  assert.equal(datos[0].RUN, "8253-8");
+  assert.deepEqual(notas, [NOTA_UNIDAD.col_0, NOTA_TIPO.col_0], "las notas salen aparte y con su texto");
+});
+
+test("una fila con 2 celdas con valor sigue siendo un dato", () => {
+  // El riesgo del lado opuesto. Separar de más borra fondos reales, y esa
+  // pérdida no se ve, porque el total baja sin decir por qué.
+  const casiVacia = { col_0: "FONDO CHICO", RUN: "9999-9", Moneda: "", Participes: "" };
+  const { datos, notas } = separarNotas([casiVacia]);
+  assert.equal(datos.length, 1, "2 celdas con valor bastan para ser un fondo");
+  assert.deepEqual(notas, []);
+});
+
+test("una fila entera vacía no es un dato ni una nota", () => {
+  const { datos, notas } = separarNotas([{ col_0: "", RUN: "" }, SERIE]);
+  assert.equal(datos.length, 1);
+  assert.deepEqual(notas, [], "una nota sin texto no es una nota");
+});
+
+test("sin notas al pie la lista de datos queda intacta", () => {
+  const { datos, notas } = separarNotas([SERIE, SERIE]);
+  assert.equal(datos.length, 2);
+  assert.deepEqual(notas, []);
 });

@@ -141,3 +141,48 @@ test("HTTP stateless: server/discover + tools/call via createMcpHandler", async 
   const texto = c.result?.content?.[0]?.text ?? "";
   assert.match(texto, /CL-CI/);
 });
+
+/**
+ * Los diccionarios del pie de las planillas de fondos mutuos.
+ *
+ * Antes vivían solo en la fila 266 de un Excel, mezclados con los datos.
+ * Un agente que leyera el tipo de fondo como número no tenía cómo saber
+ * que 1 es deuda de muy corto plazo y 5 es acciones, que es justo la
+ * pregunta más común que se le hace a este servidor. Y el patrimonio no
+ * viene en pesos, así que leerlo como pesos se equivoca por un factor de
+ * un millón sin que nada avise.
+ */
+test("el recurso de tipos de fondo mutuo trae los 8 códigos y la unidad", async () => {
+  const { client } = await clienteConectado();
+  const lista = await client.listResources();
+  const uris = lista.resources.map((r) => r.uri);
+  assert.ok(uris.includes("cmf://fondos-mutuos/tipos"), `falta el recurso, hay: ${uris.join(", ")}`);
+
+  const r = await client.readResource({ uri: "cmf://fondos-mutuos/tipos" });
+  const texto = r.contents?.[0]?.text ?? "";
+  const datos = JSON.parse(String(texto));
+  assert.equal(datos.tipos.length, 8, "los 8 códigos de la CMF, del 1 al 8");
+  assert.deepEqual(
+    datos.tipos.map((t: { codigo: string }) => t.codigo),
+    ["1", "2", "3", "4", "5", "6", "7", "8"],
+  );
+  assert.match(datos.tipos[4].nombre, /CAPITALIZACION/, "el 5 es el de instrumentos de capitalización");
+  // La unidad NO es la misma en todos los informes. El boletín viene en
+  // millones y las inversiones en miles, así que un único enunciado global
+  // sería falso para la mitad de las tools.
+  assert.match(JSON.stringify(datos.unidades), /millones/i);
+  assert.match(JSON.stringify(datos.unidades), /miles/i);
+  assert.match(JSON.stringify(datos), /notas/, "y tiene que decir dónde está la unidad exacta de cada respuesta");
+});
+
+test("las tools de fondos mutuos nombran el recurso de tipos", async () => {
+  // Un recurso que ninguna tool nombra es letra muerta: nadie lo va a
+  // encontrar en el momento en que lo necesita.
+  const { client } = await clienteConectado();
+  const tools = await client.listTools();
+  for (const nombre of ["cmf_fondos_mutuos_catalogo", "cmf_fondos_mutuos_bpr"]) {
+    const t = tools.tools.find((x) => x.name === nombre);
+    assert.ok(t, `falta la tool ${nombre}`);
+    assert.match(String(t.description), /cmf:\/\/fondos-mutuos\/tipos/, `${nombre} debe nombrar el recurso`);
+  }
+});

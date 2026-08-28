@@ -135,18 +135,28 @@ export function toolOkTabla(opciones: {
   columnas?: string[];
   /** Como se llaman las filas en el texto. Ej. "registros". */
   unidad?: string;
+  /**
+   * Llamadas al pie de la planilla, ya separadas de las filas de datos con
+   * `separarNotas`. Llevan la unidad de las cifras y el significado de los
+   * códigos, así que se repiten en TODAS las páginas: quien pide el tramo
+   * 3 necesita saber que el patrimonio va en millones tanto como quien
+   * pidió el tramo 1.
+   */
+  notas?: string[];
 }): CallToolResult {
-  const { titulo, vacio, base, campo, filas, offset, limit, tool, columnas, unidad } = opciones;
+  const { titulo, vacio, base, campo, filas, offset, limit, tool, columnas, unidad, notas } = opciones;
+  const conNotas = notas && notas.length > 0 ? { ...base, notas } : base;
   if (filas.length === 0) {
-    return toolOkPaginado(vacio, base, campo, filas, offset, limit, tool);
+    return toolOkPaginado(vacio, conNotas, campo, filas, offset, limit, tool);
   }
   const { filas: tramo, paginado } = paginar(filas, offset, limit);
   const cols = columnas ?? Object.keys(tramo[0] ?? filas[0] ?? {});
+  const pie = notas && notas.length > 0 ? `\n\nNotas de la planilla de la CMF:\n${notas.join("\n")}` : "";
   const texto =
     `${titulo} (${filas.length} ${unidad ?? "filas"}):\n`
     + resumirTabla(tramo as Record<string, unknown>[], cols);
-  return toolOk(texto + avisoDeTramo(tramo.length, paginado, tool), {
-    ...base,
+  return toolOk(texto + avisoDeTramo(tramo.length, paginado, tool) + pie, {
+    ...conNotas,
     total: paginado.total,
     next_offset: paginado.next_offset,
     [campo]: tramo,

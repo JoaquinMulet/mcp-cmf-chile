@@ -138,6 +138,44 @@ export function txtCsvAJson(texto: string, sep = ";"): Record<string, string>[] 
   return out;
 }
 
+/**
+ * Separa las llamadas al pie de una planilla de la CMF de sus filas de datos.
+ *
+ * Las planillas de la CMF terminan con sus notas, y el parser las devuelve
+ * como filas más, con la misma forma que un dato. Medido el 28 de agosto de
+ * 2026 en las 5 planillas de fondos mutuos: el boletín de una
+ * administradora trae 206 filas y 14 son notas, y el del sistema completo
+ * trae 23 filas de las que 14 son notas. Costos 8, comisiones 14,
+ * antecedentes 2, inversiones 12.
+ *
+ * Hace 2 daños silenciosos. El total miente sobre cuántos registros hay, y
+ * quien suma una columna de montos suma texto.
+ *
+ * El criterio sale del dato real. Una fila de datos del boletín trae 13 o
+ * 14 celdas con valor y una nota trae exactamente 1. Se cuenta cuántas
+ * celdas tienen valor, y NO se mira el texto, porque el texto de las notas
+ * cambia de planilla en planilla y de mes en mes.
+ *
+ * Las notas no se botan. Llevan la unidad de las cifras y el significado de
+ * los códigos, que es justo lo que el modelo necesita para leer la tabla.
+ */
+export function separarNotas<T extends Record<string, unknown>>(filas: T[]): { datos: T[]; notas: string[] } {
+  const datos: T[] = [];
+  const notas: string[] = [];
+  for (const fila of filas) {
+    const conValor = Object.values(fila)
+      .map((v) => String(v ?? "").trim())
+      .filter((v) => v !== "");
+    if (conValor.length > 1) {
+      datos.push(fila);
+      continue;
+    }
+    // Una fila entera vacía no es una nota: no tiene nada que decir.
+    if (conValor.length === 1) notas.push(conValor[0]);
+  }
+  return { datos, notas };
+}
+
 /** Normaliza una clave de columna a snake_case (quita tildes, espacios y caracteres especiales). */
 function normalizarClave(h: string): string {
   return fixMojibake(h)
