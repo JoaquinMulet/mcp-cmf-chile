@@ -137,6 +137,31 @@ function validarExpect(sc: Record<string, unknown> | undefined, expect: ToolDef[
   return problemas;
 }
 
+/**
+ * Columnas que llegan al modelo vacías en TODAS las filas de la página.
+ *
+ * Es el instrumento vivo de una clase de defecto que ninguna comprobación
+ * sobre el fuente puede ver. Una lista de columnas escrita a mano con el
+ * nombre equivocado no se distingue de una correcta leyendo el código,
+ * porque `Valor cuota` existe y `Nombre Fondo` no, y los 2 se ven igual.
+ * Solo el dato real los separa. El 28 de agosto de 2026
+ * `cmf_fondos_mutuos_bpr` entregaba 4 columnas de 6 en blanco.
+ *
+ * Es un AVISO y no un fallo, a propósito. Una columna real puede venir
+ * vacía en las filas de esta página sin que nada esté roto, así que
+ * hacerlo bloquear produciría rojos falsos, y un portón con rojos falsos
+ * se termina ignorando entero. Se mira, se decide, y si es un defecto se
+ * arregla en el archivo.
+ */
+function columnasVacias(texto: string): string[] {
+  const lineas = texto.split("\n").filter((l) => l.includes(" | "));
+  if (lineas.length < 2) return [];
+  const cabecera = lineas[0].split(" | ");
+  const filas = lineas.slice(1).filter((l) => l.split(" | ").length === cabecera.length);
+  if (filas.length === 0) return [];
+  return cabecera.filter((_, i) => filas.every((f) => f.split(" | ")[i].trim() === ""));
+}
+
 async function main() {
   // Cliente por HTTP stateless real (era modern 2026-07-28), mismo código del worker
   const pdfModule = await cargarPdfModuleDesdeDisco().catch(() => undefined);
@@ -205,7 +230,9 @@ async function main() {
         if (!texto) problemas.push("content[0].text vacío");
         problemas.push(...validarExpect(sc, def.expect));
       }
-      reporte.push({ tool: name, ok: problemas.length === 0, detalle: problemas.join("; ") || `OK (${sc ? Object.keys(sc).join(",") : "sin sc"})`, ms });
+      const vacias = def.expectError ? [] : columnasVacias(texto);
+      const aviso = vacias.length > 0 ? ` AVISO: columnas vacías en todas las filas -> ${vacias.join(", ")}` : "";
+      reporte.push({ tool: name, ok: problemas.length === 0, detalle: (problemas.join("; ") || `OK (${sc ? Object.keys(sc).join(",") : "sin sc"})`) + aviso, ms });
     } catch (e) {
       reporte.push({ tool: name, ok: false, detalle: `excepción: ${(e as Error).message.slice(0, 200)}`, ms: Date.now() - t0 });
     }
