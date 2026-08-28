@@ -228,6 +228,37 @@ primera fila. El último paso se conserva porque casi todas las tablas de la CMF
 `<th>` y ahí la primera fila sí es la cabecera. Antes de tocar `parsers.ts`, mide el antes y el
 después con `columnasVacias` de `test/verify-endpoints.ts` sobre las tools reales.
 
+**5. El esquema que ve un cliente es una copia, y envejece aparte del servidor (28 de
+agosto de 2026).** Qué falló. Una prueba externa concluyó que la paginación del boletín
+seguía rota, con el servidor ya arreglado y desplegado. Su sesión tenía guardada la lista de
+tools de antes, así que mandaba los argumentos con la forma vieja. Causa raíz. Un cliente MCP
+guarda el esquema al conectarse y no lo vuelve a pedir. Desplegar no le llega a nadie que ya
+esté conectado. Prescripción. Un informe sobre el comportamiento del servidor no se acepta sin
+saber cuándo se conectó esa sesión. La forma de zanjarlo en 10 segundos es preguntarle al
+servidor directo, sin pasar por ningún cliente.
+
+```bash
+curl -s -X POST https://cmf-mcp.kumocloud.cl/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
+**6. Una función publicada pero inalcanzable es peor que una que falta (28 de agosto de
+2026).** Qué falló. `offset` y `limit` estaban construidos, desplegados y declarados en el
+esquema como `integer`, y aun así pedir `offset: "50"` devolvía «expected number, received
+string». Desde afuera se lee igual que si la paginación no existiera, pero adentro no hay nada
+que arreglar, así que nadie lo busca donde está. Causa raíz. Los parámetros numéricos eran los
+únicos que no seguían la regla de la casa de aceptar lo que escriben personas y modelos.
+Prescripción. Todo parámetro numérico de entrada sale de `enteroSchema` o `numeroSchema` de
+`src/util/schemas.ts`, y `test/entradas-tolerantes.test.ts` falla si vuelve a aparecer un
+`z.number()` de entrada.
+
+**7. Un defecto puede estar tapado por otro (28 de agosto de 2026).** Qué falló. El boletín
+mezclaba «Total consulta» y «Total Sistema» con las series, así que cualquier promedio o
+conteo se contaminaba. Nadie lo había visto en decenas de usos. Causa raíz. Los agregados van
+al final de la planilla y el corte por defecto en 50 filas los dejaba fuera, así que arreglar
+la paginación fue lo que los hizo visibles. Prescripción. Después de arreglar un corte, un
+filtro o un límite, vuelve a mirar el dato completo. Lo que aparece ahí lleva tiempo estando
+mal, y el arreglo anterior es lo que te dejó verlo.
+
 ## Gotchas
 
 - **La fuente se cae, y eso no es un defecto tuyo.** El servlet BaseDato devuelve a veces el
