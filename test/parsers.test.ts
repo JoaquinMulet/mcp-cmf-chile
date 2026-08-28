@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { htmlTablaAJson, xlsAJson } from "../src/client/parsers.js";
 import * as XLSX from "xlsx";
 import { getLegacyBinario, postLegacyBinario } from "../src/client/cmf-client.js";
@@ -39,11 +41,15 @@ test("parser: celda con <a href> conserva el href en el campo url (no se borra a
   assert.equal(filas[0].url, "https://www.cmfchile.cl/sitio/aplic/serdoc/ver_sgd.php?s567=abcd1234");
 });
 
-test("parser: filas sin enlaces tienen url vacía, no url inventada", () => {
+test("parser: una tabla sin ningún enlace no trae la clave url", () => {
+  // Antes la clave existía siempre, con cadena vacía. Como el texto para el
+  // modelo dibuja todas las columnas de la fila, eso pintaba una columna
+  // `url` vacía en las 1228 filas del reporte de bancos. Una columna que
+  // nunca va a tener valor no es un dato, es ruido.
   const filas = htmlTablaAJson(`<table><tr><td>A</td></tr><tr><td>B</td></tr></table>`);
-  assert.equal(filas.length, 1);
+  assert.equal(filas.length, 1, "sin th, la primera fila sigue definiendo las columnas");
   assert.equal(filas[0].A, "B");
-  assert.equal(filas[0].url, "", "url vacía y nada más");
+  assert.ok(!("url" in filas[0]), "sin enlaces en la tabla, la clave url no se inventa");
 });
 
 test("parser: la fila de encabezado (th) nunca es dato, ni con columnas explícitas", () => {
@@ -184,4 +190,73 @@ test("xls: mojibake en celdas se corrige", () => {
   const bytes = XLSX.write(wb, { type: "array", bookType: "xlsx" });
   const filas = xlsAJson(bytes);
   assert.equal(filas[0]["Nombre Fondo"], "COMISIÓN DE TEST");
+});
+
+/**
+ * La cabecera <th> de la tabla se usa como nombre de las columnas.
+ *
+ * El defecto, medido el 28 de agosto de 2026 con el reporte MR1 de Banco de
+ * Chile de junio de 2026. `htmlTablaAJson` buscaba la primera fila que NO
+ * fuera cabecera y la usaba como definición de columnas. La tabla del
+ * servlet BaseDato SÍ marca su cabecera con th, así que la función se
+ * saltaba «Código Contable | Descripción | Total Monedas», bautizaba las
+ * columnas con la primera fila de datos, y esa fila desaparecía.
+ *
+ * El resultado. las 1228 filas quedaban con nombres de campo que cambian en
+ * cada llamada, un dato real se perdía, y el modelo leía como encabezado la
+ * línea «411000000 | INGRESOS POR INTERESES | 1.376.398.163.187».
+ *
+ * El fixture es HTML real de la CMF, recortado a su cabecera y 5 filas, con
+ * el marcado exacto.
+ */
+const HTML_BASEDATO = readFileSync(join(import.meta.dirname, "fixtures", "basedato-mr1-2026-06.html"), "utf8");
+
+test("parser: la cabecera th da los nombres de columna, no la primera fila de datos", () => {
+  const filas = htmlTablaAJson(HTML_BASEDATO);
+  assert.deepEqual(
+    Object.keys(filas[0]),
+    ["Código Contable", "Descripción", "Total Monedas"],
+    "los nombres salen de la cabecera real de la CMF",
+  );
+});
+
+test("parser: la primera fila de datos NO se pierde cuando hay cabecera th", () => {
+  const filas = htmlTablaAJson(HTML_BASEDATO);
+  assert.equal(filas.length, 5, "las 5 filas de datos del fixture, ninguna comida");
+  assert.equal(filas[0]["Código Contable"], "411000000");
+  assert.equal(filas[0]["Descripción"], "INGRESOS POR INTERESES");
+  assert.equal(filas[0]["Total Monedas"], "1.376.398.163.187");
+});
+
+test("parser: el reporte de bancos no trae una columna url vacía", () => {
+  const filas = htmlTablaAJson(HTML_BASEDATO);
+  for (const f of filas) assert.ok(!("url" in f), "ninguna fila de este reporte tiene enlace");
+});
+
+test("parser: sin cabecera th se conserva el comportamiento de siempre", () => {
+  // Casi todas las tablas de la CMF vienen sin th, y ahí la primera fila SÍ
+  // es la cabecera. Cambiar eso habría roto unas 40 tools de una vez.
+  const html = `<table>
+    <tr><td>Fecha</td><td>Materia</td></tr>
+    <tr><td>02/01/2024</td><td>Citación a junta</td></tr>
+  </table>`;
+  const filas = htmlTablaAJson(html);
+  assert.equal(filas.length, 1);
+  assert.deepEqual(Object.keys(filas[0]), ["Fecha", "Materia"]);
+  assert.equal(filas[0].Fecha, "02/01/2024");
+});
+
+test("parser: con cabecera th y enlaces, la url sigue viajando fila por fila", () => {
+  // El lado opuesto del arreglo de la url. Donde SÍ hay documentos, el
+  // enlace es el único camino del agente hacia el PDF y no se puede perder.
+  const html = `<table>
+    <tr><th>Fecha</th><th>Documento</th></tr>
+    <tr><td>02/01/2024</td><td><a href="/sitio/x.php?s567=AAA">Ver</a></td></tr>
+    <tr><td>03/01/2024</td><td>sin documento</td></tr>
+  </table>`;
+  const filas = htmlTablaAJson(html);
+  assert.equal(filas.length, 2);
+  assert.deepEqual(Object.keys(filas[0]), ["Fecha", "Documento", "url"]);
+  assert.ok(filas[0].url.includes("AAA"));
+  assert.equal(filas[1].url, "", "la fila sin documento conserva la columna, vacía");
 });

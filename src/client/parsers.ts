@@ -95,26 +95,54 @@ function htmlTablas(html: string): FilaTabla[][] {
   return tablas;
 }
 
-/** Convierte una tabla HTML a JSON: primera fila = columnas (o columnas proporcionadas).
- *  Las filas de encabezado (<th>) nunca se devuelven como datos. */
+/**
+ * Convierte una tabla HTML a JSON.
+ *
+ * De dónde salen los nombres de las columnas, en este orden.
+ *
+ * 1. Las que entrega quien llama, si las entrega.
+ * 2. La fila de encabezado `<th>`, cuando la tabla la trae.
+ * 3. La primera fila de datos, que entonces deja de ser un dato.
+ *
+ * El paso 2 faltaba, y ese era el defecto. La función buscaba la primera
+ * fila que NO fuera encabezado y la usaba como definición de columnas,
+ * saltándose el `<th>` real. Medido el 28 de agosto de 2026 con el reporte
+ * MR1 de Banco de Chile. la tabla del servlet BaseDato marca su cabecera
+ * bien, «Código Contable | Descripción | Total Monedas», y aun así las 1228
+ * filas salían con las claves «411000000», «INGRESOS POR INTERESES» y
+ * «1.376.398.163.187», que son los valores de la primera fila de datos. Esa
+ * fila además se perdía, y ningún programa podía escribir un selector
+ * estable, porque los nombres cambian en cada llamada.
+ *
+ * El paso 3 se conserva tal cual, y es a propósito. Casi todas las tablas
+ * de la CMF vienen sin `<th>`, y ahí la primera fila SÍ es la cabecera.
+ * Cambiar esa parte habría roto unas 40 operaciones de una vez.
+ */
 export function htmlTablaAJson(html: string, columnas?: string[]): Record<string, string>[] {
   const tablas = htmlTablas(html);
   const out: Record<string, string>[] = [];
   for (const t of tablas) {
     if (t.length === 0) continue;
     const conColumnasExplicitas = columnas !== undefined;
-    const primera = t.find((f) => !f.esHeader) ?? t[0];
-    const cols = columnas ?? primera.celdas.map((c) => c.texto);
+    const cabecera = t.find((f) => f.esHeader);
+    // Solo se sacrifica una fila de datos cuando NO hay cabecera de verdad.
+    const primera = cabecera ? undefined : (t.find((f) => !f.esHeader) ?? t[0]);
+    const cols = columnas ?? (cabecera ?? primera)?.celdas.map((c) => c.texto) ?? [];
+    // Una clave `url` vacía en todas las filas no es un dato, es una columna
+    // de ruido que el texto para el modelo igual dibuja. Solo existe cuando
+    // esta tabla tiene al menos un enlace que valga la pena entregar.
+    const conEnlaces = t.some((f) => f.celdas.some((c) => c.enlace));
     for (const filaTabla of t) {
       if (filaTabla.esHeader) continue;
-      // Sin columnas explícitas, la primera fila no-header define las columnas: no es dato.
       if (!conColumnasExplicitas && filaTabla === primera) continue;
       const fila: Record<string, string> = {};
       filaTabla.celdas.forEach((celda, j) => {
         if (j < cols.length) fila[cols[j]] = celda.texto;
       });
-      const conEnlace = filaTabla.celdas.find((c) => c.enlace);
-      fila.url = conEnlace ? conEnlace.enlace : "";
+      if (conEnlaces) {
+        const conEnlace = filaTabla.celdas.find((c) => c.enlace);
+        fila.url = conEnlace ? conEnlace.enlace : "";
+      }
       out.push(fila);
     }
   }
