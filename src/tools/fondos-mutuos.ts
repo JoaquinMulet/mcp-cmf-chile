@@ -10,9 +10,70 @@ import { avisoDeTramo, paginacion, toolOkTabla } from "../util/tramos.js";
 import {
   anioSchema, carteraSchema, fechaSchema, mesSchema, offsetSchema, limitSchema, codigoSchema, enumTolerante } from "../util/schemas.js";
 
+/**
+ * Quita las filas repetidas del catálogo, conservando la primera aparición.
+ *
+ * El archivo `fm_ident2.php` de la CMF manda cada fondo entre 1 y 3 veces.
+ * Medido el 28 de agosto de 2026: 3421 filas, 1350 distintas. La repetición
+ * viene de la fuente, no del parser, así que se limpia acá y no en
+ * `txtCsvAJson`, que sirve a otras descargas donde 2 filas idénticas sí
+ * pueden ser 2 hechos distintos.
+ *
+ * La identidad es la fila COMPLETA. Dos fondos que coinciden en todos sus
+ * campos, RUN incluido, son el mismo fondo.
+ */
+export function sinRepetidas<T extends Record<string, unknown>>(filas: T[]): T[] {
+  const vistas = new Set<string>();
+  const salida: T[] = [];
+  for (const fila of filas) {
+    const huella = JSON.stringify(fila);
+    if (vistas.has(huella)) continue;
+    vistas.add(huella);
+    salida.push(fila);
+  }
+  return salida;
+}
+
+/** Quita tildes y mayúsculas para comparar nombres como los escribe una persona. */
+function plano(valor: unknown): string {
+  return String(valor ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+/**
+ * Filtra el catálogo de fondos mutuos por nombre y por tipo.
+ *
+ * El campo del tipo se llama `tipo_de_fondo_mutuo`, porque `txtCsvAJson`
+ * normaliza la columna «Tipo de Fondo Mutuo» de la CMF. Antes acá decía
+ * `tipo_fondo`, que no existe, y `String(f.tipo_fondo ?? "")` daba siempre
+ * la cadena vacía: el filtro devolvía 0 fondos para cualquier tipo y nada
+ * fallaba. El tipo se compara por igualdad exacta, no por inclusión,
+ * porque los códigos son 1 dígito y `includes` los confunde.
+ */
+export function filtrarCatalogo<T extends Record<string, unknown>>(
+  filas: T[],
+  filtros: { nombre?: string; tipo?: string },
+): T[] {
+  let salida = filas;
+  if (filtros.nombre) {
+    const q = plano(filtros.nombre);
+    salida = salida.filter((f) => plano(f.nombre_fondo).includes(q));
+  }
+  if (filtros.tipo) {
+    const t = String(filtros.tipo).trim();
+    salida = salida.filter((f) => String(f.tipo_de_fondo_mutuo ?? "").trim() === t);
+  }
+  return salida;
+}
+
 /** Descarga y parsea el catálogo completo de FM (fm_ident2) con caché en KV (24h) cuando está disponible. */
 async function catalogoFondosMutuos(env: CmfEnv): Promise<Record<string, unknown>[]> {
-  const clave = "catalogo:fm_ident_v1";
+  // La versión de la clave sube con cada cambio de FORMA del valor
+  // guardado. El `_v1` tenía las filas repetidas de la CMF, y una caché de
+  // 24 horas habría seguido sirviéndolas después del arreglo.
+  const clave = "catalogo:fm_ident_v2_sin_repetidas";
   if (env.CMF_KV) {
     const raw = await env.CMF_KV.get(clave);
     if (raw) {
@@ -24,7 +85,7 @@ async function catalogoFondosMutuos(env: CmfEnv): Promise<Record<string, unknown
     }
   }
   const res = await postLegacy("/institucional/estadisticas/fm_ident2.php", {}, env);
-  const filas = txtCsvAJson(res) as unknown as Record<string, unknown>[];
+  const filas = sinRepetidas(txtCsvAJson(res) as unknown as Record<string, unknown>[]);
   if (env.CMF_KV) {
     await env.CMF_KV.put(clave, JSON.stringify(filas), { expirationTtl: 86_400 });
   }
@@ -53,21 +114,10 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
     },
     async ({ nombre, tipo, offset, limit }) => {
       try {
-        let filas = await catalogoFondosMutuos(env);
-        if (nombre) {
-          const q = nombre.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-          filas = filas.filter((f) =>
-            String(f.nombre_fondo ?? "")
-              .toLowerCase()
-              .normalize("NFD")
-              .replace(/[\u0300-\u036f]/g, "")
-              .includes(q),
-          );
-        }
-        if (tipo) filas = filas.filter((f) => String(f.tipo_fondo ?? "").includes(tipo));
+        const filas = filtrarCatalogo(await catalogoFondosMutuos(env), { nombre, tipo });
         const { filas: fondos, paginado } = paginar(filas, offset, limit);
         const texto = fondos.length
-          ? `Fondos mutuos (total ${paginado.total}):\n${resumirTabla(fondos, ["run_fondo", "nombre_fondo", "tipo_fondo", "moneda", "rut_admin"])}`
+          ? `Fondos mutuos (total ${paginado.total}):\n${resumirTabla(fondos, ["run_fondo", "nombre_fondo", "tipo_de_fondo_mutuo", "moneda", "rut_administradora"])}`
           : "Sin fondos mutuos que coincidan.";
         return toolOk(texto + avisoDeTramo(fondos.length, paginado, "cmf_fondos_mutuos_catalogo"), { fondos, total: paginado.total, next_offset: paginado.next_offset });
       } catch (e) {
@@ -239,7 +289,10 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
           offset,
           limit,
           tool: "cmf_fondos_mutuos_bpr",
-          columnas: ["Run Fondo", "Nombre Fondo", "Patrimonio", "Valor cuota", "Partícipes", "Rentabilidad nominal mensual"],
+          // Los nombres salen de la planilla real de la CMF, no de cómo se
+          // leen en pantalla. `col_0` es el nombre del fondo, `Patrimonio (1)`
+          // lleva su llamada al pie, y `Participes` viene sin tilde.
+          columnas: ["col_0", "RUN", "Serie de fondo", "Patrimonio (1)", "Valor cuota", "Participes", "Rentabilidad nominal mensual"],
           unidad: "series",
         });
       } catch (e) {
