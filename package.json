@@ -33,7 +33,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@firecrawl/pdf-inspector-wasm": "^1.15.0",
+    "@firecrawl/pdf-inspector-wasm": "^1.17.0",
     "@modelcontextprotocol/server": "2.0.0",
     "agents": "0.21.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
