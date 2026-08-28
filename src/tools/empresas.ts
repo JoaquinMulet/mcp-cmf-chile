@@ -11,7 +11,7 @@ import { bytesABase64 } from "../util/zip.js";
 import { pdfAMarkdown } from "../pdf.js";
 import { procesarTablasEEFF, textoVerificacion, textoAviso } from "../eeff-tables.js";
 import { avisoDeTramo, paginacion, toolOkPaginado, toolOkTabla } from "../util/tramos.js";
-import {
+import { enteroSchema,
   anioSchema,
   enumTolerante,
   fechaSchema,
@@ -48,7 +48,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       inputSchema: z.object({
         consulta: z.string().min(2).describe("Ticker (NEMO) o nombre de la empresa"),
         term: z.string().optional().describe("Alias legacy de consulta (use consulta)"),
-        limite: z.number().int().min(1).max(10).default(5).describe("Máximo de resultados (1-10, default 5)"),
+        limite: enteroSchema().min(1).max(10).default(5).describe("Máximo de resultados (1-10, default 5)"),
       }),
       outputSchema: z.object({
         resultados: z.array(z.record(z.string(), z.unknown())),
@@ -131,7 +131,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       inputSchema: z.object({
         consulta: z.string().min(1).describe("Nombre, RUT o ticker a buscar (una sola palabra clave o RUT numérico)"),
         term: z.string().optional().describe("Alias legacy de consulta (use consulta)"),
-        limite: z.number().int().min(1).max(20).default(5).describe("Máximo de resultados (1-20, default 5)"),
+        limite: enteroSchema().min(1).max(20).default(5).describe("Máximo de resultados (1-20, default 5)"),
       }),
       outputSchema: z.object({
         resultados: z.array(z.record(z.string(), z.string())),
@@ -286,8 +286,8 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         tipo: tipoBalanceSchema,
         norma: tipoNormaContableSchema,
         modo: z.enum(["documentos", "markdown"]).default("documentos").describe("documentos = lista de PDFs del período; markdown = PDF auditado convertido a Markdown"),
-        max_chars: z.number().int().min(1000).default(30000).describe("Tamaño del tramo en caracteres (modo markdown). Sin máximo: pide el documento entero de una vez. Por defecto 30000. Ej: 1000000"),
-        offset_chars: z.number().int().min(0).default(0).describe("Carácter donde empieza el tramo; use el que indique la respuesta anterior para seguir leyendo"),
+        max_chars: enteroSchema().min(1000).default(30000).describe("Tamaño del tramo en caracteres (modo markdown). Sin máximo: pide el documento entero de una vez. Por defecto 30000. Ej: 1000000"),
+        offset_chars: enteroSchema().min(0).default(0).describe("Carácter donde empieza el tramo; use el que indique la respuesta anterior para seguir leyendo"),
         validar_contable: z.boolean().default(false).describe("true = verifica la cuadratura contable (experimental: puede dar falsos negativos en algunos formatos)"),
       }),
       outputSchema: z.object({
@@ -1297,7 +1297,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       title: "Tomas de control de emisores",
       description:
         "Devuelve la información de tomas de control de emisores de valores publicada por la CMF (operación, fechas y sociedades involucradas), con hasta 300 filas. Elija el criterio de ordenamiento del listado con orden (1-5, default 1). Use esta tool para cambios de control accionario; para la composición accionaria actual use cmf_empresa_accionistas. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
-      inputSchema: z.object({ orden: z.number().int().min(1).max(5).optional().describe("Criterio de ordenamiento del listado (1-5, default 1)"), ...paginacion(300) }),
+      inputSchema: z.object({ orden: enteroSchema().min(1).max(5).optional().describe("Criterio de ordenamiento del listado (1-5, default 1)"), ...paginacion(300) }),
     },
     async ({ orden, offset, limit }) => {
       try {

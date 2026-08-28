@@ -9,6 +9,29 @@ import * as z from "zod/v4";
  * sí lo preservan (verificado en test/tdqs.test.ts).
  */
 
+/**
+ * Entero de entrada, tolerante con el número escrito como texto.
+ *
+ * La regla de este archivo dice que los esquemas de entrada aceptan lo que
+ * escriben personas y modelos. `anioSchema` acepta 2026 y "2026" desde
+ * siempre, y los parámetros numéricos no seguían esa regla. Medido el 28 de
+ * agosto de 2026. pedir la página siguiente del boletín con `offset: "50"`
+ * devolvía «expected number, received string», así que la paginación quedaba
+ * inalcanzable para un cliente que serializa sus argumentos como texto. La
+ * función estaba construida y publicada, y aun así no se podía usar.
+ *
+ * Se usa `z.coerce.number()` y no un union de número y texto. El union
+ * rechaza mejor la cadena vacía, pero publica el parámetro como `anyOf` y
+ * pierde en el esquema el valor por defecto y el mínimo, que es justo lo que
+ * el modelo lee para saber qué mandar. Medido, no supuesto. Con `coerce` el
+ * esquema publicado sigue diciendo `integer` con su default y su mínimo, y
+ * la única concesión es que la cadena vacía se lee como 0.
+ */
+export const enteroSchema = () => z.coerce.number().int();
+
+/** Igual que enteroSchema, para los parámetros que admiten decimales. */
+export const numeroSchema = () => z.coerce.number();
+
 /** Fecha canónica YYYY-MM-DD; acepta también DD/MM/YYYY y DD-MM-YYYY. */
 export const fechaSchema = z
   .union([
@@ -76,16 +99,12 @@ export const tipoEntidadSchema = z
   .string()
   .describe("Tipo de entidad supervisada (ej: RVEMI = emisores de valores)");
 
-export const offsetSchema = z
-  .number()
-  .int()
+export const offsetSchema = enteroSchema()
   .min(0)
   .default(0)
   .describe("Desplazamiento para paginación");
 
-export const limitSchema = z
-  .number()
-  .int()
+export const limitSchema = enteroSchema()
   .min(1)
   .default(100)
   .describe("Cuántas filas devolver. Sin máximo: pide todas las que necesites. Por defecto 100. La respuesta trae total y next_offset para pedir el resto. Ej: 100");

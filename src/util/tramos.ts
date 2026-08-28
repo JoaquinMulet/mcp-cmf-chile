@@ -28,6 +28,7 @@
 import * as z from "zod/v4";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { resumirTabla, toolOk } from "./errors.js";
+import { enteroSchema } from "./schemas.js";
 import { paginar } from "./paginate.js";
 
 /**
@@ -39,15 +40,11 @@ import { paginar } from "./paginate.js";
  */
 export function paginacion(porDefecto: number) {
   return {
-    offset: z
-      .number()
-      .int()
+    offset: enteroSchema()
       .min(0)
       .default(0)
       .describe("Fila desde la que empezar. Pásale el next_offset de la respuesta anterior. Ej: 0"),
-    limit: z
-      .number()
-      .int()
+    limit: enteroSchema()
       .min(1)
       .default(porDefecto)
       .describe(

@@ -7,7 +7,7 @@ import { fromError, toolOk, } from "../util/errors.js";
 import { barrerPeriodos, conSemafotoGlobal, estimarTiempoS, mb } from "../util/paquete.js";
 import { carpetaEmpresa, extensionDeContentType, rutaUnica, tipoDocumento, urlDocumentoCmf } from "../util/nombres.js";
 import { construirZip, zipABase64, bytesABase64 } from "../util/zip.js";
-import {
+import { enteroSchema, numeroSchema,
   anioSchema, mesSchema, rutSchema } from "../util/schemas.js";
 
 const FICHA_BASE = "/institucional/mercados/entidad.php";
@@ -388,8 +388,8 @@ export function registrarToolsPaquete(server: McpServer, env: CmfEnv): void {
           .describe("Secciones a incluir: eeff|hechos|sanciones|resoluciones|memoria (default: solo eeff)"),
         tipo: z.enum(["C", "I"]).default("C").describe("Tipo de balance: C=Consolidado (default), I=Individual"),
         norma: z.enum(["IFRS", "NCH"]).default("IFRS").describe("Norma contable: IFRS (default) o NCH (Chilean GAAP)"),
-        max_documentos: z.number().int().min(1).max(24).default(12).describe("Máximo de documentos descargados (1-24, default 12); el resto se omite y se reporta"),
-        max_mb: z.number().min(1).max(50).default(10).describe("Máximo total de MB descargados (1-50, default 10)"),
+        max_documentos: enteroSchema().min(1).max(24).default(12).describe("Máximo de documentos descargados (1-24, default 12); el resto se omite y se reporta"),
+        max_mb: numeroSchema().min(1).max(50).default(10).describe("Máximo total de MB descargados (1-50, default 10)"),
         incluir_zip: z.boolean().default(true).describe("true = arma el ZIP en base64 (default); false = solo devuelve los archivos sueltos"),
       }),
     },
@@ -668,7 +668,7 @@ export function registrarToolsPaquete(server: McpServer, env: CmfEnv): void {
           .array(z.enum(["bpr", "costos", "comisiones", "inversiones_nacio", "inversiones_inter"]))
           .default(["bpr", "costos", "comisiones"])
           .describe("Secciones a incluir: bpr|costos|comisiones|inversiones_nacio|inversiones_inter"),
-        max_filas: z.number().int().min(5).max(100).default(20).describe("Máximo de filas por sección (5-100, default 20)"),
+        max_filas: enteroSchema().min(5).max(100).default(20).describe("Máximo de filas por sección (5-100, default 20)"),
       }),
     },
     async ({ anio, mes, secciones, max_filas }) => {
