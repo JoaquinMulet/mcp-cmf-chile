@@ -90,6 +90,35 @@ function sinControles(html: string): string {
     .replace(/<style[\s\S]*?<\/style>/gi, " ");
 }
 
+/** Las celdas de un `<tr>`, con su texto limpio y el enlace de su primer `<a>`. */
+function celdasDeUnaFila(tr: string): FilaTabla {
+  const celdas: CeldaTabla[] = [];
+  let todasTh = true;
+  const reCelda = /<t([dh])[^>]*>([\s\S]*?)<\/t\1>/gi;
+  let cm: RegExpExecArray | null;
+  while ((cm = reCelda.exec(tr)) !== null) {
+    if (cm[1] !== "h") todasTh = false;
+    const href = cm[2].match(/href="([^"]+)"/i)?.[1] ?? "";
+    celdas.push({
+      texto: fixMojibake(decodificarEntidades(cm[2].replace(/<[^>]+>/g, " "))),
+      enlace: href.startsWith("/") ? `https://www.cmfchile.cl${href}` : href,
+    });
+  }
+  return { celdas, esHeader: todasTh };
+}
+
+/** Las filas de una `<table>`, sin las que no tienen ninguna celda. */
+function filasDeUnTable(tabla: string): FilaTabla[] {
+  const filas: FilaTabla[] = [];
+  const reFila = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  let rm: RegExpExecArray | null;
+  while ((rm = reFila.exec(tabla)) !== null) {
+    const fila = celdasDeUnaFila(rm[1]);
+    if (fila.celdas.length > 0) filas.push(fila);
+  }
+  return filas;
+}
+
 /** Extrae todas las <table> de un HTML como arrays de filas (celdas decodificadas + enlace). */
 function htmlTablas(htmlCrudo: string): FilaTabla[][] {
   const html = sinControles(htmlCrudo);
@@ -97,24 +126,7 @@ function htmlTablas(htmlCrudo: string): FilaTabla[][] {
   const reTabla = /<table[^>]*>([\s\S]*?)<\/table>/gi;
   let tm: RegExpExecArray | null;
   while ((tm = reTabla.exec(html)) !== null) {
-    const filas: FilaTabla[] = [];
-    const reFila = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-    let rm: RegExpExecArray | null;
-    while ((rm = reFila.exec(tm[1])) !== null) {
-      const celdas: CeldaTabla[] = [];
-      let todasTh = true;
-      const reCelda = /<t([dh])[^>]*>([\s\S]*?)<\/t\1>/gi;
-      let cm: RegExpExecArray | null;
-      while ((cm = reCelda.exec(rm[1])) !== null) {
-        if (cm[1] !== "h") todasTh = false;
-        const href = cm[2].match(/href="([^"]+)"/i)?.[1] ?? "";
-        celdas.push({
-          texto: fixMojibake(decodificarEntidades(cm[2].replace(/<[^>]+>/g, " "))),
-          enlace: href.startsWith("/") ? `https://www.cmfchile.cl${href}` : href,
-        });
-      }
-      if (celdas.length > 0) filas.push({ celdas, esHeader: todasTh });
-    }
+    const filas = filasDeUnTable(tm[1]);
     if (filas.length > 0) tablas.push(filas);
   }
   return tablas;
@@ -144,32 +156,37 @@ function htmlTablas(htmlCrudo: string): FilaTabla[][] {
  * Cambiar esa parte habría roto unas 40 operaciones de una vez.
  */
 export function htmlTablaAJson(html: string, columnas?: string[]): Record<string, string>[] {
-  const tablas = htmlTablas(html);
+  return htmlTablas(html).flatMap((t) => filasDeUnaTabla(t, columnas));
+}
+
+/** De dónde salen los nombres, y qué fila deja de ser dato por prestarlos. */
+function nombresDeColumna(
+  t: FilaTabla[],
+  columnas: string[] | undefined,
+): { cols: string[]; prestada: FilaTabla | undefined } {
+  const cabecera = t.find((f) => f.esHeader);
+  // Solo se sacrifica una fila de datos cuando NO hay cabecera de verdad.
+  const prestada = columnas ?? cabecera ? undefined : (t.find((f) => !f.esHeader) ?? t[0]);
+  const cols = columnas ?? (cabecera ?? prestada)?.celdas.map((c) => c.texto) ?? [];
+  return { cols, prestada };
+}
+
+function filasDeUnaTabla(t: FilaTabla[], columnas?: string[]): Record<string, string>[] {
+  if (t.length === 0) return [];
+  const { cols, prestada } = nombresDeColumna(t, columnas);
+  // Una clave `url` vacía en todas las filas no es un dato, es una columna de
+  // ruido que el texto para el modelo igual dibuja. Solo existe cuando esta
+  // tabla tiene al menos un enlace que valga la pena entregar.
+  const conEnlaces = t.some((f) => f.celdas.some((c) => c.enlace));
   const out: Record<string, string>[] = [];
-  for (const t of tablas) {
-    if (t.length === 0) continue;
-    const conColumnasExplicitas = columnas !== undefined;
-    const cabecera = t.find((f) => f.esHeader);
-    // Solo se sacrifica una fila de datos cuando NO hay cabecera de verdad.
-    const primera = cabecera ? undefined : (t.find((f) => !f.esHeader) ?? t[0]);
-    const cols = columnas ?? (cabecera ?? primera)?.celdas.map((c) => c.texto) ?? [];
-    // Una clave `url` vacía en todas las filas no es un dato, es una columna
-    // de ruido que el texto para el modelo igual dibuja. Solo existe cuando
-    // esta tabla tiene al menos un enlace que valga la pena entregar.
-    const conEnlaces = t.some((f) => f.celdas.some((c) => c.enlace));
-    for (const filaTabla of t) {
-      if (filaTabla.esHeader) continue;
-      if (!conColumnasExplicitas && filaTabla === primera) continue;
-      const fila: Record<string, string> = {};
-      filaTabla.celdas.forEach((celda, j) => {
-        if (j < cols.length) fila[cols[j]] = celda.texto;
-      });
-      if (conEnlaces) {
-        const conEnlace = filaTabla.celdas.find((c) => c.enlace);
-        fila.url = conEnlace ? conEnlace.enlace : "";
-      }
-      out.push(fila);
-    }
+  for (const filaTabla of t) {
+    if (filaTabla.esHeader || filaTabla === prestada) continue;
+    const fila: Record<string, string> = {};
+    filaTabla.celdas.forEach((celda, j) => {
+      if (j < cols.length) fila[cols[j]] = celda.texto;
+    });
+    if (conEnlaces) fila.url = filaTabla.celdas.find((c) => c.enlace)?.enlace ?? "";
+    out.push(fila);
   }
   return out;
 }
