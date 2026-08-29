@@ -11,8 +11,7 @@
     "herramientas/*.mjs"
   ],
   "ignoreDependencies": [
-    "cloudflare",
-    "yauzl"
+    "cloudflare"
   ],
   "ignoreBinaries": [
     "uvx"

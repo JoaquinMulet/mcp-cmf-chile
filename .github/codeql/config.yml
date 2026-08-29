@@ -1,18 +1,24 @@
 # Acota QUE se analiza, antes de creerle a la primera cifra.
 #
-# Sin esto, 65 de 74 alertas venian de test/investigacion, que son
-# scripts de exploracion de un rato y HTML capturado del sitio de la CMF
-# guardado como evidencia de pruebas. Nada de eso se despliega, nada de
-# eso se va a arreglar, y su volumen tapaba las 3 alertas de severidad
-# alta que SI estaban en codigo del Worker.
+# Aca vivia una exclusion de test/investigacion, que eran scripts de
+# exploracion de un rato y HTML capturado del sitio de la CMF guardado
+# como evidencia. Generaban 65 de las 74 alertas y su volumen tapaba las
+# 3 de severidad alta que SI estaban en codigo del Worker.
 #
-# La regla que hay detras. una medicion que incluye lo que no puedes
-# arreglar no sirve para arreglar nada, y encima entrena a ignorar la
-# lista entera.
+# El 29 de agosto de 2026 esa carpeta se borro entera, que es la unica
+# salida honesta cuando algo "no se despliega y no se va a arreglar". Con
+# la carpeta fuera, la exclusion sobra y el analisis vuelve a cubrir todo
+# lo que queda. Excluir es esconder; borrar es no tener que esconder.
+#
+# Lo que sigue excluido es lo que se genera o se descarga, y por eso no
+# es codigo nuestro que revisar.
+#
+# test/exclusiones-vivas.test.ts vigila esta lista. una exclusion que
+# apunta a una carpeta que ya no existe deja la puerta abierta para que
+# alguien cree otra con ese nombre y nadie la revise.
 name: "CodeQL para el codigo que se despliega"
 
 paths-ignore:
-  - test/investigacion
   - dist
   - node_modules
 

@@ -104,5 +104,5 @@ obligatorios que la URL "desnuda" no lleva (por eso parecían muertos).
   descarga no exigen session de captcha (verificado con GETs directos sin cookies).
 - Trampas de URL documentadas para los clientes: (a) cumplimiento exige `lang=es`, (b) cartera exige
   `tipoentidad`, (c) ISPRO/AV-CB funcionan con la URL directa pero requieren los parámetros exactos.
-- Evidencia reproducible: `node test/investigacion/lote-c.mjs` re-ejecuta las 15 comprobaciones.
+- Evidencia reproducible: `node test/investigacion/lote-c.mjs` re-ejecutaba las 15 comprobaciones.
   Binarios de prueba guardados en `test/investigacion/evidencia/` (HTML, ZIP, XLSX, DOC).
