@@ -306,7 +306,6 @@ export function xlsAJson(bytes: ArrayBuffer | Uint8Array): Record<string, unknow
       break;
     }
   }
-  const inicio = idxHeader >= 0 ? idxHeader + 1 : 1;
   const fila1 = crudas[Math.max(0, idxHeader === -1 ? 0 : idxHeader)].map(limpiar);
   // Cabecera de 2 pisos, como una planilla con celdas combinadas. El piso de
   // arriba agrupa y el de abajo detalla, y usar solo el de arriba dejaba sin
@@ -316,15 +315,29 @@ export function xlsAJson(bytes: ArrayBuffer | Uint8Array): Record<string, unknow
   // suelto sin decir si era un porcentaje, un monto o un plazo. Unir los 2
   // pisos arregla además una etiqueta que mentía. la columna que se llamaba
   // «Comisión de Colocación» trae la CONDICIÓN, y así lo dice su piso de abajo.
-  const fila2 = idxHeader >= 0 && esHeader(crudas[idxHeader + 1] ?? []) ? (crudas[idxHeader + 1] ?? []).map(limpiar) : [];
+  // Un segundo piso de cabecera existe para LLENAR LOS HUECOS del primero.
+  // Si la fila no pone nombre en ninguna columna que arriba venga vacía, no
+  // es un segundo piso. es un dato que se le parece.
+  const llenaHuecos = (fila: unknown[]): boolean =>
+    fila.some((celda, j) => limpiar(celda) !== "" && limpiar(fila1[j]) === "");
+  const candidata = crudas[idxHeader + 1] ?? [];
+  const haySegundoPiso = idxHeader >= 0 && esHeader(candidata) && llenaHuecos(candidata);
+  const fila2 = haySegundoPiso ? (crudas[idxHeader + 1] ?? []).map(limpiar) : [];
   const header = unirPisos(fila1, fila2);
+  // Los datos empiezan justo después de la cabecera, contando sus 2 pisos si
+  // los tiene. Antes acá había una ventana. se descartaba como segundo piso
+  // CUALQUIER fila que pareciera cabecera dentro de las 3 siguientes, y una
+  // fila de datos sin ningún número puro cumple ese criterio, así que se
+  // perdía entera, sin error y sin aviso. Medido el 28 de agosto de 2026
+  // sobre las 6 planillas reales de fondos mutuos. el único segundo piso
+  // legítimo estaba a distancia 1, y las 2 filas de datos que se perdían
+  // estaban a distancia 3. Una era el segundo tramo de rescate de un fondo en
+  // el cuadro de costos, y la otra la serie de patrimonio del sistema entera.
+  const inicio = idxHeader >= 0 ? idxHeader + (haySegundoPiso ? 2 : 1) : 1;
 
   const out: Record<string, unknown>[] = [];
   for (let i = inicio; i < crudas.length; i++) {
     const fila = crudas[i];
-    // Filas de encabezado de segundo nivel justo después del header real
-    // (p.ej. "Rem. Fija | Rem. Var. | % | %" en costos): no son datos.
-    if (i - idxHeader <= 3 && idxHeader >= 0 && esHeader(fila)) continue;
     const filaObj: Record<string, unknown> = {};
     let alguna = false;
     for (let j = 0; j < Math.min(header.length, fila.length); j++) {

@@ -327,3 +327,78 @@ test("xls: una cabecera de 1 solo piso queda exactamente igual", () => {
   const [fila] = xlsAJson(comoExcel(unPiso));
   assert.deepEqual(Object.keys(fila), ["RUN", "Nombre Fondo", "Patrimonio", "Partícipes"]);
 });
+
+/**
+ * Una fila de datos de puro texto no es una cabecera de segundo piso.
+ *
+ * `xlsAJson` descartaba como segundo piso CUALQUIER fila que pareciera
+ * cabecera y que cayera dentro de las 3 filas siguientes a la cabecera real.
+ * Una fila de datos sin ningún número puro cumple ese criterio, así que se
+ * perdía entera, sin error y sin aviso.
+ *
+ * Medido el 28 de agosto de 2026 contra las 6 planillas reales de fondos
+ * mutuos, mirando QUÉ se descartaba y no cuánto.
+ *
+ *   costos, fila 3, a 1 de la cabecera   «Rem. Fija | Rem. Var. | % | %»
+ *                                        segundo piso de verdad, se descarta bien
+ *   costos, fila 5, a 3 de la cabecera   «NA | NA | 181 a mas | NA»
+ *                                        DATO. el segundo tramo de rescate de un fondo
+ *   antecedentes, fila 10, a 3           «Patrimonio (1) | 787,638 | 2,150,720…»
+ *                                        DATO. la serie de patrimonio del sistema
+ *
+ * El único segundo piso legítimo está a distancia 1, y las 2 pérdidas están a
+ * distancia 3. Por eso la ventana de 3 filas desaparece. el segundo piso es a
+ * lo más UNA fila, y es exactamente la que se usa para nombrar las columnas.
+ * Todo lo que viene después es dato.
+ */
+const COSTOS_CON_CONTINUACION = [
+  ...CABECERA_COSTOS,
+  // La fila 5 REAL del cuadro de costos. es el segundo tramo de rescate del
+  // mismo fondo de la fila anterior, y por eso viene casi toda vacía.
+  ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "NA", "NA", "181 a mas", "NA"],
+];
+
+test("xls: la fila de continuación de un fondo no se pierde", () => {
+  const filas = xlsAJson(comoExcel(COSTOS_CON_CONTINUACION));
+  assert.equal(filas.length, 2, "el tramo 0 a 180 y el tramo 181 a mas son 2 filas");
+  assert.equal(filas[1]["Comisión de Colocación Dif Condición"], "181 a mas");
+});
+
+test("xls: el segundo piso de verdad SÍ se sigue descartando", () => {
+  // El lado opuesto. Dejar de descartarlo metería la cabecera como si fuera
+  // un fondo, y eso es tan malo como perder una fila.
+  const filas = xlsAJson(comoExcel(COSTOS_CON_CONTINUACION));
+  for (const f of filas) {
+    assert.notEqual(Object.values(f)[0], "Condición", "la fila de la cabecera no es un dato");
+  }
+});
+
+test("xls: una fila de datos de puro texto sobrevive", () => {
+  // El caso exacto del informe. sin ninguna celda que parezca número, la
+  // fila entera desaparecía.
+  const soloTexto = [
+    ["Informe"],
+    [],
+    ["RUN", "Nombre Fondo", "Patrimonio"],
+    ["12345-6", "Fondo Test A", "1.234.567"],
+  ];
+  const filas = xlsAJson(comoExcel(soloTexto));
+  assert.equal(filas.length, 1, "la fila de datos no se descarta por parecer cabecera");
+  assert.equal(filas[0].RUN, "12345-6");
+  assert.equal(filas[0]["Patrimonio"], "1.234.567");
+});
+
+test("xls: una fila de datos con separador de miles por coma sobrevive", () => {
+  // La forma que hizo perder la serie de patrimonio de antecedentes. los
+  // montos con coma no matchean la expresión de número puro.
+  const conComas = [
+    ["Antecedentes generales del sistema"],
+    [],
+    ["", "DICIEMBRE 2000", "DICIEMBRE 2001", "DICIEMBRE 2002"],
+    ["Número de fondos", "312", "398", "412"],
+    ["Patrimonio (1)", "787,638", "2,150,720", "4,353,140"],
+  ];
+  const filas = xlsAJson(comoExcel(conComas));
+  assert.equal(filas.length, 2, "ni la fila de fondos ni la de patrimonio se descartan");
+  assert.equal(filas[1].col_0, "Patrimonio (1)");
+});
