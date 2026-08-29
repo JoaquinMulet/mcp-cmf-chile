@@ -278,6 +278,29 @@ Y», el instrumento IMPRIME los casos y los mira una persona. El patrón apareci
 verlos: el único segundo piso legítimo estaba a distancia 1 de la cabecera, y las 2 filas
 perdidas estaban a distancia 3.
 
+**10. El portón local corría MENOS que el CI, y por eso el rojo llegó tarde (29 de agosto de
+2026).** Qué falló. Un commit pasó el `pre-push` completo y el flujo de Seguridad de GitHub lo
+rechazó. CodeQL marcó `js/bad-tag-filter` de severidad alta en una expresión regular que ese
+mismo commit estrenaba. Causa raíz. CodeQL corre en la nube y solo analiza lo ya empujado, así
+que una alerta NUEVA es invisible antes de empujar. El `pre-push` corre `alertas.mjs --listar`,
+que informa y no bloquea, y esa decisión es correcta por sí sola. una alerta refleja el último
+commit analizado, así que bloquear con ella impediría empujar justamente el commit que la
+arregla. Prescripción. La clase se cubre localmente con una regla propia de semgrep, que sí
+entiende el código nuevo y sí bloquea el push desde la bandeja de hallazgos. Cada vez que
+CodeQL encuentre una clase que el portón local no vio, la respuesta no es aceptar la demora, es
+escribir la regla en `.semgrep/reglas-propias.yml` y probarla en las 2 direcciones.
+
+**11. Un patrón con barras invertidas no se escribe por un heredoc de python (29 de agosto de
+2026).** Qué falló. Al escribir esa regla de semgrep con `python - <<EOF`, el `
+` del patrón
+llegó al archivo como un salto de línea de verdad, y partió el YAML en 2. La regla quedó
+truncada, semgrep la cargó sin error, y el portón dio verde con el defecto puesto delante.
+Causa raíz. Es la regla que el `CLAUDE.md` global ya tiene escrita para LaTeX, y que aquí volví
+a pisar. el heredoc de python se come una capa de escapes. Prescripción. Todo contenido con
+barras invertidas se escribe con el tool Edit. Y la señal que lo delató no fue leer el archivo,
+fue **probar el portón con el defecto puesto**. Un portón que no se prueba cerrando es un
+portón que ya podría estar roto.
+
 ## Gotchas
 
 - **La fuente se cae, y eso no es un defecto tuyo.** El servlet BaseDato devuelve a veces el

@@ -86,3 +86,23 @@ rules:
 # mejor, con la comprobacion «ninguna tool manda al modelo a leer
 # structuredContent», que mira las descripciones de las tools y no el
 # codigo entero.
+
+  # -------------------------------------------------------------------
+  - id: filtro-de-etiquetas-con-cierre-rigido
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      Esta expresion regular saca un bloque de HTML pidiendo su etiqueta de
+      cierre EXACTA, y el HTML permite </script >, </script con salto de
+      linea, </ script> y </SCRIPT>. Cualquiera de esas formas deja la
+      etiqueta adentro con todo su texto, que es justo lo que el filtro
+      viene a sacar. El cierre se escribe </\s*tag\b[^>]*> y el patron se
+      arma en un solo lugar para todas las etiquetas. Lo marco CodeQL como
+      js/bad-tag-filter de severidad alta el 29 de agosto de 2026, en el
+      commit que estreno sinControles, y el porton local no lo vio porque
+      CodeQL corre en la nube DESPUES de empujar.
+    # Se ancla en la LLAMADA con su literal de expresion regular, no en el
+    # texto suelto. Asi un comentario que explica el defecto, como el que hay
+    # en parsers.ts, no lo dispara. Un control con falsos positivos se termina
+    # ignorando entero, y con el se pierden los hallazgos de verdad.
+    pattern-regex: '\.replace\(\s*/.*<\\?/(?:select|script|style|iframe|object|embed|textarea|title|noscript)>'

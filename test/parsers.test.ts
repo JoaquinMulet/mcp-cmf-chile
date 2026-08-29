@@ -462,3 +462,46 @@ test("parser: una tabla de datos de verdad queda intacta", () => {
   assert.equal(filas.length, 1);
   assert.equal(filas[0]["Razón Social"], "EMPRESAS COPEC S.A.");
 });
+
+/**
+ * Un filtro de etiquetas por expresión regular se esquiva con un espacio.
+ *
+ * CodeQL lo marcó como `js/bad-tag-filter` de severidad alta el 29 de agosto
+ * de 2026, en el mismo commit que agregó `sinControles`. Mi expresión pedía
+ * `</script>` exacto, y el HTML permite `</script >`, `</script\n>` y
+ * `</SCRIPT>`. Cualquiera de esas 3 formas deja la etiqueta adentro, y con
+ * ella su texto, que es justo lo que la función existe para sacar.
+ *
+ * No es teórico para este servidor. la CMF sirve HTML legacy escrito a mano
+ * durante 20 años, y ahí conviven todas las variantes.
+ *
+ * El daño acá no es un XSS, porque esto no sanea nada que se vaya a mostrar.
+ * Es que el texto de un control se cuela como si fuera un dato, que es
+ * exactamente el defecto que `sinControles` vino a cerrar.
+ */
+const VARIANTES_DE_CIERRE = [
+  ["cierre normal", "</script>"],
+  ["con espacio antes del mayor", "</script >"],
+  ["con salto de línea", "</script\n>"],
+  ["en mayúsculas", "</SCRIPT>"],
+  ["con espacio después de la barra", "</ script>"],
+];
+
+for (const [comoEs, cierre] of VARIANTES_DE_CIERRE) {
+  test(`parser: un script que cierra ${comoEs} tampoco se vuelve dato`, () => {
+    const html = `<table>
+      <tr><td>Fecha</td><td>Monto</td></tr>
+      <tr><td>02/01/2024<script>var basura = "NO DEBE APARECER";${cierre}</td><td>1.234</td></tr>
+    </table>`;
+    const filas = htmlTablaAJson(html);
+    assert.ok(!JSON.stringify(filas).includes("NO DEBE APARECER"), `se coló el script: ${JSON.stringify(filas)}`);
+  });
+}
+
+test("parser: un desplegable que cierra con espacio tampoco se vuelve dato", () => {
+  const html = `<table>
+    <tr><td>Sociedades</td><td><select><option>COPEC S.A.</option></select ></td><td>a</td></tr>
+    <tr><td>Fecha</td><td><select><option>COPEC S.A.</option></select ></td><td>b</td></tr>
+  </table>`;
+  assert.ok(!JSON.stringify(htmlTablaAJson(html)).includes("COPEC"), "las opciones no son datos");
+});

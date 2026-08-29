@@ -84,10 +84,25 @@ interface FilaTabla {
  * el navegador nunca muestra.
  */
 function sinControles(html: string): string {
-  return html
-    .replace(/<select[\s\S]*?<\/select>/gi, " ")
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ");
+  return ["select", "script", "style"].reduce((texto, tag) => texto.replace(bloqueDe(tag), " "), html);
+}
+
+/**
+ * Un bloque `<tag …> … </tag>`, tolerando lo que el HTML de verdad permite.
+ *
+ * La primera versión pedía `</script>` exacto y CodeQL la marcó como
+ * `js/bad-tag-filter` de severidad alta, con razón. El HTML acepta
+ * `</script >`, `</script\n>`, `</ script>` y `</SCRIPT>`, y cualquiera de
+ * esas 4 formas dejaba la etiqueta adentro con todo su texto, que es justo lo
+ * que la función existe para sacar. No es teórico acá. la CMF sirve HTML
+ * legacy escrito a mano durante 20 años.
+ *
+ * La cura no es agregarle un espacio al patrón. Es que el patrón se arme en
+ * UN solo lugar, para las 3 etiquetas, y que las variantes estén cubiertas
+ * por construcción. `\b` evita que `select` coma un `<selection>`.
+ */
+function bloqueDe(tag: string): RegExp {
+  return new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/\\s*${tag}\\b[^>]*>`, "gi");
 }
 
 /** Las celdas de un `<tr>`, con su texto limpio y el enlace de su primer `<a>`. */
