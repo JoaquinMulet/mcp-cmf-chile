@@ -259,6 +259,25 @@ la paginación fue lo que los hizo visibles. Prescripción. Después de arreglar
 filtro o un límite, vuelve a mirar el dato completo. Lo que aparece ahí lleva tiempo estando
 mal, y el arreglo anterior es lo que te dejó verlo.
 
+**8. Un fixture en miniatura no reproduce el defecto, y miente en las 2 direcciones (28 de
+agosto de 2026).** Qué falló. Al arreglar el descarte de filas de `xlsAJson`, 2 fixtures
+inventados me hicieron creer que el arreglo estaba mal. Uno tenía un segundo piso de cabecera
+con 2 celdas, y `esHeader` exige 3. El otro usaba años pelados como nombres de columna, y un
+año es un número puro, así que esa fila ni siquiera se elegía como cabecera. Causa raíz. Los
+umbrales de `esHeader` dependen de la ANCHURA y del contenido de la fila, así que una tabla
+achicada cae en otra rama del código. Prescripción. El fixture se copia de la planilla real,
+con su número de columnas y su forma, y se recorta en FILAS, nunca en columnas. Bajar el
+archivo y volcar sus primeras filas cuesta un minuto, y sin eso el test mide otro caso.
+
+**9. Un conteo no sirve para decidir si algo se descarta bien (28 de agosto de 2026).** Qué
+falló. Para medir el descarte de filas, la pregunta no era cuántas se descartan sino CUÁLES.
+Un conteo no distingue una cabecera de segundo piso, que se descarta bien, de una fila de
+datos, que es la pérdida. Causa raíz. El instrumento medía la magnitud de algo cuya
+corrección es cualitativa. Prescripción. Cuando el criterio a evaluar es «esto es un X o un
+Y», el instrumento IMPRIME los casos y los mira una persona. El patrón apareció solo al
+verlos: el único segundo piso legítimo estaba a distancia 1 de la cabecera, y las 2 filas
+perdidas estaban a distancia 3.
+
 ## Gotchas
 
 - **La fuente se cae, y eso no es un defecto tuyo.** El servlet BaseDato devuelve a veces el
