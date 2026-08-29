@@ -402,3 +402,63 @@ test("xls: una fila de datos con separador de miles por coma sobrevive", () => {
   assert.equal(filas.length, 2, "ni la fila de fondos ni la de patrimonio se descartan");
   assert.equal(filas[1].col_0, "Patrimonio (1)");
 });
+
+/**
+ * Un formulario de búsqueda no es una tabla de datos.
+ *
+ * Las páginas legacy de la CMF meten sus controles dentro de una `<table>`.
+ * `htmlTablas` borraba las etiquetas y se quedaba con el TEXTO, así que las
+ * 400 opciones de un `<select>` terminaban pegadas en una sola celda, y esa
+ * celda pasaba a ser un nombre de columna.
+ *
+ * Medido el 28 de agosto de 2026. 6 operaciones respondían así, entre ellas
+ * `cmf_eeff_ifrs_sa` y `cmf_seguros_eeff`. Decían «total 2» y las 2 filas
+ * eran el desplegable de sociedades y el selector de mes y año. Cada llamada
+ * gastaba unos 45 mil caracteres y no entregaba ni una cifra.
+ *
+ * El arreglo va en el lector y no en cada tool. lo que el usuario ELIGE no es
+ * lo que el servidor RESPONDE, así que `select`, `option`, `script` y `style`
+ * se sacan antes de mirar la tabla. Sin ellos la fila queda vacía y la tool
+ * responde que no hay datos, que es la verdad.
+ */
+test("parser: las opciones de un desplegable no se vuelven una fila de datos", () => {
+  // La forma REAL de la página. 2 filas de controles, que es justo lo que
+  // hacía que la segunda saliera como si fuera un dato.
+  const listaSociedades = `<select name="soc">
+        <option value="76914344">76.914.344-0 A3 PROPERTY INVESTMENTS SPA</option>
+        <option value="96874030">96.874.030-K ABC S.A.</option>
+        <option value="90690000">90.690.000-9 EMPRESAS COPEC S.A.</option>
+      </select>`;
+  const formulario = `<table>
+    <tr><td>Sociedades</td><td>${listaSociedades}</td><td>Limpiar búsqueda</td></tr>
+    <tr><td>Fecha</td><td>${listaSociedades}</td><td>Mes Marzo Junio Septiembre Diciembre</td></tr>
+  </table>`;
+  const filas = htmlTablaAJson(formulario);
+  const texto = JSON.stringify(filas);
+  assert.ok(!texto.includes("A3 PROPERTY"), `las opciones no son datos: ${texto.slice(0, 200)}`);
+  assert.ok(!texto.includes("EMPRESAS COPEC"), "ni siquiera la que uno venía a buscar");
+});
+
+test("parser: un script o un estilo tampoco se vuelven datos", () => {
+  const conScript = `<table>
+    <tr><td>Fecha</td><td>Monto</td></tr>
+    <tr><td>02/01/2024<script>var x = "basura";</script></td><td>1.234</td></tr>
+    <tr><td>03/01/2024</td><td><style>.a{color:red}</style>5.678</td></tr>
+  </table>`;
+  const filas = htmlTablaAJson(conScript);
+  assert.equal(filas.length, 2);
+  assert.equal(filas[0].Fecha, "02/01/2024", "sin el script pegado al lado");
+  assert.equal(filas[1].Monto, "5.678", "sin el estilo pegado al lado");
+});
+
+test("parser: una tabla de datos de verdad queda intacta", () => {
+  // El lado opuesto. El arreglo toca a TODAS las tools que leen HTML, así que
+  // una tabla normal no puede cambiar en nada.
+  const normal = `<table>
+    <tr><td>RUT</td><td>Razón Social</td></tr>
+    <tr><td>90690000-9</td><td>EMPRESAS COPEC S.A.</td></tr>
+  </table>`;
+  const filas = htmlTablaAJson(normal);
+  assert.equal(filas.length, 1);
+  assert.equal(filas[0]["Razón Social"], "EMPRESAS COPEC S.A.");
+});

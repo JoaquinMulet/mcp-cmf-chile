@@ -66,8 +66,33 @@ interface FilaTabla {
   esHeader: boolean;
 }
 
+/**
+ * Saca de un HTML lo que el usuario ELIGE, que nunca es lo que el servidor
+ * RESPONDE.
+ *
+ * Las páginas legacy de la CMF meten sus controles dentro de una `<table>`, y
+ * como el lector borra las etiquetas y se queda con el texto, las 400
+ * opciones de un desplegable terminaban pegadas en una sola celda, y esa
+ * celda pasaba a ser un nombre de columna. Medido el 28 de agosto de 2026. 6
+ * operaciones respondían el formulario de búsqueda como si fueran datos,
+ * decían «total 2», gastaban unos 45 mil caracteres y no entregaban ni una
+ * cifra. Entre ellas los estados financieros de sociedades anónimas y los de
+ * las aseguradoras.
+ *
+ * Sin las opciones la fila queda vacía y la tool responde que no hay datos,
+ * que es la verdad. El script y el estilo se van por lo mismo. son texto que
+ * el navegador nunca muestra.
+ */
+function sinControles(html: string): string {
+  return html
+    .replace(/<select[\s\S]*?<\/select>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ");
+}
+
 /** Extrae todas las <table> de un HTML como arrays de filas (celdas decodificadas + enlace). */
-function htmlTablas(html: string): FilaTabla[][] {
+function htmlTablas(htmlCrudo: string): FilaTabla[][] {
+  const html = sinControles(htmlCrudo);
   const tablas: FilaTabla[][] = [];
   const reTabla = /<table[^>]*>([\s\S]*?)<\/table>/gi;
   let tm: RegExpExecArray | null;
