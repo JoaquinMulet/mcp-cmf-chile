@@ -301,6 +301,26 @@ barras invertidas se escribe con el tool Edit. Y la señal que lo delató no fue
 fue **probar el portón con el defecto puesto**. Un portón que no se prueba cerrando es un
 portón que ya podría estar roto.
 
+**12. Excluir del análisis es esconder, no resolver (29 de agosto de 2026).** Qué falló.
+`test/investigacion` generaba 65 de las 74 alertas de seguridad y tapaba las 3 que sí
+importaban, y la respuesta de su día fue excluirla de CodeQL. La carpeta siguió ahí un mes,
+sin que nadie la revisara, con 48 archivos que nadie ejecutaba. Causa raíz. Una exclusión
+resuelve el síntoma, que es el ruido en la lista, y deja el objeto intacto y fuera de vista.
+Prescripción. Cuando la razón para excluir algo es «no se despliega y no se va a arreglar», lo
+que corresponde es borrarlo. Con la carpeta fuera, la exclusión sobra y el análisis vuelve a
+cubrir todo. Lo vigila `test/exclusiones-vivas.test.ts`, que se pone rojo si una exclusión
+apunta a una carpeta que ya no existe, porque esa puerta abierta deja que alguien cree otra con
+ese nombre y nadie la revise.
+
+**13. Una exclusión que parece muerta puede ser un rodeo legítimo. Mídela antes de quitarla (29
+de agosto de 2026).** Qué falló. `knip.json` ignoraba `cloudflare` y `yauzl`, y ninguna de las
+2 estaba en `package.json`. Parecían las 2 restos viejos. Causa raíz. `cloudflare:workers` es
+un módulo del runtime de Workers y knip lee el prefijo como si fuera un paquete sin declarar,
+así que esa línea es la cura de un falso positivo, no basura. Prescripción. Quitar la exclusión
+y CORRER la herramienta antes de dar por muerta ninguna. Al quitarla, knip pasó a reportar
+«Unlisted dependencies (1) cloudflare». La razón queda escrita acá porque `knip.json` es JSON y
+no admite comentarios.
+
 ## Gotchas
 
 - **La fuente se cae, y eso no es un defecto tuyo.** El servlet BaseDato devuelve a veces el
