@@ -23,6 +23,8 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { sinRepetidas, filtrarCatalogo, nombrarPrimeraColumna } from "../src/tools/fondos-mutuos.js";
 import { separarNotas, separarTotales } from "../src/client/parsers.js";
 
@@ -246,4 +248,63 @@ test("una fila que ya trae cabecera de verdad no se toca", () => {
   // dejarla en paz en vez de pisar el nombre bueno.
   const conCabecera = { "Nombre Fondo": "SECURITY PLUS", RUN: "8253-8" };
   assert.deepEqual(nombrarPrimeraColumna([conCabecera], "Nombre")[0], conCabecera);
+});
+
+/**
+ * Las planillas de fondos mutuos se limpian DONDE SEA que se bajen.
+ *
+ * El defecto que esta comprobación existe para cerrar. las 5 planillas se
+ * bajan en 2 archivos distintos. `fondos-mutuos.ts` las limpia con
+ * `separarNotas`, y `paquete.ts` las volvía a bajar por su cuenta y las
+ * entregaba crudas. Una prueba externa lo encontró el 28 de agosto de 2026.
+ * el paquete mensual declaraba 23 filas de boletín, que son 8 tipos más el
+ * total del sistema más las 14 líneas del pie, todas revueltas.
+ *
+ * Es el reflejo de caso contra clase fallando. arreglé las 5 tools y no
+ * busqué al hermano que baja lo mismo desde otro archivo.
+ *
+ * La comprobación mira el fuente entero y se ancla en la RUTA de la CMF, que
+ * es lo que identifica a la planilla sin importar quién la baje.
+ */
+/** La salida cruda del parser saliendo directo, por return o por asignación. */
+const SALIDA_CRUDA = /(?:return|=)\s*xlsAJson\(/;
+
+test("toda planilla de fondos mutuos pasa por separarNotas, la baje quien la baje", () => {
+  const RUTAS = [
+    "fm.fm_bpr.php",
+    "fmdfm_excel2.php",
+    "fm.fm_comision.php",
+    "fm.inversiones_nacio.php",
+    "fm.inversiones_inter.php",
+    "fm.ffmm_agenerales.php",
+  ];
+  const dirTools = join(import.meta.dirname, "..", "src", "tools");
+  const culpables: string[] = [];
+  for (const archivo of readdirSync(dirTools).filter((f) => f.endsWith(".ts"))) {
+    const lineas = readFileSync(join(dirTools, archivo), "utf8").split("\n");
+    for (const [i, linea] of lineas.entries()) {
+      if (!RUTAS.some((r) => linea.includes(r))) continue;
+      // El criterio no es que aparezca tal o cual nombre de función, que
+      // cambiaría con cualquier refactor. Es que la salida CRUDA del parser
+      // no salga directo, ni por un return ni por una asignación. Quien la
+      // envuelva, y cómo se llame, da igual.
+      const bloque = lineas.slice(i, i + 12).join("\n");
+      if (SALIDA_CRUDA.test(bloque)) {
+        culpables.push(`${archivo}:${i + 1} -> ${linea.trim().slice(0, 70)}`);
+      }
+    }
+  }
+  assert.deepEqual(
+    culpables,
+    [],
+    `estas descargas entregan la planilla cruda, con las notas al pie contadas como fondos:\n${culpables.join("\n")}`,
+  );
+});
+
+test("la comprobación anterior SÍ puede fallar", () => {
+  // La prueba de la prueba, con el patrón exacto que se está prohibiendo.
+  const crudo = "const res = await bajar();\n  return xlsAJson(res);";
+  const envuelto = "const res = await bajar();\n  return limpiar(xlsAJson(res));";
+  assert.ok(SALIDA_CRUDA.test(crudo), "el barrido tiene que ver la salida cruda");
+  assert.ok(!SALIDA_CRUDA.test(envuelto), "y NO marcar la envuelta, se llame como se llame el envoltorio");
 });

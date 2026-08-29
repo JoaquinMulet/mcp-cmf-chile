@@ -2,7 +2,8 @@
 import { paqueteSchema, paqueteDocumentosSchema, fondosPaqueteSchema } from "../util/schemas-output.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { getLegacy, postLegacy, getLegacyBinario, postLegacyBinario, fetchCmfBinarioCached, type CmfEnv } from "../client/cmf-client.js";
-import { fixMojibake, decodificarEntidades, htmlTablaAJson, xlsAJson } from "../client/parsers.js";
+import { fixMojibake, decodificarEntidades, htmlTablaAJson, xlsAJson, separarNotas, separarTotales} from "../client/parsers.js";
+import { nombrarPrimeraColumna } from "./fondos-mutuos.js";
 import { fromError, toolOk, } from "../util/errors.js";
 import { barrerPeriodos, conSemafotoGlobal, estimarTiempoS, mb } from "../util/paquete.js";
 import { carpetaEmpresa, extensionDeContentType, rutaUnica, tipoDocumento, urlDocumentoCmf } from "../util/nombres.js";
@@ -676,6 +677,21 @@ export function registrarToolsPaquete(server: McpServer, env: CmfEnv): void {
         try {
           const specs: { clave: string; tarea: () => Promise<{ nombre: string; filas: Record<string, unknown>[]; total: number }> }[] = [];
 
+          /**
+           * La misma limpieza que aplican las tools individuales.
+           *
+           * Estas 5 planillas se bajan en 2 archivos distintos, y acá se
+           * entregaban crudas. El paquete declaraba 23 filas de boletín, que
+           * son 8 tipos más el total del sistema más las 14 líneas del pie,
+           * todas revueltas. Lo encontró una prueba externa el 28 de agosto
+           * de 2026, arreglando las tools y no a su hermano.
+           */
+          const limpiar = (filas: Record<string, unknown>[]): Record<string, unknown>[] => {
+            const { datos } = separarNotas(filas);
+            const { datos: sinTotales } = separarTotales(datos);
+            return nombrarPrimeraColumna(sinTotales, "Nombre");
+          };
+
           const seccionDefs: Record<string, () => Promise<Record<string, unknown>[]>> = {
             bpr: async () => {
               const res = await getLegacyBinario(
@@ -683,7 +699,7 @@ export function registrarToolsPaquete(server: McpServer, env: CmfEnv): void {
                 { out: "excel", admins: "0", tipofondo: "0", moneda: "0", mes_peri: mes, anio_peri: anio },
                 env,
               );
-              return xlsAJson(res);
+              return limpiar(xlsAJson(res));
             },
             costos: async () => {
               const res = await postLegacyBinario(
@@ -692,7 +708,7 @@ export function registrarToolsPaquete(server: McpServer, env: CmfEnv): void {
                 env,
                 { lang: "es" },
               );
-              return xlsAJson(res);
+              return limpiar(xlsAJson(res));
             },
             comisiones: async () => {
               const res = await getLegacyBinario(
@@ -700,23 +716,23 @@ export function registrarToolsPaquete(server: McpServer, env: CmfEnv): void {
                 { out: "excel", admins: "0", tipofondo: "0", moneda: "0", mes, anio },
                 env,
               );
-              return xlsAJson(res);
+              return limpiar(xlsAJson(res));
             },
             inversiones_nacio: async () => {
               const res = await getLegacyBinario(
                 "/institucional/estadisticas/fm.inversiones_nacio.php",
-                { out: "excel", consulta: "fondos", admins: "0", tipofondo: "0", moneda: "0", mes, anio },
+                { out: "excel", lang: "es", consulta: "fondos", admins: "0", tipofondo: "0", moneda: "0", mes, anio, tipoinversion: "naci", eminaci: "0" },
                 env,
               );
-              return xlsAJson(res);
+              return limpiar(xlsAJson(res));
             },
             inversiones_inter: async () => {
               const res = await getLegacyBinario(
                 "/institucional/estadisticas/fm.inversiones_inter.php",
-                { out: "excel", consulta: "fondos", admins: "0", tipofondo: "0", moneda: "0", mes, anio },
+                { out: "excel", lang: "es", consulta: "fondos", admins: "0", tipofondo: "0", moneda: "0", mes, anio, tipoinversion: "inter", eminter: "0" },
                 env,
               );
-              return xlsAJson(res);
+              return limpiar(xlsAJson(res));
             },
           };
 
