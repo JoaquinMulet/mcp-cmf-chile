@@ -215,5 +215,24 @@ if (malAnotados.length > 0) {
   process.stdout.write('\nROJO. Hay hallazgos con un estado invalido en el archivo de triaje.\n')
   process.exit(1)
 }
-if (sinTriar.length > 0) process.exit(1)
-process.stdout.write('\nVERDE. Ningun hallazgo sin triar.\n')
+// CodeQL informa, no bloquea AQUI, y la razon es que su senal siempre esta
+// atrasada. corre en la nube y solo analiza lo YA empujado, asi que una
+// alerta abierta describe el commit anterior y no el que se va a empujar.
+// Bloquear con ella impide empujar justamente el commit que la arregla, que
+// es lo que paso el 29 de agosto de 2026 con js/bad-tag-filter.
+//
+// No queda sin porton. El que bloquea corre en la nube, en el flujo de
+// Seguridad, DESPUES del analisis del commit nuevo, que es donde su senal
+// esta fresca. Y la clase se cubre ademas con una regla propia de semgrep,
+// que si entiende el codigo nuevo y si bloquea aca.
+//
+// La regla de fondo. cada porton bloquea donde su senal esta FRESCA. Un
+// porton que juzga con datos viejos es un porton que a veces miente.
+const sinTriarLocales = sinTriar.filter((h) => h.fuente !== 'codeql')
+const codeqlPendientes = sinTriar.length - sinTriarLocales.length
+if (codeqlPendientes > 0) {
+  process.stdout.write(`\n${codeqlPendientes} alerta(s) de CodeQL sin triar. NO bloquean aca, porque su\n`)
+  process.stdout.write('analisis es del commit anterior. El porton que las bloquea corre en la nube.\n')
+}
+if (sinTriarLocales.length > 0) process.exit(1)
+process.stdout.write('\nVERDE. Ningun hallazgo local sin triar.\n')
