@@ -22,6 +22,13 @@ npm test
 echo "[pre-push] verificacion exhaustiva contra la CMF real..."
 npx tsx test/verify-endpoints.ts
 
+# El mismo comando que corre el flujo de Seguridad. Solo las dependencias
+# que llegan al Worker desplegado. Sin este paso el porton local corria
+# MENOS que la CI, y el 2 de septiembre de 2026 eso dejo 3 commits en rojo
+# en el remoto sin que nadie local lo viera.
+echo "[pre-push] vulnerabilidades conocidas en dependencias de produccion..."
+npm audit --omit=dev --audit-level=high
+
 echo "[pre-push] verde. Esto es lo mismo que va a correr el CI."
 
 echo "[pre-push] trinquete de calidad..."

@@ -336,6 +336,22 @@ el camino más fiable, que para un modelo con visión es leer el PDF como imagen
 en `notaLimitacionesPdf` y `RESUMEN_LIMITACIONES_PDF` de `src/pdf.ts`, y
 `test/limitaciones-pdf.test.ts` falla si una tool convierte un PDF sin entregarlo.
 
+**15. Un push que termina en 0 no es una CI verde (2 de septiembre de 2026).** Qué falló.
+Acepté 2 PR, empujé 2 commits, desplegué y declaré todo terminado. Los 3 flujos de Seguridad
+de esos commits estaban en rojo en GitHub, y lo vio el dueño en su correo, no yo. Causa raíz.
+Doble. Primero, `npm audit` corre solo en la nube y una vulnerabilidad publicada después del
+último commit es invisible para el `pre-push`. Segundo, yo leí el código de salida del push
+como si fuera el veredicto del remoto, y el push solo dice que el commit llegó. Prescripción.
+El `pre-push` corre ahora el mismo `npm audit --omit=dev --audit-level=high` que la CI. Y
+`npm run deploy` lleva un `predeploy` que es `herramientas/ci-remoto.mjs`: espera los flujos de
+GitHub del commit actual y se niega a desplegar si alguno está rojo o si el commit no se
+empujó. **Después de aceptar un PR o de empujar, el trabajo no está terminado hasta leer la
+conclusión de la CI remota**, con `gh run list --commit <sha>` o con `npm run ci-remoto`. Y la
+clase la vigila `test/porton-local-igual-ci.test.ts`: lee los flujos de `.github/workflows`
+con el parser YAML real y falla si algún comando de la CI no está en un hook ni en un script
+local, y falla si `deploy` pierde su `predeploy`. Con el hook viejo se puso roja por las 2
+razones exactas antes de aplicar el arreglo.
+
 ## Gotchas
 
 - **La fuente se cae, y eso no es un defecto tuyo.** El servlet BaseDato devuelve a veces el
@@ -360,6 +376,12 @@ en `notaLimitacionesPdf` y `RESUMEN_LIMITACIONES_PDF` de `src/pdf.ts`, y
 1. Trabaja y commitea en `master`, con el árbol limpio.
 2. `git push`. El `pre-push` corre lo mismo que el CI, incluida la verificación contra la CMF
    real, y bloquea si algo está rojo o si queda un hallazgo sin triar.
-3. `npm run deploy`.
+3. `npm run ci-remoto`. Espera los flujos de GitHub del commit y falla si alguno está rojo. El
+   push que termina bien solo dice que el commit llegó, no que el remoto lo aprobó. Lo mismo
+   vale después de aceptar un PR de dependabot: se lee la CI del merge.
+4. `npm run deploy`. Su `predeploy` vuelve a correr `ci-remoto`, así que con la CI en rojo o
+   con un commit sin empujar el deploy se niega.
+5. `npm run verificar-desplegado`. Habla con la instancia viva y es lo único que prueba el
+   borde. Un servidor MCP ES un protocolo, y eso solo se prueba cruzándolo.
 4. `npm run verificar-desplegado`. Habla con la instancia viva y es lo único que prueba el
    borde. Un servidor MCP ES un protocolo, y eso solo se prueba cruzándolo.
