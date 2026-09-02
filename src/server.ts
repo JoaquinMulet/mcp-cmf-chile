@@ -10,6 +10,7 @@ import { registrarResources } from "./resources.js";
 import { registrarPrompts } from "./prompts.js";
 import { registrarModoCodigo } from "./tools/code-mode.js";
 import type { Ejecutor } from "./sandbox.js";
+import { RESUMEN_LIMITACIONES_PDF } from "./pdf.js";
 
 /**
  * Factory per-request: crea un McpServer fresco con todas las tools/resources/prompts.
@@ -85,6 +86,7 @@ export function createServer(env: CmfEnv = {}, opciones: OpcionesServidor = {}):
         "- Fechas en formato YYYY-MM-DD; los RUTs se aceptan con o sin dígito verificador (ej: 90690000 o 90690000-5).",
         "- Resultados paginados: las tools con offset/limit devuelven next_offset/total; itere para ver todas las filas (nunca asuma que la primera página es el total).",
         "- Los documentos firmados se gestionan en el servidor; para leer el contenido de un PDF: cmf_documento_markdown (token s567 o url completa del documento).",
+        `- ${RESUMEN_LIMITACIONES_PDF}`,
         "- Si una consulta devuelve 'sin datos', verifique el período o la norma (IFRS vs NCH) antes de concluir que la información no existe; si el error menciona que la fuente de la CMF no devolvió datos, es una condición del sistema de la CMF (verifique la página oficial indicada) y no implica ausencia de datos.",
       ].join("\n"),
     },

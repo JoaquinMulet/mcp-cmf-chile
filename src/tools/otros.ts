@@ -11,7 +11,7 @@ import { unzip, } from "../util/unzip.js";
 function decodificarLatin1(bytes: ArrayBuffer): string {
   return new TextDecoder("latin1").decode(bytes);
 }
-import { pdfAMarkdown } from "../pdf.js";
+import { pdfAMarkdown, notaLimitacionesPdf, RESUMEN_LIMITACIONES_PDF } from "../pdf.js";
 import { procesarTablasEEFF, textoVerificacion, textoAviso } from "../eeff-tables.js";
 import { paginar } from "../util/paginate.js";
 import { avisoDeTramo, paginacion, toolOkPaginado, toolOkTabla } from "../util/tramos.js";
@@ -792,7 +792,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: documentoMarkdownSchema,
       title: "Convertir documento PDF de la CMF a Markdown",
       description:
-        "Descarga un documento firmado de la CMF (EEFF, hechos, sanciones, resoluciones, normas) y lo convierte a Markdown legible para el agente (tablas, encabezados, listas) usando pdf-inspector; los PDFs escaneados se indican porque no hay OCR. Acepte el documento con token (s567 de hechos/sanciones/resoluciones) o url (URL absoluta de la CMF). El documento se entrega PAGINADO, nunca recortado sin salida: max_chars es el tamaño del tramo (default 30000) y offset_chars el punto donde empieza; si queda más, la respuesta dice con qué offset_chars pedir el tramo siguiente, así que cualquier documento se puede leer entero. Use esta tool para leer el contenido de un PDF; para el binario original use cmf_documento_descargar y para inspeccionar solo un token cmf_documento_info.",
+        `Descarga un documento firmado de la CMF (EEFF, hechos, sanciones, resoluciones, normas) y lo convierte a Markdown legible para el agente (tablas, encabezados, listas) usando pdf-inspector; los PDFs escaneados se indican porque no hay OCR. ${RESUMEN_LIMITACIONES_PDF} Acepte el documento con token (s567 de hechos/sanciones/resoluciones) o url (URL absoluta de la CMF). El documento se entrega PAGINADO, nunca recortado sin salida: max_chars es el tamaño del tramo (default 30000) y offset_chars el punto donde empieza; si queda más, la respuesta dice con qué offset_chars pedir el tramo siguiente, así que cualquier documento se puede leer entero. Use esta tool para leer el contenido de un PDF; para el binario original use cmf_documento_descargar y para inspeccionar solo un token cmf_documento_info.`,
       inputSchema: z.object({
         token: z.string().min(10).optional().describe("Token s567 del documento (de hechos/sanciones/resoluciones)"),
         url: z.string().url().optional().describe("URL absoluta de un documento de la CMF (ej: ver_archivo.php del compendio)"),
@@ -833,7 +833,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         const textoFinal = pagina.tramo;
         const tipoLimpio = pdfType.toLowerCase().replace("textbased", "text-based");
         return toolOk(
-          `${verificacion}${avisoFusion}\n\nDocumento convertido a Markdown (tipo: ${tipoLimpio}, ${Math.round(bytes.length / 1024)} KB, ${textoMd.length} caracteres):\n\n${textoFinal}`,
+          `${notaLimitacionesPdf(pdfType)}${verificacion}${avisoFusion}\n\nDocumento convertido a Markdown (tipo: ${tipoLimpio}, ${Math.round(bytes.length / 1024)} KB, ${textoMd.length} caracteres):\n\n${textoFinal}`,
           {
             pdf_type: pdfType,
             tamano_kb: Math.round(bytes.length / 1024),

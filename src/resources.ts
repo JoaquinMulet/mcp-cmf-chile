@@ -2,6 +2,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import type { CmfEnv } from "./client/cmf-client.js";
 import { obtenerCaptcha } from "./captcha.js";
+import { RESUMEN_LIMITACIONES_PDF } from "./pdf.js";
 
 /** Recursos MCP (URIs cmf://) — templates registrados en resources/templates/list. */
 
@@ -156,7 +157,7 @@ description: Procedimiento para consultar datos públicos de la CMF de Chile (em
 
 1. \`cmf_buscar_entidad\` con nombre, RUT o ticker para obtener el RUT canónico y el tipo de entidad.
 2. \`cmf_empresa_info\` (rut): identificación.
-3. \`cmf_empresa_eeff\` (rut, anio, mes 03/06/09/12, tipo C/I, norma IFRS/NCH): documentos del período; use modo=markdown para leer el PDF auditado convertido a Markdown (el HTML de la CMF no trae las cifras).
+3. \`cmf_empresa_eeff\` (rut, anio, mes 03/06/09/12, tipo C/I, norma IFRS/NCH): documentos del período; use modo=markdown para leer el PDF auditado convertido a Markdown (el HTML de la CMF no trae las cifras). ${RESUMEN_LIMITACIONES_PDF}
 4. \`cmf_empresa_hechos\` (rut, desde, hasta): hechos esenciales.
 5. \`cmf_empresa_sanciones\` y \`cmf_empresa_resoluciones\`: cumplimiento normativo.
 6. \`cmf_empresa_asg\` (rut, anio): indicadores ESG si existen.

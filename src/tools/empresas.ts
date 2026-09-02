@@ -8,7 +8,7 @@ import { fromError, toolOk, toolError, toolErrorFuente, sinDatosOFuente, resumir
 import { paginar } from "../util/paginate.js";
 import { urlDocumentoCmf } from "../util/nombres.js";
 import { bytesABase64 } from "../util/zip.js";
-import { pdfAMarkdown } from "../pdf.js";
+import { pdfAMarkdown, notaLimitacionesPdf, RESUMEN_LIMITACIONES_PDF } from "../pdf.js";
 import { procesarTablasEEFF, textoVerificacion, textoAviso } from "../eeff-tables.js";
 import { avisoDeTramo, paginacion, toolOkPaginado, toolOkTabla } from "../util/tramos.js";
 import { enteroSchema,
@@ -277,7 +277,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       annotations: { readOnlyHint: true, destructiveHint: false },
       title: "Estados financieros (EEFF) de empresa",
       description:
-        "Devuelve los estados financieros de un emisor (pestanía 3) para un período, consolidado o individual, IFRS o NCH, con los PDFs oficiales del período. modo=documentos: lista de PDFs (EEFF, análisis razonado, declaración, XBRL) con su url — para leer uno pase esa url completa a cmf_documento_markdown. modo=markdown: convierte además el PDF auditado de los EEFF a Markdown para leer las cifras directamente (el HTML de la CMF viene sin líneas: la fuente real de las cifras son los PDFs). Verifique los períodos disponibles con cmf_empresa_eeff_historial; para el sistema agregado de todas las SA use cmf_eeff_ifrs_sa.",
+        `Devuelve los estados financieros de un emisor (pestanía 3) para un período, consolidado o individual, IFRS o NCH, con los PDFs oficiales del período. modo=documentos: lista de PDFs (EEFF, análisis razonado, declaración, XBRL) con su url — para leer uno pase esa url completa a cmf_documento_markdown. modo=markdown: convierte además el PDF auditado de los EEFF a Markdown para leer las cifras directamente (el HTML de la CMF viene sin líneas: la fuente real de las cifras son los PDFs). ${RESUMEN_LIMITACIONES_PDF} Verifique los períodos disponibles con cmf_empresa_eeff_historial; para el sistema agregado de todas las SA use cmf_eeff_ifrs_sa.`,
       inputSchema: z.object({
         rut: rutSchema.optional(),
         query: rutSchema.optional().describe("Alias legacy de rut (use rut)"),
@@ -363,7 +363,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         const pagina = paginarTexto(textoMd, offset_chars, max_chars);
         const truncado = pagina.siguiente !== null;
         const textoFinal = pagina.tramo;
-        const texto = `${verificacion}${avisoFusion}\n\nEEFF ${rutFinal} período ${periodo} (${tipo === "C" ? "Consolidado" : "Individual"}, ${norma}) — PDF auditado convertido a Markdown (${pdfType}, ${Math.round(bytes.length / 1024)} KB, ${textoMd.length} caracteres):\n\n${textoFinal}`;
+        const texto = `${notaLimitacionesPdf(pdfType)}${verificacion}${avisoFusion}\n\nEEFF ${rutFinal} período ${periodo} (${tipo === "C" ? "Consolidado" : "Individual"}, ${norma}) — PDF auditado convertido a Markdown (${pdfType}, ${Math.round(bytes.length / 1024)} KB, ${textoMd.length} caracteres):\n\n${textoFinal}`;
         return toolOk(texto, {
           ...base,
           pdf_type: pdfType,

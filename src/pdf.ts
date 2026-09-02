@@ -34,9 +34,40 @@ function enMb(bytes: number): string {
  */
 const COMO_SEGUIR =
   "Usa modo=documentos (devuelve la URL del PDF) y descárgalo tú. "
+  + "Si tu modelo tiene visión, lee sus páginas como imagen: es la lectura más fiable. "
   + "Para pasarlo a Markdown localmente, recomendamos pdf-inspector (Firecrawl, MIT): "
   + "https://github.com/firecrawl/pdf-inspector — el mismo motor que usa este servidor. "
   + "Repositorio del proyecto: https://github.com/JoaquinMulet/mcp-cmf-chile";
+
+/**
+ * Resumen de una frase para las DESCRIPCIONES de las tools y las
+ * instrucciones del servidor. El modelo lo lee ANTES de llamar, y ahí es
+ * donde uno con visión puede elegir el PDF en vez del Markdown.
+ */
+export const RESUMEN_LIMITACIONES_PDF =
+  "La conversión a Markdown es una aproximación: sin OCR, con tablas que pueden fusionar "
+  + "conceptos o correr cifras de columna. Si el modelo tiene visión, lo más fiable es "
+  + "descargar el PDF y leer sus páginas como imagen, usando el Markdown solo para ubicar la página.";
+
+/**
+ * Nota completa que viaja en CADA respuesta que convierte un PDF.
+ *
+ * Medido el 2 de septiembre de 2026 con los EEFF de Copec 2026-03: al
+ * cambiar la versión del motor, las filas separadas pasaron de 181 a 107
+ * y ninguna versión cuadró el balance. El texto es una aproximación y el
+ * modelo tiene que saberlo antes de citar una cifra, no después.
+ */
+export function notaLimitacionesPdf(pdfType: string): string {
+  const escaneado = pdfType === "Scanned" || pdfType === "ImageBased";
+  const cabecera = escaneado
+    ? "Este PDF es escaneado o de imágenes: el motor no tiene OCR y el texto extraído puede venir vacío o incompleto."
+    : "LIMITACIONES DE LA CONVERSIÓN PDF A MARKDOWN.";
+  return `${cabecera}
+- El motor (pdf-inspector) extrae texto sin OCR: un PDF escaneado sale vacío.
+- En tablas anchas puede fusionar varios conceptos en una celda, correr una cifra a la columna vecina o perder el encabezado de período. Las cifras son las del PDF, pero su posición puede estar equivocada.
+- Cada versión del motor extrae distinto. El mismo PDF puede dar tablas distintas mañana, así que este texto no es una fuente estable para citar.
+- Si tu modelo tiene visión, la lectura más fiable es descargar el PDF (modo=documentos o cmf_documento_descargar) y leer sus páginas como imagen. Usa este Markdown para ubicar la página y verifica cada cifra en la imagen antes de citarla.`;
+}
 
 /** El documento pesa más de lo que el motor puede cargar. Causa cierta. */
 function errorPdfMuyGrande(bytes: Uint8Array): Error {
