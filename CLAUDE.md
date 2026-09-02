@@ -321,6 +321,21 @@ y CORRER la herramienta antes de dar por muerta ninguna. Al quitarla, knip pasó
 «Unlisted dependencies (1) cloudflare». La razón queda escrita acá porque `knip.json` es JSON y
 no admite comentarios.
 
+**14. Un cambio de versión del motor de PDF pasa verde en la CI y cambia las cifras que el
+servidor entrega (2 de septiembre de 2026).** Qué falló. Dependabot subió pdf-inspector de
+1.15.0 a 1.17.0 con toda la CI en verde y la interfaz del módulo idéntica. Sobre el mismo PDF
+de Copec 2026-03, las filas separadas por `eeff-tables` pasaron de 181 a 107 y las fusionadas
+pendientes de 55 a 7. Ninguna de las 2 versiones cuadró el balance. Causa raíz. La CI prueba
+que la conversión devuelve texto, no qué texto. Y `eeff-tables` está calibrado al orden en que
+una versión concreta del motor entrega los períodos. Prescripción. Antes de aceptar un cambio
+de versión del motor, instala las 2 versiones en la carpeta de borradores, corre `processPdf`
+sobre un estado financiero real y pasa los 2 Markdown por `procesarTablasEEFF`. Compara filas
+separadas, fusionadas pendientes y cuadratura. Y la regla del dueño que salió de acá. **una tool
+que transforma una fuente le declara al modelo qué pierde en la transformación**, y le ofrece
+el camino más fiable, que para un modelo con visión es leer el PDF como imagen. El texto vive
+en `notaLimitacionesPdf` y `RESUMEN_LIMITACIONES_PDF` de `src/pdf.ts`, y
+`test/limitaciones-pdf.test.ts` falla si una tool convierte un PDF sin entregarlo.
+
 ## Gotchas
 
 - **La fuente se cae, y eso no es un defecto tuyo.** El servlet BaseDato devuelve a veces el
