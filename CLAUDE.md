@@ -646,6 +646,18 @@ Regla del dueño. si la fuente no tiene arreglo, la tool se elimina, porque una 
 siempre responde vacío enseña al modelo a desconfiar de las demás. La misma información, para
 fondos de inversión, la entrega `cmf_fondos_comisiones_maximas` con `tipo=fi` y `circular=1965`.
 
+**34. BEST se guarda por demanda en KV, no se baja por adelantado (3 de septiembre de
+2026).** Qué se decidió, y por qué. El dueño preguntó si convenía bajar los 5.180 cuadros
+una vez al día. No. la API oficial permite 100 llamadas al día, los términos de uso de BEST
+prohíben la extracción masiva, casi todos los cuadros cambian una vez al mes, y el plan gratis
+de Workers limita cada ejecución a 50 llamadas de salida. Prescripción. `bestJson` guarda
+cada respuesta en `CMF_KV` con la clave `best:v1:<ruta>` y vence a las 24 horas, o a las 6
+para los cuadros diarios (`DAYL` en el tag) y las tasas TMC, que es lo que BEST recomienda en
+su documentación. Un error nunca se guarda, y una respuesta servida desde la caché lo dice en
+sus notas con la hora de Chile en que se guardó, porque un dato viejo sin fecha es un dato
+engañoso. Si cambia la FORMA de lo guardado, sube la versión de la clave. Una copia completa
+mensual en R2 es posible, pero exige el plan pagado y una clave de la CMF con cuota mayor.
+
 ## Gotchas
 
 - **La fuente se cae, y eso no es un defecto tuyo.** El servlet BaseDato devuelve a veces el

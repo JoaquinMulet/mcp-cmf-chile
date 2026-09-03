@@ -12,6 +12,7 @@ import { createServer } from "../src/server.js";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { Client } from "@modelcontextprotocol/client";
 import { fechaDeBest, filaDeBusqueda, filasDeCuadro } from "../src/tools/best.js";
+import { horasDeCache } from "../src/client/best.js";
 
 const FIX = join(import.meta.dirname, "fixtures");
 const leer = (n: string) => readFileSync(join(FIX, n), "utf-8");
@@ -129,6 +130,85 @@ test("un tag que BEST no conoce es un error que nombra la página oficial, no ce
     const r = await client.callTool({ name: "cmf_best_cuadro", arguments: { tag: "NO_EXISTE" } });
     assert.ok(r.isError);
     assert.match((r.content as Array<{ text: string }>)[0].text, /best\.cmfchile\.cl\/series\/cuadro\/NO_EXISTE/);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+/**
+ * La caché por demanda. La primera consulta va a BEST y se guarda en KV con
+ * vencimiento; la segunda no toca BEST y lo dice en las notas. Los términos
+ * de BEST piden no extraer en masa, y esta es la forma de cumplirlos sin
+ * bajar nada por adelantado.
+ */
+function kvDeMentira() {
+  const mapa = new Map<string, { v: string; ttl?: number }>();
+  return {
+    mapa,
+    get: async (k: string) => mapa.get(k)?.v ?? null,
+    put: async (k: string, v: string, o?: { expirationTtl?: number }) => {
+      mapa.set(k, { v, ttl: o?.expirationTtl });
+    },
+  };
+}
+
+async function clienteConKv(kv: ReturnType<typeof kvDeMentira>) {
+  const server = createServer({ CMF_RATE_LIMIT_MS: "0", CMF_KV: kv } as never);
+  const [st, ct] = InMemoryTransport.createLinkedPair();
+  await server.connect(st);
+  const client = new Client({ name: "test", version: "1.0.0" }, {});
+  await client.connect(ct);
+  return client;
+}
+
+test("con KV, la segunda consulta del mismo cuadro no toca BEST y las notas dicen cuándo se guardó", async () => {
+  const { llamadas, restaurar } = conFetchBest();
+  try {
+    const kv = kvDeMentira();
+    const client = await clienteConKv(kv);
+    const args = { tag: "SBIF_CONT_EPLME_ACTIV_COL_TOT_CART", periodos: 2 };
+    const primera = await client.callTool({ name: "cmf_best_cuadro", arguments: args });
+    assert.ok(!primera.isError, JSON.stringify(primera.content));
+    const idas = llamadas.filter((l) => l.url.includes("NumPeriodos=2")).length;
+    assert.equal(idas, 1);
+    assert.ok(!(primera.content as Array<{ text: string }>)[0].text.includes("guardada en la caché"), "la primera vez no viene de la caché");
+    const [clave, guardado] = [...kv.mapa.entries()][0];
+    assert.match(clave, /^best:v1:\/public\/Cuadrosv3\?NumPeriodos=2/);
+    assert.equal(guardado.ttl, 24 * 3600, "un cuadro mensual dura 24 horas");
+
+    const segunda = await client.callTool({ name: "cmf_best_cuadro", arguments: args });
+    assert.equal(llamadas.filter((l) => l.url.includes("NumPeriodos=2")).length, idas, "BEST no se volvió a consultar");
+    const texto = (segunda.content as Array<{ text: string }>)[0].text;
+    assert.match(texto, /guardada en la caché del servidor el .* BEST se vuelve a consultar 24 horas después/);
+    assert.equal((segunda.structuredContent as { total: number }).total, 12, "y los datos son los mismos");
+
+    // Un cuadro diario y las tasas duran 6 horas, como recomienda BEST.
+    assert.equal(horasDeCache("/public/Cuadrosv3?NumPeriodos=22&Tag=SBIF_CCO_MTO_DAYL"), 6);
+    assert.equal(horasDeCache("/public/tmc/tasas/20260901"), 6);
+    assert.equal(horasDeCache("/public/Cuadrosv3/tag/SBIF_CONT_EPLME_ACTIV_COL_TOT_CART"), 24);
+  } finally {
+    restaurar();
+  }
+});
+
+test("un error de BEST no se guarda en la caché", async () => {
+  const original = globalThis.fetch;
+  let veces = 0;
+  globalThis.fetch = (async () => {
+    veces++;
+    return new Response("", { status: 503 });
+  }) as typeof fetch;
+  try {
+    const kv = kvDeMentira();
+    const client = await clienteConKv(kv);
+    const a = await client.callTool({ name: "cmf_best_cuadro", arguments: { tag: "TAG_CAIDO" } });
+    const trasLaPrimera = veces;
+    const b = await client.callTool({ name: "cmf_best_cuadro", arguments: { tag: "TAG_CAIDO" } });
+    assert.ok(a.isError && b.isError);
+    assert.equal(kv.mapa.size, 0, "nada guardado");
+    // El cliente reintenta un 5xx, así que se mide que la segunda llamada
+    // volvió a salir a la red, no cuántas veces.
+    assert.ok(trasLaPrimera >= 1 && veces > trasLaPrimera, `la segunda vez se volvió a intentar (${trasLaPrimera} → ${veces})`);
   } finally {
     globalThis.fetch = original;
   }

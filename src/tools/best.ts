@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
-import { BEST_SITIO, bestJson, hoyEnChile } from "../client/best.js";
+import { BEST_SITIO, bestJson, hoyEnChile, notaDeCache } from "../client/best.js";
 import type { CmfEnv } from "../client/cmf-client.js";
 import { decodificarEntidades } from "../client/parsers.js";
 import { fromError } from "../util/errors.js";
@@ -49,10 +49,12 @@ const PAGINA_TASAS = `${BEST_SITIO}/datos/tasas`;
 export async function tasasTmcDeBest(fechaIso: string, env: CmfEnv): Promise<{ filas: Record<string, unknown>[]; notas: string[] }> {
   const aaaammdd = fechaIso.replace(/-/g, "");
   const que = "Tasas de interés";
-  const [tasas, notas] = await Promise.all([
+  const [rTasas, rNotas] = await Promise.all([
     bestJson<{ result: TasaTmc[] }>(`/public/tmc/tasas/${aaaammdd}`, env, { que, paginaOficial: PAGINA_TASAS }),
     bestJson<{ result: NotaTmc[] }>(`/public/tmc/notas/${aaaammdd}`, env, { que, paginaOficial: PAGINA_TASAS }),
   ]);
+  const tasas = rTasas.datos;
+  const notas = rNotas.datos;
   const filas = (tasas.result ?? []).map((t) => ({ ...t }));
   // Cada nota dice a qué segmento y a qué tasa (tip o tmc) aplica. Eso se
   // escribe en la nota misma, porque el texto es lo único que lee el modelo.
@@ -64,7 +66,7 @@ export async function tasasTmcDeBest(fechaIso: string, env: CmfEnv): Promise<{ f
   // de hoy es un dato engañoso.
   const hoy = hoyEnChile();
   const avisoFuturo = fechaIso > hoy ? [`La fecha ${fechaIso} es futura. BEST entrega las tasas vigentes hoy (${hoy}), publicadas en fechaPublicacion; no existe una publicación para esa fecha.`] : [];
-  return { filas, notas: ["Tasas anuales, en porcentaje, publicadas en el Diario Oficial en fechaPublicacion.", ...avisoFuturo, ...textoNotas] };
+  return { filas, notas: ["Tasas anuales, en porcentaje, publicadas en el Diario Oficial en fechaPublicacion.", ...avisoFuturo, ...textoNotas, ...notaDeCache(rTasas.cache)] };
 }
 
 // ---------------------------------------------------------------------
@@ -211,7 +213,7 @@ export function registrarToolsBest(server: McpServer, env: CmfEnv): void {
     },
     async ({ consulta, texto, offset, limit }) => {
       try {
-        const resultados = await bestJson<ResultadoBusqueda[]>("/aisearch/aisearch", env, {
+        const { datos: resultados, cache } = await bestJson<ResultadoBusqueda[]>("/aisearch/aisearch", env, {
           que: "Buscador de BEST",
           paginaOficial: `${BEST_SITIO}/buscador`,
           // El buscador ignora `top` (medido el 3 de septiembre de 2026: pide 3 y
@@ -231,7 +233,7 @@ export function registrarToolsBest(server: McpServer, env: CmfEnv): void {
           tool: "cmf_best_buscar",
           unidad: "cuadros",
           columnas: ["tipo", "tag", "nombre", "entidad", "categoria", "frecuencia", "unidad", "historico"],
-          notas: ["El buscador de BEST ordena por relevancia y devuelve hasta 1000 resultados; el tag es el identificador que pide cmf_best_cuadro. Las filas de tipo datos_reportes son informes PDF o Excel del sitio, no cuadros, y no tienen tag. El catálogo completo, en CSV, está en https://bestsbif.blob.core.windows.net/bestcontainer/CatalogoAPIBEST.csv."],
+          notas: [...notaDeCache(cache), "El buscador de BEST ordena por relevancia y devuelve hasta 1000 resultados; el tag es el identificador que pide cmf_best_cuadro. Las filas de tipo datos_reportes son informes PDF o Excel del sitio, no cuadros, y no tienen tag. El catálogo completo, en CSV, está en https://bestsbif.blob.core.windows.net/bestcontainer/CatalogoAPIBEST.csv."],
         });
       } catch (e) {
         return fromError(e);
@@ -262,7 +264,8 @@ export function registrarToolsBest(server: McpServer, env: CmfEnv): void {
         const paginaOficial = `${BEST_SITIO}/series/cuadro/${tag}`;
         const que = `Cuadro ${tag} de BEST`;
         const ruta = rutaDeCuadro(tag, modo as "ultimos" | "rango" | "completo", { periodos, desde, hasta });
-        const cuadro = desenvolverCuadro(await bestJson<Cuadro | { result: Cuadro }>(ruta, env, { que, paginaOficial }), que, paginaOficial);
+        const respuesta = await bestJson<Cuadro | { result: Cuadro }>(ruta, env, { que, paginaOficial });
+        const cuadro = desenvolverCuadro(respuesta.datos, que, paginaOficial);
         const filas = filtrarFilas(filasDeCuadro(cuadro), { texto: serie });
         return toolOkTabla({
           titulo: `${cuadro.nombre} ${cuadro.descripcion ?? ""} (${tituloDelTramo(modo as "ultimos" | "rango" | "completo", { periodos, desde, hasta })})`,
@@ -274,7 +277,7 @@ export function registrarToolsBest(server: McpServer, env: CmfEnv): void {
           limit,
           tool: "cmf_best_cuadro",
           unidad: "observaciones",
-          notas: notasDeCuadro(cuadro),
+          notas: [...notasDeCuadro(cuadro), ...notaDeCache(respuesta.cache)],
         });
       } catch (e) {
         return fromError(e);
