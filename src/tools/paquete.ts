@@ -374,7 +374,7 @@ export function registrarToolsPaquete(server: McpServer, env: CmfEnv): void {
       outputSchema: paqueteDocumentosSchema,
       title: "Descargar documentos de una empresa (ZIP ordenado)",
       description:
-        "Descarga los documentos de una empresa (EEFF por período; hechos, sanciones, resoluciones, memoria por año) y los devuelve como ZIP en base64 con directorio lógico, nombres normalizados y manifiesto.json (cada archivo además en base64, truncado a 4MB). Parámetros clave: rut (ej: 61808000), anio_inicio/anio_fin (máx 2 años por llamada), periodos AAAAMM explícitos (máx 3) o los 3 más recientes del rango, secciones (eeff|hechos|sanciones|resoluciones|memoria), tipo C/I, norma IFRS/NCH, y límites max_documentos (1-24) y max_mb (1-50). Use esta tool para bajar los bytes del plan de cmf_empresa_paquete; los tokens firmados se gestionan en el servidor y nunca se exponen.",
+        "Descarga los documentos de una empresa (EEFF por período; hechos, sanciones, resoluciones, memoria por año) y los devuelve como ZIP con directorio lógico, nombres normalizados y manifiesto.json. El base64 del ZIP viaja por TRAMOS (max_chars, default 200000 caracteres, y offset_chars; la respuesta trae total_chars y siguiente_offset_chars), y el ZIP se arma igual en cada llamada, así que los tramos se pueden pegar; con incluir_archivos_base64=true cada archivo suelto trae además su base64 (hasta 4MB cada uno). Parámetros clave: rut (ej: 61808000), anio_inicio/anio_fin (máx 2 años por llamada), periodos AAAAMM explícitos (máx 3) o los 3 más recientes del rango, secciones (eeff|hechos|sanciones|resoluciones|memoria), tipo C/I, norma IFRS/NCH, y límites max_documentos (1-24) y max_mb (1-50). Use esta tool para bajar los bytes del plan de cmf_empresa_paquete; los tokens firmados se gestionan en el servidor y nunca se exponen.",
       inputSchema: z.object({
         rut: rutSchema.describe("RUT del emisor, sin dígito verificador (acepta 90749000, 90.749.000, 90749000-0 o 90.749.000-0)"),
         anio_inicio: anioSchema.optional().describe("Año inicial AAAA del rango (default: año actual - 1). Máx 2 años por llamada"),
@@ -619,12 +619,18 @@ export function registrarToolsPaquete(server: McpServer, env: CmfEnv): void {
               if (bytes) zipEntries.push({ ruta: d.ruta as string, bytes });
               else faltantes.push({ ruta: d.ruta as string, motivo: "no_en_memoria" });
             }
+            // El ZIP tiene que salir IGUAL en cada llamada, porque cada tramo
+            // de base64 se pide en una llamada distinta y se arma de nuevo. Por
+            // eso las entradas van ordenadas por ruta (las descargas terminan
+            // en cualquier orden) y el manifiesto no lleva la hora.
+            const ordenados = [...descargados].sort((a, b) => String(a.ruta).localeCompare(String(b.ruta)));
             const manifiesto = JSON.stringify(
-              { empresa: { rut, carpeta }, generado: new Date().toISOString(), descargados: descargados.map((d) => ({ ruta: d.ruta, tamano_kb: d.tamano_kb, seccion: d.seccion })), faltantes },
+              { empresa: { rut, carpeta }, descargados: ordenados.map((d) => ({ ruta: d.ruta, tamano_kb: d.tamano_kb, seccion: d.seccion })), faltantes: [...faltantes].sort((a, b) => a.ruta.localeCompare(b.ruta)) },
               null,
               2,
             );
             zipEntries.push({ ruta: `${carpeta}/manifiesto.json`, bytes: new TextEncoder().encode(manifiesto) });
+            zipEntries.sort((a, b) => a.ruta.localeCompare(b.ruta));
             const zipBytes = construirZip(zipEntries);
             zip = {
               nombre: `${carpeta}_paquete.zip`,

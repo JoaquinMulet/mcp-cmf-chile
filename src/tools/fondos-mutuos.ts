@@ -115,6 +115,40 @@ async function catalogoFondosMutuos(env: CmfEnv): Promise<Record<string, unknown
   return filas;
 }
 
+/**
+ * Los documentos de comisiones máximas (Circulares 1951 y 1965), uno por
+ * administradora y período. La página trae un <fieldset> por administradora
+ * con su nombre en el <legend>, y adentro una celda por período: o un enlace
+ * «[xls] Marzo 2025» con la fecha de publicación debajo, o el aviso de que
+ * los fondos no tuvieron cuotas afectas. El 2 de septiembre de 2026 la tool
+ * devolvía solo los nombres y un conteo, sin forma de bajar ningún archivo.
+ */
+function documentosDeComisionesMaximas(html: string): Record<string, string>[] {
+  const documentos: Record<string, string>[] = [];
+  for (const [, legend, cuerpo] of html.matchAll(/<legend>([\s\S]*?)<\/legend>([\s\S]*?)<\/fieldset>/g)) {
+    const administradora = legend.replace(/<[^>]+>/g, " ").replace(/\s*DOCUMENTOS\s*$/, "").replace(/\s+/g, " ").trim();
+    for (const [, celda] of cuerpo.matchAll(/<td>([\s\S]*?)<\/td>/g)) {
+      const documento = documentoDeCelda(administradora, celda);
+      if (documento) documentos.push(documento);
+    }
+  }
+  return documentos;
+}
+
+/** Una celda de la grilla de comisiones máximas. un enlace al XLS, o el aviso de la administradora. */
+function documentoDeCelda(administradora: string, celda: string): Record<string, string> | undefined {
+  const publicado = /\((\d{2}-\d{2}-\d{4})\)/.exec(celda)?.[1] ?? "";
+  const enlace = /href=["']?([^"'\s>]+)[^>]*>\s*\[xls\]\s*([^<]+)</i.exec(celda);
+  if (enlace) {
+    const url = enlace[1].startsWith("/") ? `https://www.cmfchile.cl${enlace[1]}` : enlace[1];
+    return { administradora, periodo: enlace[2].trim(), publicado, estado: "xls disponible", url };
+  }
+  const periodo = /<strong>([^<]+)<\/strong>/.exec(celda)?.[1]?.trim();
+  if (!periodo) return undefined;
+  const aviso = celda.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").replace(periodo, "").trim();
+  return { administradora, periodo, publicado, estado: aviso || "sin documento", url: "" };
+}
+
 export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void {
   server.registerTool(
     "cmf_fondos_mutuos_catalogo",
@@ -491,14 +525,13 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
       outputSchema: comisionesMaximasSchema,
       title: "Comisiones máximas para fondos de pensiones/cesantía",
       description:
-        "Devuelve las comisiones máximas que los fondos mutuos (fm) y fondos de inversión (fi) pueden cobrar a los Fondos de Pensiones (Circular 1951) y de Cesantía (Circular 1965), con las administradoras que reportaron y los documentos XLS mensuales disponibles. Filtre por tipo (fm o fi; default fm), circular (1951 o 1965; default 1951) y anio en AAAA. Use esta tool para los topes legales de comisiones; para las comisiones efectivas de cada fondo use cmf_fondos_mutuos_comisiones.",
+        "Devuelve las comisiones máximas que los fondos mutuos (fm) y fondos de inversión (fi) pueden cobrar a los Fondos de Pensiones (Circular 1951) y de Cesantía (Circular 1965), con una fila por documento: administradora, período, fecha de publicación, estado y el enlace firmado al XLS, que se baja con cmf_documento_descargar o se lee con cmf_documento_markdown; cuando la administradora informó que no tuvo fondos afectos, la fila trae ese aviso en estado y sin enlace. Filtre por tipo (fm o fi; default fm), circular (1951 o 1965; default 1951) y anio en AAAA. Use esta tool para los topes legales de comisiones; para las comisiones efectivas de cada fondo use cmf_fondos_mutuos_comisiones. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         tipo: z.enum(["fm", "fi"]).default("fm").describe("Tipo de administradora: fm=mutuos, fi=inversión (default fm)"),
         circular: enumTolerante(["1951", "1965"]).default("1951").describe("Circular que fija el tope: 1951=pensiones, 1965=cesantía (default 1951; acepta 1951 o '1951')"),
-        anio: anioSchema,
-      }),
+        anio: anioSchema, ...paginacion(200) }),
     },
-    async ({ tipo, circular, anio }) => {
+    async ({ tipo, circular, anio, offset, limit }) => {
       try {
         const pagina = tipo === "fm" ? `consultaFm${circular}` : `consultaFi${circular}`;
         const html = await postLegacy(
@@ -506,15 +539,18 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
           { funcion: "obtener_datos_grilla", periodo: anio },
           env,
         );
-        const administradoras = [...html.matchAll(/<legend>([\s\S]*?)<\/legend>/g)]
-          .map((m) => m[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim())
-          .map((s) => s.replace(/\s*DOCUMENTOS\s*$/, "").trim())
-          .filter(Boolean);
-        const xlsCount = (html.match(/ver_sgd\.php\?s567=/g) ?? []).length;
-        const texto = administradoras.length
-          ? `Comisiones máximas ${tipo.toUpperCase()} Circular ${circular} ${anio}: ${administradoras.length} administradoras reportaron, ${xlsCount} documentos XLS disponibles. Administradoras: ${administradoras.slice(0, 10).join("; ")}`
-          : `Sin reportes de comisiones máximas para ${anio}.`;
-        return toolOk(texto, { tipo, circular, anio, administradoras, documentos_xls: xlsCount });
+        const documentos = documentosDeComisionesMaximas(html);
+        return toolOkTabla({
+          titulo: `Comisiones máximas ${tipo.toUpperCase()} Circular ${circular} ${anio}`,
+          vacio: `Sin reportes de comisiones máximas para ${anio}.`,
+          base: { tipo, circular, anio, administradoras: [...new Set(documentos.map((d) => d.administradora))] },
+          campo: "documentos",
+          filas: documentos,
+          offset,
+          limit,
+          tool: "cmf_fondos_comisiones_maximas",
+          unidad: "documentos",
+        });
       } catch (e) {
         return fromError(e);
       }

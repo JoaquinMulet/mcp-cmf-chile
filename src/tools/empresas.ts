@@ -94,12 +94,15 @@ function filasDeLiquidez(html: string): Record<string, string>[] {
  * «Número de» + «Prestamos» + «(1)» → «Número de Prestamos (1)».
  */
 function unirCabeceraPartida(filas: Record<string, string>[], clave: string): Record<string, string>[] {
+  // Si ninguna fila trae la clave, la planilla tiene otra forma y no hay
+  // nada que pegar. devolverla tal cual es mejor que vaciarla en silencio.
+  const primera = filas.findIndex((f) => clave in f);
+  if (primera < 0) return filas;
   const nombres = new Map<string, string>();
-  let i = 0;
-  for (; i < filas.length && !(clave in filas[i]); i++) {
-    for (const [k, v] of Object.entries(filas[i])) nombres.set(k, `${nombres.get(k) ?? k} ${v}`.trim());
+  for (const fila of filas.slice(0, primera)) {
+    for (const [k, v] of Object.entries(fila)) nombres.set(k, `${nombres.get(k) ?? k} ${v}`.trim());
   }
-  return filas.slice(i).map((f) => Object.fromEntries(Object.entries(f).map(([k, v]) => [nombres.get(k) ?? k, v])));
+  return filas.slice(primera).map((f) => Object.fromEntries(Object.entries(f).map(([k, v]) => [nombres.get(k) ?? k, v])));
 }
 
 /** Compara sin acentos ni mayúsculas, como escribe una persona un nombre. */
@@ -1647,7 +1650,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Índices de liquidez/solvencia de intermediarios",
       description:
-        "Devuelve los índices diarios de liquidez y solvencia de los intermediarios de valores, con una fila por intermediario y día. Filtre por intermediario (TODOS, COBOL = todos los corredores de bolsa, AGVAL = todos los agentes de valores, o el código de uno; default TODOS) y por rango desde/hasta en YYYY-MM-DD de a lo más 31 días, que es el tope del formulario de la CMF (default: los últimos 7 días). Use esta tool para monitorear la salud financiera de intermediarios; para sus EEFF use cmf_intermediarios_eeff_ifrs. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Devuelve los índices diarios de liquidez y solvencia de los intermediarios de valores, con una fila por intermediario y día. Filtre por intermediario (TODOS, COBOL = todos los corredores de bolsa, AGVAL = todos los agentes de valores, o el código de uno; default TODOS) y por rango desde/hasta en YYYY-MM-DD con a lo más 31 días de diferencia entre los 2 (o sea hasta 32 días de datos), que es el tope del formulario de la CMF (default: los últimos 7 días, contados en hora de Chile). Use esta tool para monitorear la salud financiera de intermediarios; para sus EEFF use cmf_intermediarios_eeff_ifrs. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         intermediario: z.string().default("TODOS").describe("TODOS, COBOL (corredores), AGVAL (agentes) o el código de un intermediario"),
         desde: fechaSchema.optional().describe("Inicio del rango en YYYY-MM-DD (default: hace 7 días)"),
@@ -1658,8 +1661,11 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         // El formulario de la CMF no usa las fechas sueltas. su JavaScript
         // arma rango_fechas con cada día del rango como AAAAMMDD% pegado, y
         // rechaza rangos de más de 31 días. Acá se hace lo mismo.
-        const fin = hasta ? new Date(`${hasta}T12:00:00Z`) : new Date();
-        const inicio = desde ? new Date(`${desde}T12:00:00Z`) : new Date(fin.getTime() - 7 * 86_400_000);
+        // «Hoy» es el de Chile, no el de UTC. a las 22:30 de Santiago el UTC
+        // ya va en mañana y la CMF no tiene ese día.
+        const hoyChile = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Santiago" }).format(new Date());
+        const fin = new Date(`${hasta ?? hoyChile}T12:00:00Z`);
+        const inicio = desde ? new Date(`${desde}T12:00:00Z`) : new Date(fin.getTime() - 6 * 86_400_000);
         const rango = rangoFechasLiquidez(inicio, fin);
         if ("error" in rango) return toolError(rango.error);
         const f1 = fechaLegacy(inicio.toISOString().slice(0, 10));

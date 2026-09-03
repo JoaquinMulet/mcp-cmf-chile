@@ -11,7 +11,8 @@ import assert from "node:assert/strict";
 import { createServer } from "../src/server.js";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { Client } from "@modelcontextprotocol/client";
-import { tramoBase64 } from "../src/util/binario.js";
+import { tramoBase64, avisoDeTramoBase64 } from "../src/util/binario.js";
+import { construirZip } from "../src/util/zip.js";
 
 async function clienteConectado(env: Record<string, string> = {}) {
   const server = createServer({ CMF_RATE_LIMIT_MS: "0", ...env });
@@ -67,6 +68,46 @@ test("cmf_documento_descargar: entrega el binario por tramos y el texto dice có
     const sc2 = ultimo.structuredContent as { base64: string; siguiente_offset_chars: number | null };
     assert.equal(sc2.siguiente_offset_chars, null);
     assert.equal(sc2.base64.length, 10_000);
+  } finally {
+    restaurar();
+  }
+});
+
+test("tramoBase64: los cortes caen en múltiplos de 4 y un offset fuera del archivo se dice", () => {
+  const t = tramoBase64(PDF, 0, 1001);
+  assert.equal(t.base64.length % 4, 0);
+  assert.equal(t.siguiente_offset_chars, 1000);
+  const fuera = tramoBase64(PDF, 50_000, 1000);
+  assert.equal(fuera.base64, "");
+  assert.match(avisoDeTramoBase64(fuera, "x"), /fuera del archivo/);
+});
+
+test("el ZIP del paquete sale idéntico aunque las descargas terminen en otro orden", () => {
+  const a = { ruta: "COPEC/eeff/a.pdf", bytes: new Uint8Array([1, 2, 3]) };
+  const b = { ruta: "COPEC/eeff/b.pdf", bytes: new Uint8Array([4, 5, 6]) };
+  const zip1 = construirZip([a, b].sort((x, y) => x.ruta.localeCompare(y.ruta)));
+  const zip2 = construirZip([b, a].sort((x, y) => x.ruta.localeCompare(y.ruta)));
+  assert.deepEqual(Buffer.from(zip1), Buffer.from(zip2));
+  // Y sin ordenar salían distintos, que es lo que corrompía los tramos.
+  assert.notDeepEqual(Buffer.from(construirZip([a, b])), Buffer.from(construirZip([b, a])));
+});
+
+test("cmf_api_accionistas_institucion: aplana los objetos anidados, toma la lista más larga y aparta solo los agregados exactos", async () => {
+  const fila = (nombre: string, rut: string) => ({ Periodo: { mes: 6, anho: 2026 }, Institucion: { CodigoInstitucion: "001" }, DescripcionAccionista: { Periodo: "202606", Rut: rut, Nombre: nombre, Participacion: 1 } });
+  const data = { Errores: [], Accionistas: [fila("LQ INV FINANCIERAS S.A.", "96929880"), fila("OTROS ACCIONISTAS MINORITARIOS", "0"), fila("SUBTOTAL", ""), fila("OTROS", ""), fila("TOTAL", "")] };
+  const restaurar = conFetch(() => new Response(JSON.stringify(data), { status: 200, headers: { "Content-Type": "application/json" } }));
+  try {
+    const client = await clienteConectado({ CMF_API_KEY: "prueba" });
+    const r = await client.callTool({ name: "cmf_api_accionistas_institucion", arguments: { institucion: "001", anio: "2026", mes: "06" } });
+    assert.equal(r.isError ?? false, false, JSON.stringify(r.content));
+    const sc = r.structuredContent as { filas: Array<Record<string, unknown>>; total: number; totales: Array<Record<string, unknown>> };
+    assert.equal(sc.total, 2);
+    assert.equal(sc.filas[0].Nombre, "LQ INV FINANCIERAS S.A.");
+    assert.equal(sc.filas[0].CodigoInstitucion, "001");
+    assert.equal(sc.filas[0]["DescripcionAccionista.Periodo"], "202606");
+    assert.equal(sc.totales.length, 3);
+    const texto = (r.content as Array<{ text?: string }>)[0].text ?? "";
+    assert.ok(!texto.includes("[object Object]"), texto);
   } finally {
     restaurar();
   }

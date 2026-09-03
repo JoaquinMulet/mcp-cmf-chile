@@ -159,9 +159,16 @@ function filasDeUnTable(tabla: string): FilaTabla[] {
   }
   const reFila = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
   let rm: RegExpExecArray | null;
+  // Un título (1 celda con colspan) solo se descarta ARRIBA de la tabla,
+  // antes de la primera fila con varias celdas. Más abajo, la misma forma
+  // puede ser una fila de total o un aviso, y eso sí es información.
+  let arriba = true;
   while ((rm = reFila.exec(tabla)) !== null) {
     const fila = celdasDeUnaFila(rm[1]);
-    if (fila.celdas.length > 0 && !fila.esTitulo) filas.push(fila);
+    if (fila.celdas.length === 0) continue;
+    if (fila.esTitulo && arriba) continue;
+    if (fila.celdas.length > 1) arriba = false;
+    filas.push(fila);
   }
   return filas;
 }
@@ -233,7 +240,9 @@ function nombresDeColumna(
 function cabeceraDeDosPisos(t: FilaTabla[]): { cols: string[] } | undefined {
   const [arriba, abajo] = t;
   if (!arriba || !abajo || arriba.esHeader || abajo.esHeader) return undefined;
-  if (!arriba.celdas.some((c) => c.ancho > 1 || c.alto > 1)) return undefined;
+  // Hace falta un colspan de verdad. un rowspan solo también aparece en
+  // filas de DATOS, y con eso 2 filas de datos se consumían como cabecera.
+  if (!arriba.celdas.some((c) => c.ancho > 1)) return undefined;
   const cols: string[] = [];
   let j = 0;
   for (const c of arriba.celdas) {

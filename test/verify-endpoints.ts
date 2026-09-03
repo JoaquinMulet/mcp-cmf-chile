@@ -64,7 +64,7 @@ const TOOLS: Record<string, ToolDef> = {
   cmf_intermediarios_eeff_ifrs: { args: { sociedades: ["0"], anio1: "2025", anio2: "2025" }, expect: { filas: "array" } },
   cmf_intermediarios_indicadores_ifrs: { args: { sociedades: ["0"], anio1: "2025", anio2: "2025" }, expect: { filas: "array" } },
   cmf_resultados_av_cb: { args: { tipo: "av_cb", anio: "2025", mes: "03" }, expect: { filas: (v: unknown) => Array.isArray(v) && v.length > 0 } },
-  cmf_liquidez_intermediarios: { args: { desde: "2025-01-01", hasta: "2026-08-08" }, expect: { filas: "array" } },
+  cmf_liquidez_intermediarios: { args: { desde: "2026-08-03", hasta: "2026-08-07" }, expect: { filas: "array" } },
   cmf_prestamos_otorgados: { args: { anio: "2025", mes: "12" }, expect: { filas: "array" } },
   cmf_dictamenes: { args: { desde: "2026-01-01", hasta: "2026-12-31" }, expect: { filas: "array" } },
   cmf_sanciones_cursadas: { args: {} },
@@ -79,12 +79,12 @@ const TOOLS: Record<string, ToolDef> = {
   cmf_fondos_mutuos_costos: { args: { anio: "2026", mes: "01" }, expect: { total: "number", filas: "array" } },
   cmf_fondos_mutuos_antecedentes: { args: { anio: "2025" }, expect: { total: "number", filas: "array" } },
   cmf_fondos_mutuos_cartola: { args: { fondo: "8298", desde: "2026-01-01", hasta: "2026-01-31" }, expectError: /captcha/i },
-  cmf_fondos_comisiones_maximas: { args: { tipo: "fm", circular: "1951", anio: "2026" }, expect: { tipo: "string", administradoras: "array", documentos_xls: "number" } },
+  cmf_fondos_comisiones_maximas: { args: { tipo: "fm", circular: "1951", anio: "2026" }, expect: { tipo: "string", administradoras: "array", documentos: "array" } },
 
   // ---------- D. Fondos de inversión ----------
   cmf_fondos_inversion_catalogo: { args: { offset: 0, limit: 3 }, expect: { fondos: "array", total: "number" } },
   cmf_fondos_inversion_eeff_ifrs: { args: { admins: "0", fondos: ["0"], anio1: "2025", anio2: "2025" }, expect: { columnas: "array", filas: "array", total_filas: "number" } },
-  cmf_fondos_inversion_comisiones_maximas: { args: {} },
+  cmf_fondos_inversion_comisiones_maximas: { args: { mes: "12", anio: "2024" }, expect: { filas: "array" } },
 
   // ---------- E. Normativa / seguros / xbrl / docs / bancos ----------
   cmf_normativa_buscar: { args: { tipo: "CIR", numero: "2343", offset: 0, limit: 5 }, expect: { normas: "array", total: "number" } }, // >0 filas solo si la CMF no bloquea la IP del runner

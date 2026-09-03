@@ -104,7 +104,9 @@ export const comisionesMaximasSchema = z
     circular: z.string().optional(),
     anio: z.string().optional(),
     administradoras: z.array(z.string()).optional(),
-    documentos_xls: z.number().optional(),
+    documentos: z.array(rec()).optional(),
+    total: z.number().optional(),
+    next_offset: z.number().nullable().optional(),
   })
   .passthrough();
 

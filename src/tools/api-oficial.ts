@@ -14,20 +14,44 @@ import { paginacion, toolOkPaginado, toolOkTabla } from "../util/tramos.js";
  * primera lista que traiga, sea cual sea su nombre, para que el nombre no
  * se escriba de memoria.
  */
-/** Aparta las filas que son SUBTOTAL, OTROS o TOTAL, mire donde mire el texto. */
+/**
+ * Aparta las filas cuyo nombre es EXACTAMENTE un agregado (SUBTOTAL, OTROS,
+ * TOTAL, TOTALES). «OTROS ACCIONISTAS MINORITARIOS» o «TOTAL S.A.» siguen
+ * siendo accionistas.
+ */
 function separarAgregados(filas: Record<string, unknown>[]): { datos: Record<string, unknown>[]; totales: Record<string, unknown>[] } {
-  const esAgregado = (f: Record<string, unknown>) => Object.values(f).some((v) => /^(SUB)?TOTAL(ES)?\b|^OTROS\b/i.test(String(v ?? "").trim()));
+  const esAgregado = (f: Record<string, unknown>) => Object.values(f).some((v) => /^(SUB)?TOTAL(ES)?$|^OTROS$/i.test(String(v ?? "").trim()));
   return { datos: filas.filter((f) => !esAgregado(f)), totales: filas.filter(esAgregado) };
 }
 
-function filasDeLaApi(data: unknown): Record<string, unknown>[] {
-  if (Array.isArray(data)) return data as Record<string, unknown>[];
-  if (data && typeof data === "object") {
-    for (const v of Object.values(data as Record<string, unknown>)) {
-      if (Array.isArray(v)) return v as Record<string, unknown>[];
+/**
+ * Una fila de la API con sus objetos anidados aplanados. la API envuelve
+ * cada accionista en {Periodo, Institucion, DescripcionAccionista: {...}},
+ * y una tabla no puede mostrar un objeto. Los campos del objeto interior
+ * suben al nivel de la fila, con el nombre del objeto adelante solo cuando
+ * el nombre ya estaba ocupado.
+ */
+function aplanar(fila: Record<string, unknown>): Record<string, unknown> {
+  const plana: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(fila)) {
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      for (const [sk, sv] of Object.entries(v as Record<string, unknown>)) plana[sk in plana || sk in fila ? `${k}.${sk}` : sk] = sv;
+    } else {
+      plana[k] = v;
     }
   }
-  return [];
+  return plana;
+}
+
+/** La lista más larga del objeto, aplanada. `{Errores: [], CodigosBalances: [...]}` da los balances. */
+function filasDeLaApi(data: unknown): Record<string, unknown>[] {
+  let lista: unknown[] = Array.isArray(data) ? data : [];
+  if (!Array.isArray(data) && data && typeof data === "object") {
+    for (const v of Object.values(data as Record<string, unknown>)) {
+      if (Array.isArray(v) && v.length > lista.length) lista = v;
+    }
+  }
+  return lista.map((f) => aplanar((f ?? {}) as Record<string, unknown>));
 }
 
 const SERIES_DESC: Record<string, string> = {

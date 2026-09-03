@@ -15,8 +15,8 @@ export const filtrosLocales = {
     .string()
     .optional()
     .describe("Se queda con las filas donde algún campo contiene este texto (sin acentos ni mayúsculas importa). Ej: 'Parque Arauco'"),
-  desde: fechaSchema.optional().describe("Fecha mínima en YYYY-MM-DD, comparada con el campo de fecha de la fila (dd/mm/aaaa o aaaa-mm-dd)"),
-  hasta: fechaSchema.optional().describe("Fecha máxima en YYYY-MM-DD, comparada con el campo de fecha de la fila"),
+  desde: fechaSchema.optional().describe("Fecha mínima en YYYY-MM-DD, comparada con el primer campo de la fila que tenga forma de fecha (dd/mm/aaaa o aaaa-mm-dd); una fila sin ningún campo de fecha queda fuera"),
+  hasta: fechaSchema.optional().describe("Fecha máxima en YYYY-MM-DD, comparada con el mismo campo de fecha; una fila sin fecha queda fuera"),
 };
 
 const plano = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
@@ -30,22 +30,26 @@ export function fechaIso(valor: unknown): string | undefined {
   return iso ? iso[0] : undefined;
 }
 
+/** true si algún campo de la fila contiene el texto buscado, ya en plano. */
+function cumpleTexto(fila: Record<string, unknown>, buscado: string): boolean {
+  return plano(Object.values(fila).map((v) => String(v ?? "")).join(" ")).includes(buscado);
+}
+
+/** true si el primer campo con forma de fecha cae dentro del rango. Sin fecha, false. */
+function cumpleFechas(fila: Record<string, unknown>, desde?: string, hasta?: string): boolean {
+  const fecha = Object.values(fila).map(fechaIso).find((x) => x !== undefined);
+  if (!fecha) return false;
+  return (!desde || fecha >= desde) && (!hasta || fecha <= hasta);
+}
+
 /** Aplica texto, desde y hasta sobre filas ya bajadas. El campo de fecha es el primero que parezca fecha. */
 export function filtrarFilas<T extends Record<string, unknown>>(
   filas: T[],
   filtro: { texto?: string; desde?: string; hasta?: string },
 ): T[] {
   const { texto, desde, hasta } = filtro;
-  if (!texto && !desde && !hasta) return filas;
   const buscado = texto ? plano(texto) : "";
-  return filas.filter((f) => {
-    if (buscado && !plano(Object.values(f).map((v) => String(v ?? "")).join(" ")).includes(buscado)) return false;
-    if (desde || hasta) {
-      const fecha = Object.values(f).map(fechaIso).find((x) => x !== undefined);
-      if (!fecha) return false;
-      if (desde && fecha < desde) return false;
-      if (hasta && fecha > hasta) return false;
-    }
-    return true;
-  });
+  const conFechas = Boolean(desde || hasta);
+  if (!buscado && !conFechas) return filas;
+  return filas.filter((f) => (!buscado || cumpleTexto(f, buscado)) && (!conFechas || cumpleFechas(f, desde, hasta)));
 }

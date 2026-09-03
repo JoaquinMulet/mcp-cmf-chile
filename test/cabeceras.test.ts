@@ -56,6 +56,21 @@ test("las filas de título con colspan (una sola celda) no cuentan como datos", 
   assert.ok(!JSON.stringify(filas).includes("Ir a más sanciones"));
 });
 
+test("un título con colspan ABAJO de la tabla (un total, un aviso) sigue siendo una fila", () => {
+  // Lo encontró la revisión adversarial. la regla del título se comía la
+  // fila «Total: 20 acciones (100%)» del final de una tabla sin <th>.
+  const html = `<table><tr><td>Nombre</td><td>Acciones</td></tr><tr><td>A</td><td>10</td></tr><tr><td>B</td><td>10</td></tr><tr><td colspan="2">Total: 20 acciones (100%)</td></tr></table>`;
+  const filas = htmlTablaAJson(html);
+  assert.equal(filas.length, 3);
+  assert.equal(filas[2].Nombre, "Total: 20 acciones (100%)");
+});
+
+test("una tabla sin <th> cuya primera fila de datos trae rowspan no pierde 2 filas como cabecera", () => {
+  const html = `<table><tr><td rowspan="2">G1</td><td>i1</td></tr><tr><td>i2</td></tr><tr><td>G2</td><td>i3</td></tr></table>`;
+  const filas = htmlTablaAJson(html);
+  assert.equal(filas.length, 2, JSON.stringify(filas));
+});
+
 test("cmf_empresa_info: campo y valor con nombres fijos, y el RUT es un dato y no un nombre de columna", async () => {
   const restaurar = conFetch(leer("entidad-identificacion-copec-1.html"));
   try {

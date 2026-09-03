@@ -484,6 +484,33 @@ sin filtro. Y el patrimonio de los fondos mutuos. la columna Moneda ya viajaba e
 planilla pero el texto no la mostraba, y sin ella sumar Patrimonio mezcla pesos con dólares;
 ahora está entre las columnas visibles y la descripción lo advierte.
 
+**24. El pre-push juzga el ÁRBOL DE TRABAJO, no el commit que empuja (2 de septiembre de
+2026).** Qué falló. 3 push seguidos terminaron en «failed to push some refs» con el commit
+sano. En uno el árbol tenía un archivo nuevo sin usar todavía (knip, trinquete rojo), en otro
+un `import` recién quitado dejó una función sin llamadores (`sin-codigo-muerto`), y en el
+tercero `verify-endpoints` llamó una tool con los argumentos viejos porque su tabla de
+argumentos no se actualizó junto con el esquema. Causa raíz. Los 3 portones del hook leen el
+disco, y el disco tenía trabajo a medias. Prescripción. Empujar con el árbol limpio, y cuando
+cambia el esquema de entrada de una tool, cambiar en el mismo commit su fila en
+`test/verify-endpoints.ts`. Y la salida del hook se lee ENTERA. filtrar el `✔` de la suite con
+`grep -v` también esconde el `✖` que explica el rechazo, que fue lo que pasó 2 veces.
+
+**25. Un ZIP que se arma en cada llamada tiene que armarse igual (2 de septiembre de 2026).**
+Qué falló, y lo encontró la revisión adversarial. el base64 del paquete se entrega por tramos,
+y cada tramo se pide en una llamada que vuelve a bajar los documentos y a armar el ZIP; las
+descargas terminan en cualquier orden y el manifiesto llevaba la hora, así que 2 tramos
+pegados venían de 2 ZIP distintos y el archivo salía corrupto con el mismo `total_chars`.
+Prescripción. Las entradas del ZIP van ordenadas por ruta y el manifiesto no lleva la hora.
+Regla general. todo lo que se entrega por tramos y se reconstruye por llamada tiene que ser
+una función pura de la entrada. La misma revisión encontró que la regla del título con
+`colspan` se comía la fila «Total» del final de una tabla (ahora solo se descarta arriba de la
+tabla), que un `rowspan` en datos disparaba la cabecera de 2 pisos (ahora exige `colspan`), que
+`unirCabeceraPartida` vaciaba la planilla si ninguna fila traía la clave (ahora la devuelve tal
+cual), que `separarAgregados` mandaba a totales a «OTROS ACCIONISTAS MINORITARIOS» (ahora
+exige el nombre exacto), que las filas de la API oficial vienen ANIDADAS y una tabla no puede
+mostrar un objeto (ahora se aplanan), y que «hoy» en UTC ya es mañana a las 22:30 de Chile
+(ahora se calcula en America/Santiago).
+
 ## Gotchas
 
 - **La fuente se cae, y eso no es un defecto tuyo.** El servlet BaseDato devuelve a veces el

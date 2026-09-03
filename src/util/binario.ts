@@ -33,8 +33,11 @@ export interface TramoBase64 {
 /** El tramo pedido del base64 de `bytes`, con lo que hace falta para pedir el resto. */
 export function tramoBase64(bytes: Uint8Array, offsetChars: number, maxChars: number): TramoBase64 {
   const todo = bytesABase64(bytes);
-  const desde = Math.min(Math.max(offsetChars, 0), todo.length);
-  const hasta = Math.min(desde + maxChars, todo.length);
+  // Los cortes caen en múltiplos de 4, así que cada tramo se decodifica
+  // solo, y un tramo nunca es vacío mientras quede archivo.
+  const paso = Math.max(4, maxChars - (maxChars % 4));
+  const desde = Math.min(Math.max(offsetChars - (offsetChars % 4), 0), todo.length);
+  const hasta = Math.min(desde + paso, todo.length);
   return {
     base64: todo.slice(desde, hasta),
     offset_chars: desde,
@@ -47,6 +50,7 @@ export function tramoBase64(bytes: Uint8Array, offsetChars: number, maxChars: nu
 /** La frase que le dice al modelo qué tramo recibió y cómo sigue. */
 export function avisoDeTramoBase64(t: TramoBase64, tool: string): string {
   if (t.base64_completo) return `El base64 viene completo (${t.total_chars} caracteres) en structuredContent para llamadores programáticos.`;
+  if (t.base64 === "") return `offset_chars=${t.offset_chars} está fuera del archivo: el base64 tiene ${t.total_chars} caracteres.`;
   return t.siguiente_offset_chars === null
     ? `Último tramo del base64: caracteres ${t.offset_chars}-${t.total_chars} de ${t.total_chars}.`
     : `Tramo ${t.offset_chars}-${t.siguiente_offset_chars} de ${t.total_chars} caracteres de base64. El archivo SIGUE: llame ${tool} con offset_chars=${t.siguiente_offset_chars}, o suba max_chars para traerlo entero.`;
