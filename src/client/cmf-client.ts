@@ -6,6 +6,8 @@ export interface CmfEnv {
   /** Interno: módulo wasm de pdf-inspector (solo worker; Node usa el paquete) */
   __pdfModule?: WebAssembly.Module;
   CMF_API_KEY?: string;
+  /** Clave para el servicio de BEST (tasas). Si falta, se usa la clave web pública del propio sitio. */
+  CMF_BEST_KEY?: string;
   CMF_HTTP_TOKEN?: string;
   CMF_KV?: { get: (k: string) => Promise<string | null>; put: (k: string, v: string, o?: { expirationTtl?: number }) => Promise<void> };
   CMF_RATE_LIMIT_MS?: string;
@@ -27,6 +29,7 @@ const HOSTS_ALLOWLIST = new Set([
   "www.conocetuseguro.cl",
   "acreencias.cmfchile.cl",
   "raw.githubusercontent.com", // catálogo de empresas (tickers/RUTs): JoaquinMulet/empresas-cmf-chile
+  "best-sbif-api.azurewebsites.net", // el servicio que alimenta best.cmfchile.cl, el sitio estadístico nuevo de la CMF
 ]);
 
 const configDefault = {
@@ -57,10 +60,17 @@ class RateLimiter {
     while (this.inflight >= this.maxInflight) {
       await new Promise((r) => setTimeout(r, 100));
     }
+    // El turno se RESERVA antes de esperar. Si se calculara la espera y
+    // recién después se anotara la hora, 5 llamadas lanzadas juntas
+    // leerían la misma hora vieja, esperarían lo mismo y saldrían en
+    // ráfaga, que es justo lo que los hosts de la CMF bloquean. Medido el
+    // 3 de septiembre de 2026 por la revisión adversarial. 4 peticiones en
+    // 7 ms con un mínimo de 400 ms.
     const ultimo = this.ultimo.get(host) ?? 0;
-    const falta = ultimo + this.minMs - Date.now();
+    const turno = Math.max(Date.now(), ultimo + this.minMs);
+    this.ultimo.set(host, turno);
+    const falta = turno - Date.now();
     if (falta > 0) await new Promise((r) => setTimeout(r, falta));
-    this.ultimo.set(host, Date.now());
     this.inflight++;
   }
   liberar(): void {

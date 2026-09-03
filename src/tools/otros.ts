@@ -14,12 +14,83 @@ import { filtrosLocales, filtrarFilas } from "../util/filtros.js";
 function decodificarLatin1(bytes: ArrayBuffer): string {
   return new TextDecoder("latin1").decode(bytes);
 }
+
+/**
+ * El servicio que alimenta best.cmfchile.cl, el sitio estadístico nuevo de la
+ * CMF. Su aplicación Angular lo declara en su código público
+ * (`API_URL_BASE` en el chunk principal) y manda en cada llamada a `/public`
+ * la cabecera `x-apikey` con esta clave, que por lo tanto es pública. La
+ * CMF ofrece además claves personales en best.cmfchile.cl/api; si el dueño
+ * consigue una, va en `CMF_BEST_KEY` y reemplaza a la del sitio.
+ */
+const BEST_API = "https://best-sbif-api.azurewebsites.net";
+const BEST_CLAVE_WEB = "web-zUsFq7CKNYBm1boKYLtF7KyEDoXFwtKl";
+
+interface TasaTmc {
+  titulo: string;
+  descripcion: string;
+  tasa: number;
+  tmc: number;
+  tip: number;
+  fechaPublicacion: string;
+  fechaVigenciaHasta: string | null;
+}
+
+interface NotaTmc {
+  nota: string;
+  orden: string;
+  ubicacionTmc: Array<{ tasa: number; tipo: string }>;
+}
+
+/**
+ * Las tasas y sus notas al pie, tal como las publica BEST para una fecha.
+ * BEST entiende la fecha solo como AAAAMMDD; con guiones responde 500.
+ */
+async function tasasTmcDeBest(fechaIso: string, env: CmfEnv): Promise<{ filas: Record<string, unknown>[]; notas: string[] }> {
+  const aaaammdd = fechaIso.replace(/-/g, "");
+  const leer = async <T>(ruta: string): Promise<T> => {
+    const res = await fetchCmf(`${BEST_API}${ruta}`, { headers: { "x-apikey": env.CMF_BEST_KEY ?? BEST_CLAVE_WEB, Accept: "application/json" } }, env);
+    const oficial = "La fuente oficial es https://best.cmfchile.cl/datos/tasas";
+    if (!res.ok) {
+      throw new Error(
+        `Tasas de interés: BEST respondió HTTP ${res.status} en ${BEST_API}${ruta}. ${oficial}; ` +
+          "si el error es 401 la clave web del sitio cambió y hay que leerla de nuevo de su código, o poner una clave propia en CMF_BEST_KEY.",
+      );
+    }
+    // Un 200 con HTML (página de error o de mantención del servicio) no es
+    // un dato. Sin este guard el modelo recibía «Unexpected token <».
+    const cuerpo = await res.text();
+    try {
+      return JSON.parse(cuerpo) as T;
+    } catch {
+      throw new Error(
+        `Tasas de interés: BEST respondió 200 pero sin JSON en ${BEST_API}${ruta} (empieza con «${cuerpo.slice(0, 60).replace(/\s+/g, " ")}»). ${oficial}; el servicio puede estar en mantención, reintente más tarde.`,
+      );
+    }
+  };
+  const [tasas, notas] = await Promise.all([
+    leer<{ result: TasaTmc[] }>(`/public/tmc/tasas/${aaaammdd}`),
+    leer<{ result: NotaTmc[] }>(`/public/tmc/notas/${aaaammdd}`),
+  ]);
+  const filas = (tasas.result ?? []).map((t) => ({ ...t }));
+  // Cada nota dice a qué segmento y a qué tasa (tip o tmc) aplica. Eso se
+  // escribe en la nota misma, porque el texto es lo único que lee el modelo.
+  const textoNotas = (notas.result ?? []).map(
+    (n) => `(${n.orden}) ${n.nota} Aplica a ${n.ubicacionTmc.map((u) => `la ${u.tipo} de la tasa ${u.tasa}`).join(" y ")}.`,
+  );
+  // Para una fecha futura BEST devuelve las tasas vigentes hoy, sin
+  // decirlo. Se dice acá, porque una tasa «al 2027» que en realidad es la
+  // de hoy es un dato engañoso.
+  const hoy = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Santiago" }).format(new Date());
+  const avisoFuturo = fechaIso > hoy ? [`La fecha ${fechaIso} es futura. BEST entrega las tasas vigentes hoy (${hoy}), publicadas en fechaPublicacion; no existe una publicación para esa fecha.`] : [];
+  return { filas, notas: ["Tasas anuales, en porcentaje, publicadas en el Diario Oficial en fechaPublicacion.", ...avisoFuturo, ...textoNotas] };
+}
 import { pdfAMarkdown, notaLimitacionesPdf, RESUMEN_LIMITACIONES_PDF } from "../pdf.js";
 import { procesarTablasEEFF, textoVerificacion, textoAviso } from "../eeff-tables.js";
 import { paginar } from "../util/paginate.js";
 import { avisoDeTramo, paginacion, toolOkPaginado, toolOkTabla } from "../util/tramos.js";
-import { enteroSchema,
-  anioSchema, codigoSchema, fechaSchema, mesSchema, offsetSchema, limitSchema, rutSchema, tipoNormaSchema } from "../util/schemas.js";
+import { enteroSchema, enumTolerante,
+  anioSchema, codigoSchema, fechaSchema, mesSchema, offsetSchema, limitSchema, rutSchema, sociedadesSchema, tipoNormaSchema } from "../util/schemas.js";
 
 export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
   // ---------- Normativa ----------
@@ -141,16 +212,17 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "EEFF de compañías de seguros",
       description:
-        "Devuelve los estados financieros IFRS de compañías de seguros generales o de vida de la CMF para un rango de períodos, en miles de pesos y con las cifras de resultado acumuladas del año a cada corte. Cada fila es una cuenta y cada columna una compañía en un período (la lista entidades trae esas columnas). Requiere anio1/anio2 en AAAA; mes1/mes2 en MM opcionales (default 12; solo 03, 06, 09 y 12). Filtre por tipo (generales o vida; default generales) y sociedades (array de RUT sin DV de la compañía; ['0']=todas). Use esta tool para balances de aseguradoras; para su clasificación de riesgo use cmf_seguros_clasificacion_riesgo. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Devuelve los estados financieros IFRS de compañías de seguros generales o de vida de la CMF para un rango de períodos, en miles de pesos y con las cifras de resultado acumuladas del año a cada corte. Cada fila es una cuenta y cada columna una compañía en un período (la lista entidades trae esas columnas). Requiere anio1/anio2 en AAAA; mes1/mes2 en MM opcionales (default 12; solo 03, 06, 09 y 12). Filtre por tipo (generales o vida; default generales), subtipo (A=compañías, R=reaseguradoras, CR=seguros de crédito; default A) y sociedades (RUT de las compañías en cualquier formato; ['0']=todas). Los RUT y el subtipo de cada compañía los entrega cmf_codigos con catalogo=seguros. Use esta tool para balances de aseguradoras; para su clasificación de riesgo use cmf_seguros_clasificacion_riesgo. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         tipo: z.enum(["generales", "vida"]).default("generales").describe("Segmento de seguros: generales o vida (default generales)"),
-        sociedades: z.array(z.string()).default(["0"]).describe("RUT sin DV de las compañías (array; ['0']=todas)"),
+        sociedades: sociedadesSchema,
+        subtipo: enumTolerante(["A", "R", "CR"]).default("A").describe("Subtipo del formulario de la CMF. A=compañías de seguros (default), R=reaseguradoras, CR=compañías de seguros de crédito (solo en generales). Cada subtipo es un universo distinto de compañías; el catálogo cmf_codigos con catalogo=seguros trae el subtipo de cada una en su campo tipo"),
         anio1: anioSchema,
         anio2: anioSchema,
         mes1: mesSchema.optional(),
         mes2: mesSchema.optional(), ...paginacion(300) }),
     },
-    async ({ tipo, sociedades, anio1, anio2, mes1, mes2, offset, limit }) => {
+    async ({ tipo, subtipo, sociedades, anio1, anio2, mes1, mes2, offset, limit }) => {
       try {
         return await toolDeGrid(
           {
@@ -160,7 +232,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
                 ? "/institucional/estadisticas/seg_gen_fecu_index.php"
                 : "/institucional/estadisticas/seg_vida_fecu_index.php",
             cuerpo: {
-              tiposociedad: "A",
+              tiposociedad: subtipo,
               "sociedad[]": sociedades,
               anno1: anio1,
               anno2: anio2,
@@ -174,7 +246,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
             },
             titulo: `EEFF seguros ${tipo} ${anio1}-${mes1 ?? "12"} → ${anio2}-${mes2 ?? "12"}`,
             vacio: "Sin resultados de EEFF de seguros para ese rango.",
-            base: { tipo, sociedades, anio1, anio2 },
+            base: { tipo, subtipo, sociedades, anio1, anio2 },
             offset,
             limit,
             tool: "cmf_seguros_eeff",
@@ -966,46 +1038,36 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
     },
   );
 
-  // ---------- Bancos (servlets legacy SBIF) ----------
+  // ---------- Bancos (BEST y servlets legacy SBIF) ----------
 
   server.registerTool(
     "cmf_bancos_tasas",
     {
       annotations: { readOnlyHint: true, destructiveHint: false },
       outputSchema: filasSchema,
-      title: "Buscador de tasas bancarias",
+      title: "Tasa máxima convencional y tasa de interés corriente",
       description:
-        "Devuelve las tasas de interés de instituciones financieras chilenas publicadas por la CMF (servlet InfoFinanciera de la ex SBIF, host tasas.cmfchile.cl). El índice 4.2.1 trae las tasas de interés corriente y máxima convencional por segmento para una fecha; otros índices: 4.2.2=certificados de tasas (por año) y 4.2.3=tasas por período (POST). Use esta tool para tasas bancarias; para reportes de instituciones use cmf_bancos_reportes. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Devuelve la tasa de interés corriente (tip) y la tasa máxima convencional (tmc) que la CMF publica para cada segmento de operaciones de crédito de dinero (13 segmentos. no reajustables en moneda nacional por plazo y monto, reajustables, y en moneda extranjera), vigentes a una fecha, con la fecha de publicación en el Diario Oficial y hasta cuándo rigen. Son tasas anuales, en porcentaje. Las notas al pie dicen qué tasa rige para el artículo 16 de la Ley 18.010. Fuente. el sitio estadístico BEST de la CMF (best.cmfchile.cl/datos/tasas), que reemplazó al servlet InfoFinanciera; el histórico llega al menos hasta 2015. Fije fecha en YYYY-MM-DD (default hoy en Chile). Use esta tool para la TMC y el interés corriente; para reportes contables de un banco use cmf_bancos_reportes. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
-        indice: z.string().default("4.2.1").describe("Índice del reporte (default 4.2.1=tasas por fecha)"),
-        fecha: fechaSchema.optional().describe("Fecha de las tasas en YYYY-MM-DD (default hoy)"), ...paginacion(200) }),
+        fecha: fechaSchema.optional().describe("Fecha a la que rigen las tasas, en YYYY-MM-DD (default hoy en Chile). Ej: 2026-09-01"),
+        ...paginacion(50),
+      }),
     },
-    async ({ indice, fecha, offset, limit }) => {
+    async ({ fecha, offset, limit }) => {
       try {
-        const f = fecha ? fechaLegacy(fecha) : (() => { const d = new Date(); return { dd: String(d.getDate()).padStart(2, "0"), mm: String(d.getMonth() + 1).padStart(2, "0"), aa: String(d.getFullYear()) }; })();
-        const url = `https://tasas.cmfchile.cl/sbifweb/servlet/InfoFinanciera?indice=${indice}&FECHA=${f.dd}/${f.mm}/${f.aa}`;
-        const res = await fetchCmf(url, {}, env);
-        const textoRaw = decodificarLatin1(await res.arrayBuffer());
-        const filas = htmlTablaAJson(textoRaw);
-        // El 2 de septiembre de 2026 el servlet devuelve la carcasa del portal
-        // con una tabla vacía, y el propio portal enlaza las tasas al sitio
-        // nuevo BEST. Un cero acá sería mentir. la fuente migró.
-        if (filas.length === 0) {
-          return toolErrorFuente(
-            `Tasas de interés (índice ${indice})`,
-            "https://best.cmfchile.cl/datos/tasas",
-            "el servlet InfoFinanciera de tasas.cmfchile.cl ya no entrega la tabla; la CMF publica las tasas en su sitio estadístico BEST",
-          );
-        }
+        const iso = fecha ?? new Intl.DateTimeFormat("en-CA", { timeZone: "America/Santiago" }).format(new Date());
+        const { filas, notas } = await tasasTmcDeBest(iso, env);
         return toolOkTabla({
-          titulo: `Tasas del indice ${indice} al ${f.dd}/${f.mm}/${f.aa}`,
-          vacio: `El índice ${indice} no devolvió tablas parseables (puede ser un formulario o un PDF).`,
-          base: { indice, fecha: `${f.aa}-${f.mm}-${f.dd}` },
+          titulo: `Tasas de interés corriente (tip) y máxima convencional (tmc), anuales, vigentes al ${iso}`,
+          vacio: `BEST no publica tasas para el ${iso}.`,
+          base: { fecha: iso, fuente: "https://best.cmfchile.cl/datos/tasas" },
           campo: "filas",
           filas,
           offset,
           limit,
           tool: "cmf_bancos_tasas",
+          unidad: "segmentos",
+          notas,
         });
       } catch (e) {
         return fromError(e);

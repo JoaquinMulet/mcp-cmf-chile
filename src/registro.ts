@@ -22,6 +22,7 @@ import { registrarToolsFondosMutuos } from "./tools/fondos-mutuos.js";
 import { registrarToolsFondosInversion } from "./tools/fondos-inversion.js";
 import { registrarToolsOtros } from "./tools/otros.js";
 import { registrarToolsPaquete } from "./tools/paquete.js";
+import { registrarToolsCatalogos } from "./tools/catalogos.js";
 
 /** Una operación de la CMF, tal como quedó registrada por su módulo. */
 export interface Operacion {
@@ -160,6 +161,7 @@ export function construirRegistro(env: CmfEnv = {}): Map<string, Operacion> {
   registrarToolsFondosInversion(captor, env);
   registrarToolsOtros(captor, env);
   registrarToolsPaquete(captor, env);
+  registrarToolsCatalogos(captor, env);
 
   return operaciones;
 }

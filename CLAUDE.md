@@ -25,7 +25,11 @@ Fuentes de datos, todas externas y ninguna bajo nuestro control.
   bancos. Necesita `CMF_API_KEY` en el entorno del Worker. En local no está, y las tools
   `cmf_api_*` responden un error que lo dice.
 - `datosbanco.cmfchile.cl` — servlet BaseDato, reportes contables de la banca.
-- `tasas.cmfchile.cl` — servlet InfoFinanciera, tasas de interés.
+- `best-sbif-api.azurewebsites.net` — el servicio que alimenta `best.cmfchile.cl`, el sitio
+  estadístico nuevo de la CMF. Tasas de interés corriente y máxima convencional. Pide la
+  cabecera `x-apikey`; sin `CMF_BEST_KEY` se usa la clave web pública del propio sitio. Ver la
+  lección 27. El servlet InfoFinanciera de `tasas.cmfchile.cl` que lo antecedía ya no entrega
+  la tabla.
 - `github.com/JoaquinMulet/empresas-cmf-chile` — catálogo de tickers de bolsa a RUT, que
   alimenta `cmf_empresa_por_ticker`. Es nuestro, no de la CMF.
 
@@ -95,6 +99,12 @@ del dueño. Si molesta, se hace más rápido, no más corto.
 - `src/tools/` — las operaciones, agrupadas por dominio. `empresas.ts`, `fondos-mutuos.ts`,
   `fondos-inversion.ts`, `otros.ts` (seguros, normativa, bancos), `api-oficial.ts`,
   `paquete.ts` (descargas masivas) y `code-mode.ts`.
+- `src/catalogos.ts` — la ÚNICA fuente de los 3 catálogos de códigos (bancos, compañías de
+  seguros, variables de la Circular 1.333). La tool `cmf_codigos` de `src/tools/catalogos.ts` y
+  los recursos `cmf://bancos/codigos`, `cmf://seguros/codigos` y
+  `cmf://fondos-mutuos/cartera-codigos` leen de acá. Ver la lección 28.
+- `src/util/rut.ts` — `rutCanonico`, la única regla del formato de RUT. La usan `rutSchema` en
+  la entrada y `conRutCanonico` en la salida de todo catálogo. Ver la lección 29.
 - `src/util/tramos.ts` — paginación honesta. `paginacion()`, `toolOkPaginado` y `toolOkTabla`.
 - `src/util/grid.ts` — `toolDeGrid`, el camino único de las estadísticas que la CMF sirve con
   un grid de Google Charts (EEFF e indicadores de SA, seguros e intermediarios). Lee el índice,
@@ -390,9 +400,10 @@ están en los enlaces de las pestañas 78, 79 y 80). `cmf_operaciones_capital` e
 `sociedad[]=0` y la opción «Todas» de esas páginas vale `""`. `cmf_empresa_sanciones` solo
 cubre la ficha de emisores de valores, y las multas a bancos salen en
 `sanciones_mercados_entidad.php` bajo mercado O, no B. `cmf_bancos_cronologia` y
-`cmf_bancos_tasas` leen servlets de la ex SBIF que ya no entregan la tabla (la cronología
+`cmf_bancos_tasas` leían servlets de la ex SBIF que ya no entregan la tabla (la cronología
 migró a cronologiabancaria.cmfchile.cl y devuelve la carcasa del portal; las tasas viven en
-el sitio nuevo BEST, best.cmfchile.cl, que es una aplicación Angular sin API visible).
+el sitio nuevo BEST, best.cmfchile.cl, cuya API sí existe y se lee desde el 3 de septiembre
+de 2026, ver la lección 27).
 `cmf_fondos_inversion_comisiones_maximas` leía una página que solo trae el formulario; el
 dato se genera como planilla Excel en `..._commax_excel.php`, y la CMF respondió «Sin
 Información» para todos los períodos probados de 2023 a 2025. Y `cmf_dividendos` tiene una
@@ -521,6 +532,73 @@ de entidades no conocía `&ordm;`; y el cuadro APV corría los valores una colum
 `&ordm;`, `&ordf;`, `&deg;` y toda entidad numérica, `cabeceraDeDosPisos` también une 2 filas
 de `<th>`, y `fixMojibake` deja «ï¿½» como un solo signo. Lo vigila `test/cabeceras.test.ts`.
 
+**27. Un sitio «sin API visible» lleva su API en el código que le manda al navegador (3 de
+septiembre de 2026).** Qué falló. `cmf_bancos_tasas` respondía que la CMF había migrado las
+tasas al sitio BEST, «una aplicación Angular sin API visible», y la lección 17 lo dejó escrito
+así. Nadie había abierto el código de esa aplicación. Causa raíz. Una aplicación de una sola
+página no puede esconder su API. la baja el navegador. Prescripción. Bajar `main-*.js` y los
+`chunk-*.js` que referencia, buscar la constante con la URL base (`API_URL_BASE`), las
+llamadas `http.get(` y la cabecera que el interceptor agrega a cada petición. En BEST eso da
+`https://best-sbif-api.azurewebsites.net/public/tmc/tasas/AAAAMMDD` y
+`/public/tmc/notas/AAAAMMDD`, con la cabecera `x-apikey` y una clave `web-...` que viaja en el
+propio bundle, o sea pública. Sin cabecera responde 401 y con la fecha con guiones responde
+500. La CMF ofrece además una API oficial con clave personal (`apibest.cmfchile.cl/api/v1/...`,
+se pide en `best.cmfchile.cl/api`); si el dueño consigue una, va en `CMF_BEST_KEY` y reemplaza
+a la del sitio. El histórico llega al menos a 2015. Los fixtures de `test/tasas-best.test.ts`
+son las 2 respuestas reales del 1 de septiembre de 2026.
+
+**28. Un catálogo que ninguna tool entrega vive en el `<select>` del formulario que lo usa, y
+si no vive en ninguna página, se verifica código por código (3 de septiembre de 2026).** Qué
+falló. 3 catálogos que las tools pedían como parámetro y ninguna publicaba. Prescripción, una
+por catálogo, porque las 3 fuentes son distintas. Las compañías de seguros están en el select
+`sociedad[]` de `seg_gen_fecu_index.php` y `seg_vida_fecu_index.php`; el subtipo se elige con
+`tiposociedad` en la URL (A, R y CR en generales, A y R en vida), el value es el RUT sin DV y
+el texto trae «99.155.000-3 NOMBRE (No vigente)», así que el DV y la vigencia se separan en
+sus campos. Los códigos de banco no están en ninguna página alcanzable (el índice de BaseDato
+redirige a una página de error por http y el cliente rechaza http a propósito), así que se
+verificaron uno por uno con `cmf_api_ficha_institucion` contra el servidor desplegado, del 001
+al 075 más 504, 507, 672, 729, 732 y 999; respondieron 32 y el 999 no tiene ficha. La lista
+lleva la fecha de verificación en sus notas. Y la Circular 1.333 es un PDF escaneado de 65
+páginas. se pasó por OCR (`page.get_textpage_ocr` de pymupdf con el tesseract instalado, que
+solo trae el modelo inglés) y las variables de los capítulos 6 y 7 se transcribieron a mano;
+las columnas reales (`ffm_6010100`, y la 11.11 partida en `ffm_tir_`, `ffm_par_` y `ffm_rel_`)
+se leyeron de la respuesta de `cmf_fondos_mutuos_cartera`, nunca se dedujeron del código, y
+OPLA quedó sin columnas porque no tenía filas. `test/codigos.test.ts` exige que cada columna
+real tenga su explicación. La regla. lo transcrito a mano lleva su fuente, su fecha y su
+límite en las notas que viajan con el dato, no en un comentario del código. Y lo que encontró
+la revisión adversarial de este lote. `cmf_seguros_eeff` clavaba `tiposociedad: "A"`, así que
+el catálogo prometía RUT de reaseguradoras y de seguros de crédito que la tool no podía
+consultar. Verificado en vivo. AVLA (seguros de crédito) responde 222 cuentas con
+`subtipo: "CR"` y «la página no trajo el grid» con `A`. **Toda opción de un formulario que la
+tool deja clavada en un valor es un universo que el modelo no puede ver.** Hoy `subtipo` es un
+parámetro, y el catálogo dice qué subtipo tiene cada compañía.
+
+**30. Un rate limiter que calcula la espera antes de reservar su turno deja pasar ráfagas (3
+de septiembre de 2026).** Qué falló, y lo midió la revisión adversarial. `RateLimiter.esperar`
+leía la hora de la última llamada, esperaba, y recién después anotaba la suya. 5 llamadas
+lanzadas juntas con `Promise.all` leían la misma hora vieja y salían 4 en 7 ms con un mínimo
+de 400. Nadie lo había visto porque ninguna tool lanzaba llamadas paralelas al mismo host
+hasta el catálogo de seguros. Prescripción. El turno se reserva ANTES de esperar
+(`ultimo = max(ahora, ultimo + minMs)`), y `test/rate-limit.test.ts` lanza 5 llamadas juntas y
+mide las brechas. La regla. un defecto latente aparece cuando una pieza nueva usa una vieja
+de una forma que nadie había usado, y por eso el revisor de contexto fresco lee el diff
+completo y no solo lo nuevo.
+
+**29. Un formato de identificador se unifica en la SALIDA de los catálogos y en la ENTRADA de
+las tools, con la MISMA función en los 2 lados (3 de septiembre de 2026).** Qué falló. El RUT
+viajaba en 4 formatos según la tool que lo entregara («76598625-7», «99155000», «90690000-9» y
+«76.212.519-6»), y las listas `sociedades` eran `z.array(z.string())`, así que un RUT copiado
+de un grid con puntos llegaba a la CMF tal cual y la CMF respondía vacío, sin error.
+Prescripción. `rutCanonico` de `src/util/rut.ts` es la única regla (dígitos, sin puntos ni
+DV, que es lo que toda página de la CMF acepta). `rutSchema` la usa en la entrada,
+`sociedadesSchema` y `rutOTodosSchema` en las listas, y `conRutCanonico` en la salida de cada
+catálogo, con el DV aparte en `rut_dv` solo cuando la fuente lo traía. Verificado contra la
+CMF real. `cmf_seguros_eeff` con `["99.147.000-K"]` devuelve las 222 cuentas de BCI. Lo
+vigilan 2 comprobaciones de clase en `test/rut.test.ts`. ninguna tool declara una lista de RUT
+cruda, y todo catálogo con `rut` pasa por `conRutCanonico`. La excepción se declara en vez de
+esconderse. los catálogos de fondos usan un número de registro de 4 dígitos que la CMF llama
+`rut` en su propia URL, y las instrucciones del servidor lo dicen.
+
 ## Gotchas
 
 - **La fuente se cae, y eso no es un defecto tuyo.** El servlet BaseDato devuelve a veces el
@@ -531,6 +609,9 @@ de `<th>`, y `fixMojibake` deja «ï¿½» como un solo signo. Lo vigila `test/c
   automático, el código lo lee la persona.
 - **Las tools `cmf_api_*` necesitan `CMF_API_KEY`.** En local no está, y responden un error que
   lo dice. Eso es lo esperado y `verify-endpoints` lo cuenta como aprobado.
+- **`cmf_bancos_tasas` usa la clave web pública de BEST si no hay `CMF_BEST_KEY`.** Si BEST
+  responde 401, la CMF rotó esa clave. se lee de nuevo del bundle de `best.cmfchile.cl` (lección
+  27) y se cambia `BEST_CLAVE_WEB` en `src/tools/otros.ts`.
 - **El HTML legacy viene en latin1.** Hay que decodificarlo a mano. Y trae mojibake y entidades
   HTML, así que una búsqueda de texto sin normalizar da cero y parece ausencia.
 - **El texto del modelo se corta en el ancho de la terminal de quien lee**, no en la tuya.
@@ -551,6 +632,4 @@ de `<th>`, y `fixMojibake` deja «ï¿½» como un solo signo. Lo vigila `test/c
 4. `npm run deploy`. Su `predeploy` vuelve a correr `ci-remoto`, así que con la CI en rojo o
    con un commit sin empujar el deploy se niega.
 5. `npm run verificar-desplegado`. Habla con la instancia viva y es lo único que prueba el
-   borde. Un servidor MCP ES un protocolo, y eso solo se prueba cruzándolo.
-4. `npm run verificar-desplegado`. Habla con la instancia viva y es lo único que prueba el
    borde. Un servidor MCP ES un protocolo, y eso solo se prueba cruzándolo.

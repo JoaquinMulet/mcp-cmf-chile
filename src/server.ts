@@ -6,6 +6,7 @@ import { registrarToolsFondosMutuos } from "./tools/fondos-mutuos.js";
 import { registrarToolsFondosInversion } from "./tools/fondos-inversion.js";
 import { registrarToolsOtros } from "./tools/otros.js";
 import { registrarToolsPaquete } from "./tools/paquete.js";
+import { registrarToolsCatalogos } from "./tools/catalogos.js";
 import { registrarResources } from "./resources.js";
 import { registrarPrompts } from "./prompts.js";
 import { registrarModoCodigo } from "./tools/code-mode.js";
@@ -79,11 +80,11 @@ export function createServer(env: CmfEnv = {}, opciones: OpcionesServidor = {}):
         "1. Para analizar una empresa: cmf_empresa_por_ticker (ticker de bolsa, ej: COPEC, SQM-B; los RUTs provienen del catálogo de empresas en bolsa en github.com/JoaquinMulet/empresas-cmf-chile) o cmf_buscar_entidad (una palabra clave o RUT) para obtener el RUT canónico → cmf_empresa_info → cmf_empresa_eeff_historial (períodos disponibles) → cmf_empresa_eeff (estados financieros IFRS/NCH por período; use modo=markdown para leer el PDF auditado convertido a Markdown) → cmf_empresa_hechos → cmf_empresa_sanciones/resoluciones.",
         "2. Para descargar todo de una empresa: cmf_empresa_paquete (plan de descarga, máx 2 años por llamada) y cmf_empresa_paquete_documentos (ZIP ordenado, máx 3 períodos por llamada).",
         "3. Fondos mutuos: cmf_fondos_mutuos_catalogo para identificar fondos → cmf_fondos_mutuos_bpr (patrimonio/rentabilidad) → cmf_fondos_mutuos_costos (TAC).",
-        "4. Indicadores económicos: cmf_api_indicador_valor (serie: uf, dolar, euro, tab, utm, ipc, tip, tmc). Para balances bancarios, identifique la institución por su código SBIF (ej: 001=Banco de Chile, 037=Banco Santander-Chile; 999=el sistema total; la lista completa está en el resource cmf://bancos/codigos).",
+        "4. Indicadores económicos: cmf_api_indicador_valor (serie: uf, dolar, euro, tab, utm, ipc, tip, tmc). Para balances bancarios, identifique la institución por su código SBIF (ej: 001=Banco de Chile, 037=Banco Santander-Chile; 999=el sistema total; la lista completa la entrega cmf_codigos con catalogo=bancos). Los RUT de las compañías de seguros que pide cmf_seguros_eeff los entrega cmf_codigos con catalogo=seguros, y el significado de las columnas ffm_ de la cartera de fondos mutuos, cmf_codigos con catalogo=cartera_fondos_mutuos.",
         "5. Normativa y seguros: cmf_normativa_buscar y cmf_seguros_*.",
         "Límites y notas:",
         "- Captchas (cmf_hechos_globales y cmf_fondos_mutuos_cartola): al llamarlas sin código, la tool descarga la imagen captcha de la CMF y le entrega un resource cmf://captcha/{id}; pida al usuario que lea los 6 caracteres y reintente con captcha=<código> y captcha_id=<id>.",
-        "- Fechas en formato YYYY-MM-DD; los RUTs se aceptan con o sin dígito verificador (ej: 90690000 o 90690000-5).",
+        "- Fechas en formato YYYY-MM-DD. Los RUT se aceptan en cualquier formato (90690000, 90690000-5 o 90.690.000-5) y el servidor los deja sin dígito verificador, que es lo que pide la CMF. Todo catálogo entrega el campo rut en ese mismo formato, sin puntos ni DV, y si la fuente traía el DV viaja en rut_dv; así lo que sale de un catálogo se pega tal cual en cualquier tool. Ojo. en los catálogos de fondos (mutuos y de inversión) la CMF usa como identificador un número de registro de 4 dígitos (run_fondo, o rut en el de fondos de inversión), no un RUT.",
         "- Resultados paginados: las tools con offset/limit devuelven next_offset/total; itere para ver todas las filas (nunca asuma que la primera página es el total).",
         "- Los documentos firmados se gestionan en el servidor; para leer el contenido de un PDF: cmf_documento_markdown (token s567 o url completa del documento).",
         `- ${RESUMEN_LIMITACIONES_PDF}`,
@@ -106,6 +107,7 @@ export function createServer(env: CmfEnv = {}, opciones: OpcionesServidor = {}):
     registrarToolsFondosInversion(server, env);
     registrarToolsOtros(server, env);
     registrarToolsPaquete(server, env);
+    registrarToolsCatalogos(server, env);
   }
   registrarResources(server, env);
   registrarPrompts(server);

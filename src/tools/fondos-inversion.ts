@@ -8,7 +8,8 @@ import { paginar } from "../util/paginate.js";
 import { toolDeGrid } from "../util/grid.js";
 import { avisoDeTramo, paginacion, toolOkTabla } from "../util/tramos.js";
 import {
-  anioSchema, mesSchema, offsetSchema, limitSchema } from "../util/schemas.js";
+  anioSchema, mesSchema, offsetSchema, limitSchema, rutOTodosSchema } from "../util/schemas.js";
+import { conRutCanonico } from "../util/rut.js";
 
 export function registrarToolsFondosInversion(server: McpServer, env: CmfEnv): void {
   server.registerTool(
@@ -20,7 +21,7 @@ export function registrarToolsFondosInversion(server: McpServer, env: CmfEnv): v
       description:
         "Devuelve los estados financieros IFRS de fondos de inversión como matriz de cuentas contables × fondos (grid Google Visualization convertido a JSON), desde el sitio de la CMF. Filtre la administradora con admins (RUT; 0 = todas) y los fondos con fondos (array de códigos; ['0'] = todos); defina el rango con anio1/anio2 (AAAA) y, si necesita cortes intermedios, mes1/mes2 (MM; sin mes se usa diciembre). La salida incluye hasta 200 filas y total_filas con el total real; si responde \"Sin resultados\" puede requerir re-solución del anti-bot, reintente. Use esta tool para comparar cuentas IFRS entre fondos; para obtener códigos de fondos use cmf_fondos_inversion_catalogo. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
-        admins: z.string().default("0").describe("RUT de la administradora (0=todas)"),
+        admins: rutOTodosSchema.default("0").describe("RUT de la administradora, en cualquier formato (0=todas)"),
         fondos: z.array(z.string()).default(["0"]).describe("Códigos de fondos (['0']=todos)"),
         anio1: anioSchema,
         anio2: anioSchema,
@@ -82,7 +83,7 @@ export function registrarToolsFondosInversion(server: McpServer, env: CmfEnv): v
           env,
         );
         const filas = htmlTablaAJson(html, ["rut", "nombre", "tipo_entidad", "inscripcion", "estado"]);
-        const { filas: fondos, paginado } = paginar(filas, offset, limit);
+        const { filas: fondos, paginado } = paginar(filas.map(conRutCanonico), offset, limit);
         const texto = fondos.length
           ? `Fondos de inversión (total ${paginado.total}):\n${resumirTabla(fondos, ["rut", "nombre", "estado"])}`
           : "Sin resultados de fondos de inversión.";

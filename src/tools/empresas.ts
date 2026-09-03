@@ -26,7 +26,9 @@ import { enteroSchema,
   tipoBalanceSchema,
   tipoEntidadSchema,
   tipoNormaContableSchema,
+  sociedadesSchema,
 } from "../util/schemas.js";
+import { conRutCanonico } from "../util/rut.js";
 
 const FICHA_BASE = "/institucional/mercados/entidad.php";
 
@@ -178,7 +180,10 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
             );
           })
           .slice(0, limite)
-          .map((f) => ({
+          // El CSV trae el RUT con dígito verificador («90690000-9»). Sale
+          // canónico, sin DV, que es lo que aceptan las demás tools, y el DV
+          // viaja en rut_dv.
+          .map((f) => conRutCanonico({
             nemo: f.nemo ?? "",
             razon_social: f.razon_social ?? "",
             rut: f.rut ?? "",
@@ -232,7 +237,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
               .filter((f) => /^\d{6,9}$/.test(f.rut ?? ""))
               // El HTML trae la columna "Estado Actual" después de una columna "Inscripción" vacía:
               // el parser puede dejarla en `inscripcion`; normalizar a `estado`.
-              .map((f) => ({ ...f, estado: f.estado || f.inscripcion || "" })),
+              .map((f) => conRutCanonico({ ...f, estado: f.estado || f.inscripcion || "" })),
             conTabla: /<table/i.test(html),
           };
         };
@@ -299,7 +304,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
           consulta: "",
         });
         const filas = htmlTablaAJson(html, ["rut", "nombre", "estado"]);
-        const { filas: entidades, paginado } = paginar(filas, offset, limit);
+        const { filas: entidades, paginado } = paginar(filas.map(conRutCanonico), offset, limit);
         const texto = `Entidades ${tipoentidad} (total ${paginado.total}):\n${resumirTabla(entidades, ["rut", "nombre", "estado"])}`;
         return toolOk(texto + avisoDeTramo(entidades.length, paginado, "cmf_listar_entidades"), { entidades, total: paginado.total, next_offset: paginado.next_offset });
       } catch (e) {
@@ -1049,7 +1054,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       description:
         "Devuelve los estados financieros IFRS completos (situación financiera, resultados y flujo de efectivo, con sus 500 y tantas cuentas de la taxonomía) de sociedades anónimas y otras entidades, para un rango de períodos. Cada fila es una cuenta y cada columna una sociedad en un período (la lista entidades trae esas columnas); las cifras van en unidades de la moneda de la fila Moneda, no en miles. Seleccione sociedades por RUT sin DV (array; default ['0']=todas, que devuelve cientos de columnas), registro (RVEMI = emisores de valores, default; RGEIN = otras entidades informantes), anio1/anio2 en AAAA (ej: 2024) y mes1/mes2 opcionales en MM (default 12; solo 03, 06, 09 y 12). Use esta tool para cifras comparables entre SA; para EEFF de un emisor con PDFs auditados use cmf_empresa_eeff. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
-        sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
+        sociedades: sociedadesSchema,
         registro: registroSchema,
         anio1: anioSchema,
         anio2: anioSchema.describe("Año final del rango en AAAA (ej: 2025)"),
@@ -1098,7 +1103,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         "Devuelve los indicadores financieros IFRS calculados de sociedades anónimas (rentabilidad, liquidez, endeudamiento, capital de trabajo) para un corte. Cada fila es una sociedad en ese corte, con un campo por indicador y su unidad en el nombre del campo. Fije fecha_max en formato AAAAMM (ej: 202512; solo meses 03, 06, 09 y 12), sociedades por RUT sin DV (array; default ['0']=todas) y registro (RVEMI = emisores de valores, default; RGEIN = otras entidades informantes). Use esta tool para comparar ratios entre SA; para los EEFF detallados use cmf_eeff_ifrs_sa y para ratios bajo norma local use cmf_indicadores_financieros_nch. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         fecha_max: z.string().regex(/^\d{6}$/, "AAAAMM").describe("Corte en formato AAAAMM (ej: 202512)"),
-        sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
+        sociedades: sociedadesSchema,
         registro: registroSchema, ...paginacion(300) }),
     },
     async ({ fecha_max, sociedades, registro, offset, limit }) => {
@@ -1136,7 +1141,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       description:
         "Devuelve la FECU resumida bajo norma chilena (NCH, anterior a IFRS, o sea hasta 2009 para la mayoría) de sociedades anónimas para un rango de períodos, en miles de pesos o de la moneda que corresponda. Cada fila es una sociedad en un período, con un campo por partida (RUT, razón social, moneda, activos, pasivos, resultados). Seleccione sociedades por RUT sin DV (array; default ['0']=todas), registro (RVEMI = emisores de valores, default; RGEIN = otras entidades informantes), indcon (0 = todos, I = individual, C = consolidado; default 0), anio1/anio2 en AAAA y mes1/mes2 opcionales en MM (default 12). Use esta tool para períodos pre-IFRS; para los EEFF IFRS con PDF auditado de UN emisor use cmf_empresa_eeff (norma=IFRS); para el sistema IFRS de todas las SA use cmf_eeff_ifrs_sa. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
-        sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
+        sociedades: sociedadesSchema,
         registro: registroSchema,
         indcon: z.enum(["0", "I", "C"]).default("0").describe("0 = todos, I = individual, C = consolidado"),
         anio1: anioSchema,
@@ -1186,7 +1191,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       description:
         "Devuelve los indicadores financieros calculados bajo norma chilena (NCH, anterior a IFRS, o sea hasta 2009 para la mayoría) de sociedades anónimas para un rango de períodos. Cada fila es una sociedad en un período, con un campo por partida e indicador (activo total, patrimonio, ingresos, rentabilidad, liquidez, endeudamiento). Seleccione sociedades por RUT sin DV (array; default ['0']=todas), registro (RVEMI = emisores de valores, default; RGEIN = otras entidades informantes), indcon (0 = todos, I = individual, C = consolidado; default 0), anio1/anio2 en AAAA y mes1/mes2 opcionales en MM (default 12). Use esta tool para ratios NCH; para indicadores IFRS use cmf_indicadores_financieros_sa. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
-        sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
+        sociedades: sociedadesSchema,
         registro: registroSchema,
         indcon: z.enum(["0", "I", "C"]).default("0").describe("0 = todos, I = individual, C = consolidado"),
         anio1: anioSchema,
@@ -1238,7 +1243,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       description:
         "Devuelve los dividendos declarados que la CMF publica en su estadística de dividendos, con una fila por dividendo (sociedad y fecha de pago) y sus campos: RUT, razón social, número y tipo de dividendo, fechas de acuerdo, cierre, límite y pago, moneda, dividendo por acción, número de acciones y montos. COBERTURA, verificada el 2 de septiembre de 2026: el formulario de la CMF solo ofrece 176 sociedades, casi todas concesionarias y sanitarias (aeropuertos, Aguas Araucanía, autopistas); las sociedades de bolsa como Copec NO están y para ellas los dividendos se leen en sus hechos esenciales con cmf_empresa_hechos. Seleccione sociedades por RUT sin DV (array; ['0'] = todas), anio en AAAA, anio2 opcional para rangos, mes/mes2 opcionales en MM (default 01-12) y tipodiv (0=dividendos, default 0). Si una sociedad no tiene dividendos en el período, la CMF lo dice y la tool lo reporta como ausencia real. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
-        sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
+        sociedades: sociedadesSchema,
         anio: anioSchema,
         anio2: anioSchema.optional().describe("Año final del rango en AAAA (default: igual a anio)"),
         mes: mesSchema.optional().describe("Mes inicial en MM (default 01)"),
@@ -1288,7 +1293,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         "Devuelve las operaciones de capital de sociedades anónimas: repartos de capital, canjes de acciones o acciones liberadas de pago, con una fila por operación (sociedad y año) y sus campos (RUT, razón social, número, serie, fechas de acuerdo, límite y pago, moneda, monto por acción, acciones y totales en miles). Elija tipo=reparto, canje o liberadas; seleccione sociedades por RUT sin DV (array; ['0'] = todas) y fije anio en AAAA, o anio='0' para todos los años, que es lo más útil porque estas operaciones son pocas por año. Use esta tool para eventos corporativos sobre el capital; para dividendos use cmf_dividendos. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         tipo: z.enum(["reparto", "canje", "liberadas"]).describe("Operación: reparto=repartos de capital, canje=canjes de acciones, liberadas=acciones liberadas de pago"),
-        sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
+        sociedades: sociedadesSchema,
         anio: z.union([z.literal("0"), z.literal(0), anioSchema]).transform(String).describe("Año en AAAA, o '0' para todos los años"), ...paginacion(300) }),
     },
     async ({ tipo, sociedades, anio, offset, limit }) => {
@@ -1497,7 +1502,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         "Devuelve los estados financieros IFRS de intermediarios de valores (corredores de bolsa y agentes de valores) para un rango de períodos, en miles de pesos. Cada fila es una cuenta (con su código, ej. 11.01.00 Efectivo) y cada columna un intermediario en un período (la lista entidades trae esas columnas). Seleccione tipo (0 = todos, 1 = corredores, 2 = agentes; default 0), sociedades por RUT sin DV (array; default ['0']=todas), anio1/anio2 en AAAA y mes1/mes2 opcionales en MM (default 12; solo 03, 06, 09 y 12). Use esta tool para EEFF de intermediarios; para sociedades anónimas use cmf_eeff_ifrs_sa. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         tipo: z.enum(["0", "1", "2"]).default("0").describe("0 = todos, 1 = corredores de bolsa, 2 = agentes de valores"),
-        sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
+        sociedades: sociedadesSchema,
         anio1: anioSchema,
         anio2: anioSchema.describe("Año final del rango en AAAA (ej: 2025)"),
         mes1: mesSchema.optional(),
@@ -1546,7 +1551,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
         "Devuelve los indicadores financieros IFRS de intermediarios de valores (corredores de bolsa y agentes de valores) para un rango de períodos. Cada fila es un intermediario en un período, con un campo por indicador (rentabilidad sobre el patrimonio, comisiones sobre resultado, resultado por intermediación) y los saldos con que se calculan. Seleccione tipo (0 = todos, 1 = corredores, 2 = agentes; default 0), sociedades por RUT sin DV (array; default ['0']=todas), anio1/anio2 en AAAA y mes1/mes2 opcionales en MM (default 12; solo 03, 06, 09 y 12). Use esta tool para ratios de intermediarios; para sus EEFF use cmf_intermediarios_eeff_ifrs. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         tipo: z.enum(["0", "1", "2"]).default("0").describe("0 = todos, 1 = corredores de bolsa, 2 = agentes de valores"),
-        sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
+        sociedades: sociedadesSchema,
         anio1: anioSchema,
         anio2: anioSchema.describe("Año final del rango en AAAA (ej: 2025)"),
         mes1: mesSchema.optional(),
@@ -1953,7 +1958,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
           const q = estado === "VI" ? "vigente" : "no vigente";
           filas = filas.filter((f) => (f.estado ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(q));
         }
-        const { filas: entidades, paginado } = paginar(filas, offset, limit);
+        const { filas: entidades, paginado } = paginar(filas.map(conRutCanonico), offset, limit);
         const advertencia =
           cache === "red"
             ? "Primera carga del catálogo (~5.4MB HTML): puede exceder el límite de CPU del plan free de Workers; use plan paid o espere al cacheado (24h)."

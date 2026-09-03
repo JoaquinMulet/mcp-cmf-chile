@@ -218,6 +218,7 @@ Configura tu agente para lanzarlo como proceso:
 ```
 
 > Opcional: `CMF_API_KEY` habilita las tools de la API oficial v3 (indicadores, balances). Se obtiene gratis en la CMF.
+> Opcional: `CMF_BEST_KEY` es una clave propia para el servicio del sitio estadístico BEST, que alimenta `cmf_bancos_tasas`. Sin ella el servidor usa la clave web pública que el propio sitio de la CMF envía desde el navegador. La CMF entrega claves personales en best.cmfchile.cl/api.
 
 ## Arquitectura
 

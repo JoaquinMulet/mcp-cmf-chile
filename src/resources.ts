@@ -3,6 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import type { CmfEnv } from "./client/cmf-client.js";
 import { obtenerCaptcha } from "./captcha.js";
 import { RESUMEN_LIMITACIONES_PDF } from "./pdf.js";
+import { catalogoPedido } from "./tools/catalogos.js";
 
 /** Recursos MCP (URIs cmf://) — templates registrados en resources/templates/list. */
 
@@ -203,7 +204,7 @@ Ojo con 2 cosas al procesarlos a mano, porque el servidor ya las corrige y usted
 
 ## Reglas
 
-- Fechas en formato YYYY-MM-DD; RUT numérico (con o sin DV).
+- Fechas en formato YYYY-MM-DD. El RUT se acepta en cualquier formato y todo catálogo lo entrega sin puntos ni dígito verificador (el DV, si la fuente lo traía, va en \`rut_dv\`). Los catálogos de códigos que otras tools piden (código SBIF de bancos, RUT de aseguradoras, columnas de la cartera de fondos mutuos) los entrega \`cmf_codigos\`.
 - \`cmf_hechos_globales\` y \`cmf_fondos_mutuos_cartola\` requieren captcha: si no se entrega, la tool lo solicita.
 - Si una tool devuelve "sin datos", verifique período/norma antes de concluir que la información no existe (el inicio IFRS varía por empresa).
 - No invente enlaces a documentos: los tokens firmados solo se resuelven en el servidor.
@@ -309,45 +310,49 @@ Ojo con 2 cosas al procesarlos a mano, porque el servidor ya las corrige y usted
     }),
   );
 
-  // Códigos SBIF de instituciones financieras (verificados contra la API oficial v3 de la CMF)
-  server.registerResource(
+  /**
+   * Los 3 catálogos de códigos, también como recursos.
+   *
+   * Hasta el 3 de septiembre de 2026 el de bancos vivía acá como una lista
+   * escrita a mano, con 14 instituciones y sin fecha de verificación, y los
+   * otros 2 no existían. Los 3 leen ahora `src/catalogos.ts`, que es la misma
+   * fuente de la tool `cmf_codigos`, así que un recurso y su tool no pueden
+   * decir cosas distintas.
+   */
+  const recursoDeCatalogo = (
+    nombre: string,
+    uri: string,
+    catalogo: "bancos" | "seguros" | "cartera_fondos_mutuos",
+    title: string,
+    description: string,
+  ) => {
+    server.registerResource(nombre, uri, { title, description, mimeType: "application/json" }, async (u: URL) => {
+      const { filas, notas } = await catalogoPedido(catalogo, env);
+      return {
+        contents: [{ uri: u.href, text: JSON.stringify({ catalogo, notas, total: filas.length, filas }, null, 2), mimeType: "application/json" }],
+      };
+    });
+  };
+
+  recursoDeCatalogo(
     "bancos-codigos",
     "cmf://bancos/codigos",
-    {
-      title: "Códigos SBIF de instituciones financieras",
-      description: "Mapa código SBIF → nombre de institución financiera (verificado contra la API oficial v3 de la CMF). Use estos códigos en institucion para las tools cmf_api_*.",
-      mimeType: "application/json",
-    },
-    async (uri: URL) => ({
-      contents: [
-        {
-          uri: uri.href,
-          text: JSON.stringify(
-            {
-              nota: "Códigos verificados contra la API oficial v3 de la CMF (ficha institucional). 999 = sistema financiero total.",
-              instituciones: [
-                { codigo: "001", nombre: "Banco de Chile" },
-                { codigo: "009", nombre: "Banco Internacional" },
-                { codigo: "012", nombre: "Banco del Estado de Chile" },
-                { codigo: "014", nombre: "Scotiabank Chile" },
-                { codigo: "016", nombre: "Banco de Crédito e Inversiones" },
-                { codigo: "017", nombre: "Banco do Brasil S.A." },
-                { codigo: "027", nombre: "Corpbanca" },
-                { codigo: "028", nombre: "Banco Bice" },
-                { codigo: "037", nombre: "Banco Santander-Chile" },
-                { codigo: "049", nombre: "Banco Security" },
-                { codigo: "051", nombre: "Banco Falabella" },
-                { codigo: "053", nombre: "Banco Ripley" },
-                { codigo: "055", nombre: "Banco Consorcio" },
-                { codigo: "999", nombre: "Sistema financiero total" },
-              ],
-            },
-            null,
-            2,
-          ),
-          mimeType: "application/json",
-        },
-      ],
-    }),
+    "bancos",
+    "Códigos SBIF de instituciones financieras",
+    "Mapa código SBIF → institución financiera, verificado contra la API oficial v3 de la CMF. Use estos códigos en institucion para las tools cmf_api_* y en codUnicoBank de cmf_bancos_reportes. La tool cmf_codigos entrega lo mismo con filtro y paginación.",
+  );
+  recursoDeCatalogo(
+    "seguros-codigos",
+    "cmf://seguros/codigos",
+    "seguros",
+    "Compañías de seguros y su RUT",
+    "Compañías de seguros generales y de vida con su RUT sin dígito verificador, leídas de los formularios de EEFF de la CMF. Es el valor que pide sociedades en cmf_seguros_eeff. La tool cmf_codigos entrega lo mismo con filtro y paginación.",
+  );
+  recursoDeCatalogo(
+    "fondos-mutuos-cartera-codigos",
+    "cmf://fondos-mutuos/cartera-codigos",
+    "cartera_fondos_mutuos",
+    "Variables de la cartera de fondos mutuos (Circular 1.333)",
+    "Qué significa cada columna ffm_60xxxxx de cmf_fondos_mutuos_cartera, según la Circular 1.333 de 1997. nombre, detalle, unidad y valores posibles. La tool cmf_codigos entrega lo mismo con filtro y paginación.",
   );
 }

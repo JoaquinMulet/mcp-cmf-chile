@@ -11,6 +11,7 @@ const pdfModule = await cargarPdfModuleDesdeDisco().catch(() => undefined);
 
 const env = {
   CMF_API_KEY: process.env.CMF_API_KEY,
+  CMF_BEST_KEY: process.env.CMF_BEST_KEY,
   CMF_HTTP_TOKEN: process.env.CMF_HTTP_TOKEN,
   CMF_RATE_LIMIT_MS: process.env.CMF_RATE_LIMIT_MS,
   CMF_CACHE_TTL_S: process.env.CMF_CACHE_TTL_S,

@@ -1,4 +1,5 @@
 import * as z from "zod/v4";
+import { rutCanonico } from "./rut.js";
 
 /**
  * Schemas de entrada flexibles: aceptan lo que escriben personas y modelos
@@ -73,12 +74,37 @@ export const diaSchema = z
   .pipe(z.string().regex(/^(0[1-9]|[12]\d|3[01])$/, "Día en formato DD (acepta 1 o '01')"))
   .describe("Día en formato DD (acepta 1 o '01'). Ej: 15");
 
-/** RUT: acepta 90749000, 90.749.000, 90749000-0, 90.749.000-0. Normaliza a dígitos (recorta el DV). */
+/**
+ * RUT: acepta 90749000, 90.749.000, 90749000-0, 90.749.000-0. Normaliza al
+ * formato canónico del servidor, que es el que la CMF acepta. dígitos sin
+ * puntos y sin dígito verificador. La regla vive en `rutCanonico`, y los
+ * catálogos entregan el rut con la misma función, así que lo que sale de
+ * uno se puede pegar en cualquier tool sin tocarlo.
+ */
 export const rutSchema = z
   .coerce.string()
-  .transform((s) => s.replace(/[.\s]/g, "").replace(/-.*$/, ""))
+  .transform(rutCanonico)
   .pipe(z.string().regex(/^\d{6,9}$/, "RUT inválido. Acepto: 90749000, 90.749.000, 90749000-0 o 90.749.000-0"))
-  .describe("RUT del emisor o entidad (acepta 90749000, 90.749.000 o 90749000-0; el dígito verificador se recorta). Ej: 61808000");
+  .describe("RUT del emisor o entidad, en cualquier formato (acepta 90749000, 90.749.000 o 90749000-0; el servidor lo deja sin dígito verificador, que es lo que pide la CMF). Ej: 61808000");
+
+/** Un RUT en cualquier formato, o "0", que en los formularios de la CMF significa todas. */
+export const rutOTodosSchema = z
+  .coerce.string()
+  .transform(rutCanonico)
+  .pipe(z.string().regex(/^(0|\d{6,9})$/, "RUT inválido. Acepto 90749000, 90.749.000-0 o 0 para todas"))
+  .describe("RUT en cualquier formato (con o sin puntos, con o sin dígito verificador); 0 = todas");
+
+/**
+ * Lista de RUT para los formularios que aceptan varias sociedades.
+ *
+ * Antes era `z.array(z.string())`, así que «76.212.519-6» copiado de un grid
+ * viajaba con puntos a la CMF y la CMF respondía vacío, sin error. Medido el
+ * 2 de septiembre de 2026 en el informe de pruebas del MCP.
+ */
+export const sociedadesSchema = z
+  .array(rutOTodosSchema)
+  .default(["0"])
+  .describe("RUT de las sociedades, en cualquier formato (con o sin puntos, con o sin dígito verificador; el servidor lo deja sin DV, que es lo que pide la CMF). ['0'] = todas");
 
 /** Serie de indicador: acepta mayúsculas y minúsculas; normaliza a minúsculas. */
 export const serieIndicadorSchema = z
