@@ -26,10 +26,13 @@ Fuentes de datos, todas externas y ninguna bajo nuestro control.
   `cmf_api_*` responden un error que lo dice.
 - `datosbanco.cmfchile.cl` — servlet BaseDato, reportes contables de la banca.
 - `best-sbif-api.azurewebsites.net` — el servicio que alimenta `best.cmfchile.cl`, el sitio
-  estadístico nuevo de la CMF. Tasas de interés corriente y máxima convencional. Pide la
-  cabecera `x-apikey`; sin `CMF_BEST_KEY` se usa la clave web pública del propio sitio. Ver la
-  lección 27. El servlet InfoFinanciera de `tasas.cmfchile.cl` que lo antecedía ya no entrega
-  la tabla.
+  estadístico de la CMF. 5.180 cuadros y 34.023 series (bancos, cooperativas, emisores de
+  tarjetas, mutuarias, administradoras de fondos, tasas) más las tasas de interés corriente y
+  máxima convencional. Pide la cabecera `x-apikey`; sin `CMF_BEST_KEY` se usa la clave web
+  pública del propio sitio. Ver las lecciones 27 y 32. El servlet InfoFinanciera de
+  `tasas.cmfchile.cl` que lo antecedía ya no entrega la tabla.
+- `cronologiabancaria.cmfchile.cl` — la Cronología Bancaria (ex SBIF), la historia de cada
+  banco desde 1743. Páginas HTML con listas y tablas sin cabecera. Ver la lección 31.
 - `github.com/JoaquinMulet/empresas-cmf-chile` — catálogo de tickers de bolsa a RUT, que
   alimenta `cmf_empresa_por_ticker`. Es nuestro, no de la CMF.
 
@@ -105,6 +108,11 @@ del dueño. Si molesta, se hace más rápido, no más corto.
   `cmf://fondos-mutuos/cartera-codigos` leen de acá. Ver la lección 28.
 - `src/util/rut.ts` — `rutCanonico`, la única regla del formato de RUT. La usan `rutSchema` en
   la entrada y `conRutCanonico` en la salida de todo catálogo. Ver la lección 29.
+- `src/client/best.ts` — `bestJson`, la única puerta hacia el servicio de BEST. Clave, cabeceras
+  y los 3 errores (HTTP, 200 sin JSON, red) viven acá. `src/tools/best.ts` tiene el buscador
+  del catálogo y los cuadros; las tasas TMC siguen en `otros.ts` y usan el mismo cliente.
+- `src/tools/cronologia.ts` — la Cronología Bancaria, con un lector por vista (listas por letra,
+  tablas de hitos, relato de un evento, tablas de relacionadas).
 - `src/util/tramos.ts` — paginación honesta. `paginacion()`, `toolOkPaginado` y `toolOkTabla`.
 - `src/util/grid.ts` — `toolDeGrid`, el camino único de las estadísticas que la CMF sirve con
   un grid de Google Charts (EEFF e indicadores de SA, seguros e intermediarios). Lee el índice,
@@ -598,6 +606,45 @@ vigilan 2 comprobaciones de clase en `test/rut.test.ts`. ninguna tool declara un
 cruda, y todo catálogo con `rut` pasa por `conRutCanonico`. La excepción se declara en vez de
 esconderse. los catálogos de fondos usan un número de registro de 4 dígitos que la CMF llama
 `rut` en su propia URL, y las instrucciones del servidor lo dicen.
+
+**31. «La CMF migró la página» era la portada de un sitio que sí tiene los datos (3 de
+septiembre de 2026).** Qué falló. `cmf_bancos_cronologia` pedía `indice=8.0`, que es la
+portada, buscaba una `<table>` y como no la encontraba respondía que la fuente había migrado.
+La Cronología Bancaria funciona y trae la historia de cada banco desde 1743. Los datos viven
+en 5 vistas que se eligen con el `indice` de la URL (`8.1&letra=A`, `8.4&idEntidad=ID`,
+`8.3.1&ANIOS=AAAA`, `8.9&Eventoid=ID`, `8.2.3&idEntidad=ID`) y vienen como `<ul><li>` con el
+id en el `href`, como tablas de 2 columnas con `<p class="fecha">`, o como un
+`<div class="post fecha">`. Prescripción. Antes de declarar migrada una fuente, seguir sus
+propios enlaces. la portada enlazaba las 5 vistas. Y el cortafuegos F5 de la CMF responde 500
+con la página «Attack ID» para algunas consultas sin patrón visible (`8.2.1&anio=2020` sí,
+`anio=2019` no; `letra=B` sí, `letra=C` no), aun con el cliente anti-bot. La tool lo dice como
+error de fuente con la URL, y la descripción no promete lo que el cortafuegos bloquea.
+
+**32. BEST tiene 5.180 cuadros y el MCP servía 1 (3 de septiembre de 2026).** Qué pasó. Al
+abrir el bundle de best.cmfchile.cl para las tasas (lección 27) apareció el resto. la API
+oficial APIBEST (`apibest.cmfchile.cl/api/v1/series/data/{codigo}` y `/cuadros/data/{tag}`,
+clave personal por formulario, cuota de 10 por minuto, 100 al día y 3.000 al mes, rango
+máximo de 12 meses), el servicio interno del sitio (`/public/Cuadrosv3?NumPeriodos=N&Tag=`,
+`?FechaInicio=AAAAMMDD&FechaFin=&Tag=`, `/public/Cuadrosv3/tag/{tag}` para la historia
+completa, sin tope de rango ni cuota declarada), su buscador (`POST /aisearch/aisearch` con
+`{query, top}`, sin clave, que IGNORA `top` y devuelve hasta 1000 por relevancia) y el
+catálogo completo en CSV (`bestsbif.blob.core.windows.net/bestcontainer/CatalogoAPIBEST.csv`,
+10 MB, columnas categoría, entidad, cuadro, tag, serie). Decisión. la cuota de la API oficial
+no sirve para un servidor compartido, así que `cmf_best_buscar` y `cmf_best_cuadro` usan el
+servicio del sitio con la clave web. Los cuadros salen en formato largo (fecha, serie,
+descripción, valor), porque un cuadro puede tener 97 series y una fila por fecha no cabe en
+ningún texto. Unos endpoints envuelven el cuadro en `result` y otros no. Y la respuesta trae
+notas de la CMF que cambian la lectura («información posterior a diciembre de 2021 no
+disponible en BEST»), así que viajan en `notas` y en el texto.
+
+**33. Una fuente muerta en la CMF se borra, no se explica (3 de septiembre de 2026).** Qué
+pasó. `cmf_fondos_inversion_comisiones_maximas` leía `..._commax_excel.php`, y la planilla
+vuelve con solo la cabecera para todo período probado (2019, 2024, 2025, junio y diciembre,
+todos los fondos o uno solo, con y sin cookie del índice). El formulario de la CMF hace
+exactamente el mismo POST, así que no es un defecto nuestro. la CMF no publica el dato.
+Regla del dueño. si la fuente no tiene arreglo, la tool se elimina, porque una tool que
+siempre responde vacío enseña al modelo a desconfiar de las demás. La misma información, para
+fondos de inversión, la entrega `cmf_fondos_comisiones_maximas` con `tipo=fi` y `circular=1965`.
 
 ## Gotchas
 

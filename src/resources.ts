@@ -202,6 +202,13 @@ Ojo con 2 cosas al procesarlos a mano, porque el servidor ya las corrige y usted
 - \`cmf_api_indicador_valor\` (serie: uf, dolar, euro, tab, utm, ipc, tip, tmc; anio, mes, dia opcional).
 - \`cmf_api_indicador_serie\` (serie, desde, hasta).
 
+## Estadísticas de BEST (bancos, cooperativas, tarjetas, mutuarias, fondos)
+
+1. \`cmf_best_buscar\` (consulta en lenguaje natural): cuadros con su tag, unidad y profundidad histórica.
+2. \`cmf_best_cuadro\` (tag; modo ultimos, rango o completo): una fila por fecha y serie, con las notas del cuadro.
+3. \`cmf_bancos_tasas\` (fecha): tasa de interés corriente y máxima convencional por segmento.
+4. \`cmf_bancos_cronologia\` (consulta instituciones, institucion, anio, evento o relacionadas): la historia de cada banco.
+
 ## Reglas
 
 - Fechas en formato YYYY-MM-DD. El RUT se acepta en cualquier formato y todo catálogo lo entrega sin puntos ni dígito verificador (el DV, si la fuente lo traía, va en \`rut_dv\`). Los catálogos de códigos que otras tools piden (código SBIF de bancos, RUT de aseguradoras, columnas de la cartera de fondos mutuos) los entrega \`cmf_codigos\`.

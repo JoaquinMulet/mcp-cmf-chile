@@ -9,82 +9,14 @@ import { unzip, } from "../util/unzip.js";
 import { toolDeGrid } from "../util/grid.js";
 import { paginacionBase64, tramoBase64, avisoDeTramoBase64 } from "../util/binario.js";
 import { filtrosLocales, filtrarFilas } from "../util/filtros.js";
+import { tasasTmcDeBest } from "./best.js";
+import { hoyEnChile } from "../client/best.js";
 
 /** Decodifica páginas legacy (latin1) de los hosts de datos bancarios. */
 function decodificarLatin1(bytes: ArrayBuffer): string {
   return new TextDecoder("latin1").decode(bytes);
 }
 
-/**
- * El servicio que alimenta best.cmfchile.cl, el sitio estadístico nuevo de la
- * CMF. Su aplicación Angular lo declara en su código público
- * (`API_URL_BASE` en el chunk principal) y manda en cada llamada a `/public`
- * la cabecera `x-apikey` con esta clave, que por lo tanto es pública. La
- * CMF ofrece además claves personales en best.cmfchile.cl/api; si el dueño
- * consigue una, va en `CMF_BEST_KEY` y reemplaza a la del sitio.
- */
-const BEST_API = "https://best-sbif-api.azurewebsites.net";
-const BEST_CLAVE_WEB = "web-zUsFq7CKNYBm1boKYLtF7KyEDoXFwtKl";
-
-interface TasaTmc {
-  titulo: string;
-  descripcion: string;
-  tasa: number;
-  tmc: number;
-  tip: number;
-  fechaPublicacion: string;
-  fechaVigenciaHasta: string | null;
-}
-
-interface NotaTmc {
-  nota: string;
-  orden: string;
-  ubicacionTmc: Array<{ tasa: number; tipo: string }>;
-}
-
-/**
- * Las tasas y sus notas al pie, tal como las publica BEST para una fecha.
- * BEST entiende la fecha solo como AAAAMMDD; con guiones responde 500.
- */
-async function tasasTmcDeBest(fechaIso: string, env: CmfEnv): Promise<{ filas: Record<string, unknown>[]; notas: string[] }> {
-  const aaaammdd = fechaIso.replace(/-/g, "");
-  const leer = async <T>(ruta: string): Promise<T> => {
-    const res = await fetchCmf(`${BEST_API}${ruta}`, { headers: { "x-apikey": env.CMF_BEST_KEY ?? BEST_CLAVE_WEB, Accept: "application/json" } }, env);
-    const oficial = "La fuente oficial es https://best.cmfchile.cl/datos/tasas";
-    if (!res.ok) {
-      throw new Error(
-        `Tasas de interés: BEST respondió HTTP ${res.status} en ${BEST_API}${ruta}. ${oficial}; ` +
-          "si el error es 401 la clave web del sitio cambió y hay que leerla de nuevo de su código, o poner una clave propia en CMF_BEST_KEY.",
-      );
-    }
-    // Un 200 con HTML (página de error o de mantención del servicio) no es
-    // un dato. Sin este guard el modelo recibía «Unexpected token <».
-    const cuerpo = await res.text();
-    try {
-      return JSON.parse(cuerpo) as T;
-    } catch {
-      throw new Error(
-        `Tasas de interés: BEST respondió 200 pero sin JSON en ${BEST_API}${ruta} (empieza con «${cuerpo.slice(0, 60).replace(/\s+/g, " ")}»). ${oficial}; el servicio puede estar en mantención, reintente más tarde.`,
-      );
-    }
-  };
-  const [tasas, notas] = await Promise.all([
-    leer<{ result: TasaTmc[] }>(`/public/tmc/tasas/${aaaammdd}`),
-    leer<{ result: NotaTmc[] }>(`/public/tmc/notas/${aaaammdd}`),
-  ]);
-  const filas = (tasas.result ?? []).map((t) => ({ ...t }));
-  // Cada nota dice a qué segmento y a qué tasa (tip o tmc) aplica. Eso se
-  // escribe en la nota misma, porque el texto es lo único que lee el modelo.
-  const textoNotas = (notas.result ?? []).map(
-    (n) => `(${n.orden}) ${n.nota} Aplica a ${n.ubicacionTmc.map((u) => `la ${u.tipo} de la tasa ${u.tasa}`).join(" y ")}.`,
-  );
-  // Para una fecha futura BEST devuelve las tasas vigentes hoy, sin
-  // decirlo. Se dice acá, porque una tasa «al 2027» que en realidad es la
-  // de hoy es un dato engañoso.
-  const hoy = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Santiago" }).format(new Date());
-  const avisoFuturo = fechaIso > hoy ? [`La fecha ${fechaIso} es futura. BEST entrega las tasas vigentes hoy (${hoy}), publicadas en fechaPublicacion; no existe una publicación para esa fecha.`] : [];
-  return { filas, notas: ["Tasas anuales, en porcentaje, publicadas en el Diario Oficial en fechaPublicacion.", ...avisoFuturo, ...textoNotas] };
-}
 import { pdfAMarkdown, notaLimitacionesPdf, RESUMEN_LIMITACIONES_PDF } from "../pdf.js";
 import { procesarTablasEEFF, textoVerificacion, textoAviso } from "../eeff-tables.js";
 import { paginar } from "../util/paginate.js";
@@ -1055,7 +987,7 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
     },
     async ({ fecha, offset, limit }) => {
       try {
-        const iso = fecha ?? new Intl.DateTimeFormat("en-CA", { timeZone: "America/Santiago" }).format(new Date());
+        const iso = fecha ?? hoyEnChile();
         const { filas, notas } = await tasasTmcDeBest(iso, env);
         return toolOkTabla({
           titulo: `Tasas de interés corriente (tip) y máxima convencional (tmc), anuales, vigentes al ${iso}`,
@@ -1068,51 +1000,6 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
           tool: "cmf_bancos_tasas",
           unidad: "segmentos",
           notas,
-        });
-      } catch (e) {
-        return fromError(e);
-      }
-    },
-  );
-
-  server.registerTool(
-    "cmf_bancos_cronologia",
-    {
-      annotations: { readOnlyHint: true, destructiveHint: false },
-      outputSchema: filasSchema,
-      title: "Cronología bancaria",
-      description:
-        "Devuelve la cronología histórica del sistema bancario chileno publicada por la CMF (servlet CronologiaBancaria de la ex SBIF), con hasta 200 filas. Elija el capítulo con indice (default 8.0); si el contenido no es tabular, la tool lo indica. Use esta tool para hitos de la banca chilena; para tasas de interés use cmf_bancos_tasas. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
-      inputSchema: z.object({ indice: z.string().default("8.0").describe("Índice del capítulo de la cronología (default 8.0)"), ...paginacion(200) }),
-    },
-    async ({ indice, offset, limit }) => {
-      try {
-        const html = await getLegacy(
-          "/sbifweb/servlet/CronologiaBancaria",
-          { indice },
-          env,
-        );
-        const filas = htmlTablaAJson(html);
-        // El 2 de septiembre de 2026 el servlet no existe en www.cmfchile.cl
-        // (404), responde 500 en datosbanco y tasas, y en su host propio
-        // cronologiabancaria.cmfchile.cl devuelve la carcasa del portal sin la
-        // tabla. Un cero acá era una mentira. la fuente está migrada, y se dice.
-        if (filas.length === 0) {
-          return toolErrorFuente(
-            `Cronología bancaria (índice ${indice})`,
-            `https://cronologiabancaria.cmfchile.cl/sbifweb/servlet/CronologiaBancaria?indice=${indice}`,
-            "la CMF migró la cronología bancaria y la página ya no trae la tabla que esta tool leía",
-          );
-        }
-        return toolOkTabla({
-          titulo: `Cronología bancaria`,
-          vacio: "Cronología cargada; contenido no tabular.",
-          base: { indice },
-          campo: "filas",
-          filas,
-          offset,
-          limit,
-          tool: "cmf_bancos_cronologia",
         });
       } catch (e) {
         return fromError(e);

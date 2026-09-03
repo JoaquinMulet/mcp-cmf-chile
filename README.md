@@ -16,15 +16,15 @@ Servidor **Model Context Protocol** (spec 2026-07-28, dual-era: también respond
 https://cmf-mcp.kumocloud.cl/mcp/codigo
 ```
 
-**Modo clásico.** 86 herramientas, una por operación.
+**Modo clásico.** 88 herramientas, una por operación.
 
 ```
 https://cmf-mcp.kumocloud.cl/mcp
 ```
 
-Las 2 rutas sirven exactamente las mismas 86 operaciones, sobre el mismo
+Las 2 rutas sirven exactamente las mismas 88 operaciones, sobre el mismo
 registro. Cambia cómo se exponen. En modo clásico cada operación es una
-herramienta MCP, y las 86 definiciones viajan en cada petición del
+herramienta MCP, y las 88 definiciones viajan en cada petición del
 modelo, unos 37 mil tokens medidos. En modo código hay 2 herramientas y
 el modelo escribe JavaScript, con un costo fijo de unos 736 tokens. Es
 un 98 por ciento menos, y no crece si mañana hay 200 operaciones.
@@ -74,13 +74,13 @@ Usa el adaptador `mcp-remote`:
 
 ---
 
-## Modo código (2 herramientas en vez de 86)
+## Modo código (2 herramientas en vez de 88)
 
 En la ruta `/mcp/codigo` el servidor expone solo `cmf_buscar` y
 `cmf_ejecutar`. Las 2 reciben JavaScript y devuelven lo que ese código
 retorne.
 
-1. **`cmf_buscar`** te da la variable `catalogo`, un arreglo con las 86
+1. **`cmf_buscar`** te da la variable `catalogo`, un arreglo con las 88
    operaciones y sus parámetros. Escribes código que lo filtra. El
    catálogo nunca entra a tu contexto, solo entra lo que devuelvas.
 2. **`cmf_ejecutar`** te da además `cmf`, con una función async por
@@ -146,12 +146,12 @@ un texto y recibe un resultado.
 
 ### Cuándo usar el modo clásico
 
-- Si tu cliente ya integró las 86 herramientas y no quieres tocarlo.
+- Si tu cliente ya integró las 88 herramientas y no quieres tocarlo.
 - Si tu modelo escribe JavaScript poco fiable. En modo código, un
   programa mal escrito cuesta un reintento.
 - Si necesitas una de las 2 herramientas con captcha. Su imagen viaja
   como recurso MCP y ese camino solo existe en modo clásico. Son estas 2
-  de las 86, y ninguna más.
+  de las 88, y ninguna más.
 
   | Herramienta | Qué trae | Por qué la CMF le pone captcha |
   |---|---|---|
@@ -165,13 +165,14 @@ un texto y recibe un resultado.
 
 ## Qué es
 
-Un puente entre los agentes de IA y la información pública del regulador financiero chileno. Con 86 herramientas, el servidor expone:
+Un puente entre los agentes de IA y la información pública del regulador financiero chileno. Con 88 herramientas, el servidor expone:
 
 - **Empresas en bolsa**: búsqueda por nombre/RUT/ticker, estados financieros (EEFF IFRS/NCH con tablas estructuradas), hechos esenciales, accionistas, directorio, sanciones, resoluciones, juntas, memoria anual, indicadores ASG, dividendos, APV, tomas de control e intermediarios.
 - **Fondos mutuos**: catálogo completo (3.400+ fondos), cartera, comisiones, inversiones, patrimonio, rentabilidad, partícipes, costos TAC, cartola diaria y comisiones máximas.
-- **Fondos de inversión**: catálogo, estados financieros IFRS y comisiones máximas.
+- **Fondos de inversión**: catálogo y estados financieros IFRS.
 - **Indicadores económicos (API oficial v3)**: UF, dólar, euro, TAB, UTM, IPC, TIP, TMC, balances y resultados de bancos.
 - **Normativa, seguros (incl. registro de depósito de pólizas), XBRL, documentos firmados y sistemas bancarios**.
+- **BEST, el sitio estadístico de la CMF**: los 5.180 cuadros y 34.023 series de bancos, cooperativas, emisores de tarjetas, mutuarias hipotecarias y administradoras de fondos (riesgo, actividad, red de atención, medios de pago, clientes, desempeño, género y regional) con `cmf_best_buscar` y `cmf_best_cuadro`, las tasas de interés corriente y máxima convencional con `cmf_bancos_tasas`, y la Cronología Bancaria desde 1743 con `cmf_bancos_cronologia`.
 - **Paquetes de alto nivel**: descarga completa de una empresa en 2 llamadas (árbol de directorio + ZIP ordenado con manifiesto), boletines mensuales de fondos mutuos y catálogo completo de entidades. Ver [`docs/PAQUETES.md`](docs/PAQUETES.md).
 
 ## Paquetes de alto nivel
@@ -227,7 +228,7 @@ src/
 ├── worker.ts            # Entrypoint HTTP remoto: createMcpHandler (agents) + auth opcional
 ├── index.ts             # Entrypoint STDIO local
 ├── server.ts            # Factory per-request. registra las tools segun el modo, + resources + prompts
-├── registro.ts          # Captura las 86 operaciones de src/tools/ y deriva el catalogo
+├── registro.ts          # Captura las 88 operaciones de src/tools/ y deriva el catalogo
 ├── sandbox.ts           # La caja aislada. Worker cargado al vuelo, sin internet
 ├── client/
 │   ├── cmf-client.ts    # Cliente HTTP central: allowlist, UA, cookies, rate limit, retry

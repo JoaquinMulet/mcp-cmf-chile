@@ -1,16 +1,16 @@
 /**
  * Registro de operaciones de la CMF.
  *
- * Las 86 operaciones ya existen, escritas como tools MCP en `src/tools/`.
+ * Las operaciones ya existen, escritas como tools MCP en `src/tools/`.
  * Este módulo las CAPTURA en vez de reescribirlas: le pasa a los mismos
  * `registrarToolsX(server, env)` un servidor de mentira que, en lugar de
  * registrar en MCP, guarda cada operación en un mapa.
  *
  * Por qué así y no un directorio de operaciones nuevo. porque una copia
- * a mano de 86 operaciones se desincroniza el primer día. Acá hay UNA
+ * a mano de las operaciones se desincroniza el primer día. Acá hay UNA
  * sola definición de cada operación y 2 formas de exponerla.
  *
- * - Modo clásico: 86 tools MCP, una por operación. Lo que existe hoy.
+ * - Modo clásico: una tool MCP por operación. Lo que existe hoy.
  * - Modo código: 2 tools (`cmf_buscar`, `cmf_ejecutar`) sobre este mismo
  *   registro. El catálogo se DERIVA de acá, nunca se escribe a mano.
  */
@@ -23,6 +23,8 @@ import { registrarToolsFondosInversion } from "./tools/fondos-inversion.js";
 import { registrarToolsOtros } from "./tools/otros.js";
 import { registrarToolsPaquete } from "./tools/paquete.js";
 import { registrarToolsCatalogos } from "./tools/catalogos.js";
+import { registrarToolsBest } from "./tools/best.js";
+import { registrarToolsCronologia } from "./tools/cronologia.js";
 
 /** Una operación de la CMF, tal como quedó registrada por su módulo. */
 export interface Operacion {
@@ -162,6 +164,8 @@ export function construirRegistro(env: CmfEnv = {}): Map<string, Operacion> {
   registrarToolsOtros(captor, env);
   registrarToolsPaquete(captor, env);
   registrarToolsCatalogos(captor, env);
+  registrarToolsBest(captor, env);
+  registrarToolsCronologia(captor, env);
 
   return operaciones;
 }

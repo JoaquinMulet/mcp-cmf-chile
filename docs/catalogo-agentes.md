@@ -21,7 +21,7 @@ Límites y notas:
 - Si una consulta devuelve 'sin datos', verifique el período o la norma (IFRS vs NCH) antes de concluir que la información no existe; si el error menciona que la fuente de la CMF no devolvió datos, es una condición del sistema de la CMF (verifique la página oficial indicada) y no implica ausencia de datos.
 ```
 
-## TOOLS (87)
+## TOOLS (88)
 
 ### cmf_api_indicador_valor
 - title: Valor de indicador (UF, dólar, UTM, IPC, TMC…)
@@ -745,18 +745,6 @@ Límites y notas:
 - annotations: {"readOnlyHint":true,"destructiveHint":false}
 - outputSchema: {fondos, total, next_offset}
 
-### cmf_fondos_inversion_comisiones_maximas
-- title: Comisiones máximas de Fondos de Inversión
-- description: Devuelve el informe de comisiones máximas de fondos de inversión (TGCA, tasa de gastos y comisiones anualizada, con la remuneración fija, los gastos y la base de cálculo por fondo en miles de pesos) que la CMF genera como planilla Excel para un período. Fije mes en MM y anio en AAAA, y fondo por RUN (default % = todos). COBERTURA, verificada el 2 de septiembre de 2026: la CMF respondió 'Sin Información' para todos los períodos probados entre 2023 y 2025, tanto para todos los fondos como para uno solo; si eso le pasa, el informe no está publicado para ese período. Use esta tool para conocer los topes de comisiones; para las comisiones cobradas a fondos de pensiones use cmf_fondos_comisiones_maximas (tipo=fi). Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.
-- parámetros:
-  - mes (REQUERIDO): Mes del informe en MM
-  - anio (REQUERIDO): Año del informe en AAAA
-  - fondo default="%": RUN del fondo (default % = todos)
-  - offset default=0: Fila desde la que empezar. Pásale el next_offset de la respuesta anterior. Ej: 0
-  - limit default=200: Cuántas filas devolver. Sin máximo: pide todas las que necesites y el servidor entrega lo que la fuente tenga. Por defecto 200. La respuesta trae total y next_offset. Ej: 200
-- annotations: {"readOnlyHint":true,"destructiveHint":false}
-- outputSchema: {filas}
-
 ### cmf_normativa_buscar
 - title: Buscar normativa
 - description: Busca normas de la CMF (circulares CIR, oficios OFC, normas de carácter general NCG) por NÚMERO en el buscador legacy (verificado: solo devuelve resultados por número; las búsquedas por fechas sin número no funcionan en el sistema de la CMF). Use tipo (CIR/OFC/NCG/ALL) y numero (ej: 2343); los filtros desde/hasta y materia se envían pero el sistema legacy los ignora. Para descargar el PDF use cmf_normativa_descargar con la ruta del compendio. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.
@@ -1000,16 +988,6 @@ Límites y notas:
 - annotations: {"readOnlyHint":true,"destructiveHint":false}
 - outputSchema: {filas}
 
-### cmf_bancos_cronologia
-- title: Cronología bancaria
-- description: Devuelve la cronología histórica del sistema bancario chileno publicada por la CMF (servlet CronologiaBancaria de la ex SBIF), con hasta 200 filas. Elija el capítulo con indice (default 8.0); si el contenido no es tabular, la tool lo indica. Use esta tool para hitos de la banca chilena; para tasas de interés use cmf_bancos_tasas. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.
-- parámetros:
-  - indice default="8.0": Índice del capítulo de la cronología (default 8.0)
-  - offset default=0: Fila desde la que empezar. Pásale el next_offset de la respuesta anterior. Ej: 0
-  - limit default=200: Cuántas filas devolver. Sin máximo: pide todas las que necesites y el servidor entrega lo que la fuente tenga. Por defecto 200. La respuesta trae total y next_offset. Ej: 200
-- annotations: {"readOnlyHint":true,"destructiveHint":false}
-- outputSchema: {filas}
-
 ### cmf_bancos_reportes
 - title: Reportes de instituciones financieras (BaseDato)
 - description: Devuelve reportes del sistema BaseDato de instituciones financieras de la CMF (ex SBIF, host datosbanco.cmfchile.cl): MR1=información contable mensual (default), ADC=adecuación de capital, ADC2=adecuación de capital (v2), HEC=hechos económicos y MB1. Fije codUnicoBank (código SBIF, ej: 001; vea cmf://bancos/codigos), reporte, indice (default 30.1) y período (periodo_inicial AAAA-MM, default período actual; solo se usan mes y año). La salida trae hasta 200 filas; si la CMF devuelve el challenge anti-bot en vez de tablas, la tool lo indica. Use esta tool para reportes históricos de la banca; para tasas de interés use cmf_bancos_tasas. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.
@@ -1076,6 +1054,47 @@ Límites y notas:
   - texto: Se queda con las filas donde algún campo contiene este texto, por ejemplo el nombre de un banco, el RUT de una aseguradora o el nombre de una columna ffm_. Se aplica en el servidor
   - offset default=0: Fila desde la que empezar. Pásale el next_offset de la respuesta anterior. Ej: 0
   - limit default=200: Cuántas filas devolver. Sin máximo: pide todas las que necesites y el servidor entrega lo que la fuente tenga. Por defecto 200. La respuesta trae total y next_offset. Ej: 200
+- annotations: {"readOnlyHint":true,"destructiveHint":false}
+- outputSchema: {filas}
+
+### cmf_best_buscar
+- title: Buscar cuadros en BEST, el sitio estadístico de la CMF
+- description: Busca cuadros de datos en BEST, el sitio estadístico de la CMF (best.cmfchile.cl), con el mismo buscador que usa el sitio. BEST tiene 5.180 cuadros y 34.023 series sobre bancos, cooperativas, emisores de tarjetas, mutuarias hipotecarias, administradoras de fondos y tasas de interés, en 9 categorías. riesgo, actividad, red de atención, cuentas y medios de pago, clientes, tasas de interés, desempeño, género y regional. Escriba la pregunta en lenguaje natural con consulta (ej: 'colocaciones de vivienda por banco', 'cajeros automáticos por región', 'tasa de depósitos a plazo') y reciba hasta 1000 cuadros ordenados por relevancia, cada uno con su tag, nombre, entidad, categoría, frecuencia, unidad de medida y profundidad histórica. Acote con texto (entidad, categoría o palabra del nombre) y con offset y limit. Con el tag pida los datos a cmf_best_cuadro. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.
+- parámetros:
+  - consulta (REQUERIDO): Qué busca, en lenguaje natural. Ej: colocaciones de vivienda por banco
+  - texto: Se queda con los resultados donde algún campo contiene este texto, por ejemplo la entidad 'Cooperativas' o la categoría 'Riesgo'. Se aplica en el servidor
+  - offset default=0: Fila desde la que empezar. Pásale el next_offset de la respuesta anterior. Ej: 0
+  - limit default=50: Cuántas filas devolver. Sin máximo: pide todas las que necesites y el servidor entrega lo que la fuente tenga. Por defecto 50. La respuesta trae total y next_offset. Ej: 50
+- annotations: {"readOnlyHint":true,"destructiveHint":false}
+- outputSchema: {filas}
+
+### cmf_best_cuadro
+- title: Datos de un cuadro de BEST
+- description: Devuelve los datos de un cuadro de BEST, el sitio estadístico de la CMF, con una fila por fecha y serie (fecha, código de la serie, descripción y valor), más la unidad, el rezago, la fecha de actualización y las notas del cuadro. Identifique el cuadro con tag (lo entrega cmf_best_buscar; ej: SBIF_CONT_EPLME_ACTIV_COL_TOT_CART). Elija el tramo con modo. ultimos (default; los últimos periodos periodos, default 12), rango (desde y hasta en YYYY-MM-DD, sin tope de meses) o completo (toda la historia; un cuadro grande trae decenas de miles de filas, pida por tramos). Use serie para quedarse con una serie por su código o parte de su descripción. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.
+- parámetros:
+  - tag (REQUERIDO): Tag del cuadro, como lo entrega cmf_best_buscar. Ej: SBIF_CONT_EPLME_ACTIV_COL_TOT_CART
+  - modo default="ultimos": ultimos (default), rango (desde y hasta) o completo (toda la historia)
+  - periodos default=12: Cuántos periodos traer en modo ultimos (default 12)
+  - desde: Inicio del rango en YYYY-MM-DD (modo rango)
+  - hasta: Fin del rango en YYYY-MM-DD (modo rango; default hoy)
+  - serie: Se queda con las filas cuya serie contiene este texto, en el código o en la descripción. Se aplica en el servidor
+  - offset default=0: Fila desde la que empezar. Pásale el next_offset de la respuesta anterior. Ej: 0
+  - limit default=200: Cuántas filas devolver. Sin máximo: pide todas las que necesites y el servidor entrega lo que la fuente tenga. Por defecto 200. La respuesta trae total y next_offset. Ej: 200
+- annotations: {"readOnlyHint":true,"destructiveHint":false}
+- outputSchema: {filas}
+
+### cmf_bancos_cronologia
+- title: Cronología bancaria de Chile
+- description: Devuelve la Cronología Bancaria de la CMF (ex SBIF). la historia de cada banco e institución financiera de Chile desde 1743, con sus hitos, predecesores, sucesores y documentos. Elija la vista con consulta. instituciones (las que empiezan con letra, con su id), institucion (la línea de tiempo de un id, fecha por fecha), anio (todos los hitos de un año), evento (el texto completo de un hito por su evento_id, con los documentos enlazados) y relacionadas (predecesores y sucesores de un id). El flujo típico es instituciones → institucion → evento. Los ids salen de las propias respuestas; el de ABN AMRO Bank (Chile) es 7500000000000178. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.
+- parámetros:
+  - consulta default="instituciones": instituciones (por letra), institucion (línea de tiempo por id), anio (hitos de un año), evento (texto de un hito por evento_id) o relacionadas (predecesores y sucesores por id)
+  - letra: Para instituciones. la letra inicial del nombre (default A)
+  - id: Para institucion y relacionadas. el id de la institución
+  - anio: Para anio. el año en AAAA
+  - evento_id: Para evento. el evento_id del hito
+  - texto: Se queda con las filas donde algún campo contiene este texto, por ejemplo parte del nombre de un banco. Se aplica en el servidor
+  - offset default=0: Fila desde la que empezar. Pásale el next_offset de la respuesta anterior. Ej: 0
+  - limit default=100: Cuántas filas devolver. Sin máximo: pide todas las que necesites y el servidor entrega lo que la fuente tenga. Por defecto 100. La respuesta trae total y next_offset. Ej: 100
 - annotations: {"readOnlyHint":true,"destructiveHint":false}
 - outputSchema: {filas}
 

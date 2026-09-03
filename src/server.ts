@@ -7,6 +7,8 @@ import { registrarToolsFondosInversion } from "./tools/fondos-inversion.js";
 import { registrarToolsOtros } from "./tools/otros.js";
 import { registrarToolsPaquete } from "./tools/paquete.js";
 import { registrarToolsCatalogos } from "./tools/catalogos.js";
+import { registrarToolsBest } from "./tools/best.js";
+import { registrarToolsCronologia } from "./tools/cronologia.js";
 import { registrarResources } from "./resources.js";
 import { registrarPrompts } from "./prompts.js";
 import { registrarModoCodigo } from "./tools/code-mode.js";
@@ -82,6 +84,7 @@ export function createServer(env: CmfEnv = {}, opciones: OpcionesServidor = {}):
         "3. Fondos mutuos: cmf_fondos_mutuos_catalogo para identificar fondos → cmf_fondos_mutuos_bpr (patrimonio/rentabilidad) → cmf_fondos_mutuos_costos (TAC).",
         "4. Indicadores económicos: cmf_api_indicador_valor (serie: uf, dolar, euro, tab, utm, ipc, tip, tmc). Para balances bancarios, identifique la institución por su código SBIF (ej: 001=Banco de Chile, 037=Banco Santander-Chile; 999=el sistema total; la lista completa la entrega cmf_codigos con catalogo=bancos). Los RUT de las compañías de seguros que pide cmf_seguros_eeff los entrega cmf_codigos con catalogo=seguros, y el significado de las columnas ffm_ de la cartera de fondos mutuos, cmf_codigos con catalogo=cartera_fondos_mutuos.",
         "5. Normativa y seguros: cmf_normativa_buscar y cmf_seguros_*.",
+        "6. Estadísticas de BEST (5.180 cuadros de bancos, cooperativas, tarjetas, mutuarias y fondos): cmf_best_buscar con la pregunta en lenguaje natural → cmf_best_cuadro con el tag. Tasas de interés corriente y máxima convencional: cmf_bancos_tasas. Historia de cada banco desde 1743: cmf_bancos_cronologia.",
         "Límites y notas:",
         "- Captchas (cmf_hechos_globales y cmf_fondos_mutuos_cartola): al llamarlas sin código, la tool descarga la imagen captcha de la CMF y le entrega un resource cmf://captcha/{id}; pida al usuario que lea los 6 caracteres y reintente con captcha=<código> y captcha_id=<id>.",
         "- Fechas en formato YYYY-MM-DD. Los RUT se aceptan en cualquier formato (90690000, 90690000-5 o 90.690.000-5) y el servidor los deja sin dígito verificador, que es lo que pide la CMF. Todo catálogo entrega el campo rut en ese mismo formato, sin puntos ni DV, y si la fuente traía el DV viaja en rut_dv; así lo que sale de un catálogo se pega tal cual en cualquier tool. Ojo. en los catálogos de fondos (mutuos y de inversión) la CMF usa como identificador un número de registro de 4 dígitos (run_fondo, o rut en el de fondos de inversión), no un RUT.",
@@ -108,6 +111,8 @@ export function createServer(env: CmfEnv = {}, opciones: OpcionesServidor = {}):
     registrarToolsOtros(server, env);
     registrarToolsPaquete(server, env);
     registrarToolsCatalogos(server, env);
+    registrarToolsBest(server, env);
+    registrarToolsCronologia(server, env);
   }
   registrarResources(server, env);
   registrarPrompts(server);

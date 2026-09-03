@@ -84,7 +84,6 @@ const TOOLS: Record<string, ToolDef> = {
   // ---------- D. Fondos de inversión ----------
   cmf_fondos_inversion_catalogo: { args: { offset: 0, limit: 3 }, expect: { fondos: "array", total: "number" } },
   cmf_fondos_inversion_eeff_ifrs: { args: { admins: "0", fondos: ["0"], anio1: "2025", anio2: "2025" }, expect: { columnas: "array", filas: "array", total_filas: "number" } },
-  cmf_fondos_inversion_comisiones_maximas: { args: { mes: "12", anio: "2024" }, expect: { filas: "array" } },
 
   // ---------- E. Normativa / seguros / xbrl / docs / bancos ----------
   cmf_normativa_buscar: { args: { tipo: "CIR", numero: "2343", offset: 0, limit: 5 }, expect: { normas: "array", total: "number" } }, // >0 filas solo si la CMF no bloquea la IP del runner
@@ -111,7 +110,9 @@ const TOOLS: Record<string, ToolDef> = {
   // Los 2 servlets de la ex SBIF migraron (lección 17). la respuesta honesta es el error de fuente.
   cmf_bancos_tasas: { args: { fecha: "2026-01-15" }, expect: { fecha: "string", filas: (v: unknown) => Array.isArray(v) && v.length === 13, notas: "array" } },
   cmf_codigos: { args: { catalogo: "seguros", texto: "bci" }, expect: { filas: (v: unknown) => Array.isArray(v) && v.length >= 2, notas: "array" } },
-  cmf_bancos_cronologia: { args: { indice: "8.0" }, expectError: /migró|no devolvió datos parseables/i },
+  cmf_bancos_cronologia: { args: { consulta: "institucion", id: "7500000000000178" }, expect: { filas: (v: unknown) => Array.isArray(v) && v.length >= 3 } },
+  cmf_best_buscar: { args: { consulta: "colocaciones de vivienda por banco", limit: 5 }, expect: { filas: (v: unknown) => Array.isArray(v) && v.length > 0 } },
+  cmf_best_cuadro: { args: { tag: "SBIF_CONT_EPLME_ACTIV_COL_TOT_CART", modo: "ultimos", periodos: 2 }, expect: { filas: (v: unknown) => Array.isArray(v) && v.length === 12, notas: "array" } },
   cmf_bancos_reportes: { args: { reporte: "MR1", codUnicoBank: "001", periodo_inicial: "2026-06" }, expect: { filas: (v: unknown) => Array.isArray(v) && v.length > 0 } },
 
   // ---------- Paquetes ----------
