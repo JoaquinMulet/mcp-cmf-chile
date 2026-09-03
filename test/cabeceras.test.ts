@@ -71,6 +71,40 @@ test("una tabla sin <th> cuya primera fila de datos trae rowspan no pierde 2 fil
   assert.equal(filas.length, 2, JSON.stringify(filas));
 });
 
+test("un <thead> de 2 filas de <th> con colspan y rowspan (cuadros APV) da un nombre por columna y no corre los valores", () => {
+  const filas = htmlTablaAJson(leer("cuadros-apv-1-2025-12.html"));
+  assert.ok(filas.length >= 3);
+  const f = filas[0];
+  assert.equal(f["Nombre Compañia"], "ADMINISTRADORA GENERAL DE FONDOS SECURITY S.A.");
+  assert.equal(f["N de Cuentas de APV Vigentes"], "59");
+  assert.equal(f["Saldo Total Acumulado M$ Letra a)"], "9.356,364");
+  assert.equal(f["Saldo Total Acumulado M$ Letra b)"], "89.603,131");
+  assert.equal(f["N de depósitos Letra a)"], "0");
+  assert.equal(Object.keys(f).length, 20, Object.keys(f).join(" | "));
+});
+
+test("los enlaces de ordenamiento de las cabeceras («vineta», «(orden inverso)») no entran al nombre de la columna", () => {
+  const filas = htmlTablaAJson(leer("tomas_detalle-2026.html"));
+  assert.ok(filas.length >= 3);
+  assert.deepEqual(Object.keys(filas[0]).slice(0, 2), ["Fecha", "Número"]);
+  assert.equal(filas[0].Fecha, "11/06/2026");
+});
+
+test("cmf_tomas_control: texto y fechas filtran en el servidor", async () => {
+  const restaurar = conFetch(leer("tomas_detalle-2026.html"));
+  try {
+    const client = await clienteConectado();
+    const r = await client.callTool({ name: "cmf_tomas_control", arguments: { texto: "parque arauco" } });
+    const sc = r.structuredContent as { filas: Array<Record<string, string>>; total: number };
+    assert.equal(sc.total, 1);
+    assert.equal(sc.filas[0]["Sociedad sobre la que se informa"], "PARQUE ARAUCO S.A.");
+    const f = await client.callTool({ name: "cmf_tomas_control", arguments: { desde: "2026-03-01", hasta: "2026-03-31" } });
+    assert.equal((f.structuredContent as { total: number }).total, 1);
+  } finally {
+    restaurar();
+  }
+});
+
 test("cmf_empresa_info: campo y valor con nombres fijos, y el RUT es un dato y no un nombre de columna", async () => {
   const restaurar = conFetch(leer("entidad-identificacion-copec-1.html"));
   try {

@@ -22,6 +22,10 @@ export function decodificarEntidades(s: string): string {
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    .replace(/&ordm;/g, "º")
+    .replace(/&ordf;/g, "ª")
+    .replace(/&deg;/g, "°")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
     // El ampersand va AL FINAL, siempre. Si se decodifica antes, un texto
     // que la fuente escapo 2 veces (&amp;lt;) termina convertido en un <
     // de verdad, y ahi ya no se puede distinguir del marcado real. Lo
@@ -34,6 +38,9 @@ export function decodificarEntidades(s: string): string {
 
 /** Fix de mojibake doble-codificado (algunos sistemas legacy sirven UTF-8 sobre UTF-8). */
 export function fixMojibake(s: string): string {
+  // «ï¿½» es el carácter de reemplazo U+FFFD escrito en UTF-8 y leído como
+  // cp1252. La letra original ya se perdió en la CMF; queda 1 signo, no 3.
+  if (s.includes("ï¿½")) s = s.replace(/ï¿½/g, "�");
   if (!s.includes("Ã") && !s.includes("Â")) return s;
   return s
     .replace(/Ã±/g, "ñ")
@@ -133,6 +140,9 @@ function celdasDeUnaFila(tr: string): FilaTabla {
     // y dejan href="#", así que el enlace real vive en el onClick.
     // El href puede venir sin comillas (buscador de sanciones), con comillas
     // dobles o simples. Las 3 formas son la misma clase.
+    // Las cabeceras ordenables traen un segundo <a class="ordena_ascendente">
+    // con «vineta» o «Fecha (orden inverso)». Es un botón, no texto.
+    cm[2] = cm[2].replace(/<a\b[^>]*class=["']?ordena_ascendente["']?[^>]*>[\s\S]*?<\/a>/gi, "");
     const h = cm[2].match(/href=(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i);
     const hrefAttr = h?.[1] ?? h?.[2] ?? h?.[3] ?? "";
     const ventana = cm[2].match(/ventana\('([^']+)'\)/i)?.[1];
@@ -220,6 +230,10 @@ function nombresDeColumna(
 ): { cols: string[]; prestadas: FilaTabla[] } {
   const cabecera = t.find((f) => f.esHeader);
   if (columnas) return { cols: columnas, prestadas: [] };
+  // 2 filas de <th> seguidas donde la primera abarca columnas (cuadros APV).
+  // el nombre de cada columna es el grupo más el piso de abajo.
+  const dosPisosTh = cabecera && t[1]?.esHeader && t[0] === cabecera ? cabeceraDeDosPisos(t, true) : undefined;
+  if (dosPisosTh) return { cols: dosPisosTh.cols, prestadas: [] };
   if (cabecera) return { cols: cabecera.celdas.map((c) => c.texto), prestadas: [] };
   const dosPisos = cabeceraDeDosPisos(t);
   if (dosPisos) return { cols: dosPisos.cols, prestadas: t.slice(0, 2) };
@@ -237,9 +251,9 @@ function nombresDeColumna(
  * fila salía como dato. Devuelve los nombres por columna y cuántas filas
  * dejan de ser dato, o undefined si la tabla no tiene esa forma.
  */
-function cabeceraDeDosPisos(t: FilaTabla[]): { cols: string[] } | undefined {
+function cabeceraDeDosPisos(t: FilaTabla[], conTh = false): { cols: string[] } | undefined {
   const [arriba, abajo] = t;
-  if (!arriba || !abajo || arriba.esHeader || abajo.esHeader) return undefined;
+  if (!arriba || !abajo || arriba.esHeader !== conTh || abajo.esHeader !== conTh) return undefined;
   // Hace falta un colspan de verdad. un rowspan solo también aparece en
   // filas de DATOS, y con eso 2 filas de datos se consumían como cabecera.
   if (!arriba.celdas.some((c) => c.ancho > 1)) return undefined;

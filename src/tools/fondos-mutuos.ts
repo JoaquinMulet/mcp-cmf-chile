@@ -248,7 +248,8 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
           { out: "excel", admins: admin ?? "0", tipofondo: tipo_fondo ?? "0", moneda: moneda ?? "0", mes: mes ?? "12", anio },
           env,
         );
-        const { datos: filas, notas } = separarNotas(xlsAJson(res));
+        const { datos, notas } = separarNotas(xlsAJson(res));
+        const filas = nombrarPrimeraColumna(datos, "Nombre");
         return toolOkTabla({
           titulo: `Comisiones FM ${anio}-${mes ?? "12"}`,
           vacio: `Sin comisiones para ${anio}-${mes}.`,
@@ -294,7 +295,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
           env,
         );
         const { datos, notas } = separarNotas(xlsAJson(res));
-        const { datos: filas, totales } = separarTotales(datos);
+        const { datos: filas, totales } = separarTotales(nombrarPrimeraColumna(datos, "Fondo"));
         if (filas.length === 0) {
           return toolErrorFuente(
             `Inversiones ${tipo} de fondos mutuos ${anio}-${mes ?? "12"}`,
@@ -426,7 +427,8 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
           { out: "excel", lang: "es", filtertipofondo: "0", filtermoneda: "0", moneda: "0", mes: anio ? "12" : "12", anio: anio ?? "2025" },
           env,
         );
-        const { datos: filas, notas } = separarNotas(xlsAJson(res));
+        const { datos, notas } = separarNotas(xlsAJson(res));
+        const filas = nombrarPrimeraColumna(datos, "Concepto");
         return toolOkTabla({
           titulo: `Antecedentes generales FM`,
           vacio: "Sin antecedentes.",

@@ -11,6 +11,7 @@ import { bytesABase64 } from "../util/zip.js";
 import { pdfAMarkdown, notaLimitacionesPdf, RESUMEN_LIMITACIONES_PDF } from "../pdf.js";
 import { procesarTablasEEFF, textoVerificacion, textoAviso } from "../eeff-tables.js";
 import { toolDeGrid, NOTA_ESCALA_IFRS_SA } from "../util/grid.js";
+import { filtrosLocales, filtrarFilas } from "../util/filtros.js";
 import { avisoDeTramo, paginacion, toolOkPaginado, toolOkTabla } from "../util/tramos.js";
 import { enteroSchema,
   anioSchema,
@@ -937,13 +938,13 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: paginadoSchema("comunicaciones"),
       title: "Comunicaciones de emisores",
       description:
-        "Lista las comunicaciones publicadas por los emisores de valores (fecha, número, sociedad, entidad informante y descripción) con paginación offset/limit, sin máximo. No tiene filtro de fecha (la CMF entrega el listado completo): itere las páginas con next_offset para llegar al período buscado. Use esta tool para monitorear comunicados del mercado; para hechos esenciales use cmf_hechos_globales o cmf_empresa_hechos. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
-      inputSchema: z.object({ offset: offsetSchema, limit: limitSchema }),
+        "Lista las comunicaciones publicadas por los emisores de valores (fecha, número, sociedad, entidad informante y descripción) con paginación offset/limit, sin máximo. La CMF entrega el listado completo sin filtro; texto (sociedad o descripción) y desde/hasta se filtran en el servidor sobre ese listado. Use esta tool para monitorear comunicados del mercado; para hechos esenciales use cmf_hechos_globales o cmf_empresa_hechos. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+      inputSchema: z.object({ ...filtrosLocales, offset: offsetSchema, limit: limitSchema }),
     },
-    async ({ offset, limit }) => {
+    async ({ texto: filtro, desde, hasta, offset, limit }) => {
       try {
         const html = await getLegacy("/institucional/mercados/comunicaciones_detalle2.php", { entidad: "RVEMI" }, env);
-        const filas = htmlTablaAJson(html, ["fecha", "numero", "sociedad", "entidad", "descripcion"]);
+        const filas = filtrarFilas(htmlTablaAJson(html, ["fecha", "numero", "sociedad", "entidad", "descripcion"]), { texto: filtro, desde, hasta });
         if (filas.length === 0 && !/<table/i.test(html)) {
           return toolErrorFuente(
             "Comunicaciones de emisores",
@@ -1390,13 +1391,15 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Tomas de control de emisores",
       description:
-        "Devuelve la información de tomas de control de emisores de valores publicada por la CMF (operación, fechas y sociedades involucradas), con hasta 300 filas. Elija el criterio de ordenamiento del listado con orden (1-5, default 1). Use esta tool para cambios de control accionario; para la composición accionaria actual use cmf_empresa_accionistas. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
-      inputSchema: z.object({ orden: enteroSchema().min(1).max(5).optional().describe("Criterio de ordenamiento del listado (1-5, default 1)"), ...paginacion(300) }),
+        "Devuelve la información de tomas de control de emisores de valores publicada por la CMF (fecha, número, sociedad, entidad informante, descripción y enlace al documento). La CMF entrega el listado completo; texto (nombre de la sociedad o del informante) y desde/hasta se filtran en el servidor. Elija el criterio de ordenamiento del listado con orden (1-5, default 1). Use esta tool para cambios de control accionario; para la composición accionaria actual use cmf_empresa_accionistas. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+      inputSchema: z.object({ orden: enteroSchema().min(1).max(5).optional().describe("Criterio de ordenamiento del listado (1-5, default 1)"), ...filtrosLocales, ...paginacion(300) }),
     },
-    async ({ orden, offset, limit }) => {
+    async ({ orden, texto, desde, hasta, offset, limit }) => {
       try {
         const html = await getLegacy("/institucional/mercados/tomas_detalle.php", { tipo: "TDC", orden: orden ?? 1 }, env);
-        const filas = htmlTablaAJson(html);
+        // La CMF entrega el listado completo sin filtro. texto y fechas se
+        // aplican en el servidor sobre las filas ya bajadas.
+        const filas = filtrarFilas(htmlTablaAJson(html), { texto, desde, hasta });
         return toolOkTabla({
           titulo: `Tomas de control`,
           vacio: "Sin tomas de control.",
@@ -1420,7 +1423,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Listados de EEFF IFRS",
       description:
-        "Devuelve los listados de empresas que presentan EEFF bajo IFRS: listado general, Circular 556 u oficios 457/485. Elija tipo_listado=general (default), c556, ofc457 u ofc485. Use esta tool para verificar obligaciones de reporte IFRS de empresas; para los EEFF mismos use cmf_empresa_eeff. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Devuelve el registro HISTÓRICO de recepción de los primeros EEFF bajo IFRS, de la transición de 2008 y 2009 (fecha de recepción, RUT, razón social y archivo): listado general, Circular 556 u oficios 457/485. No es un listado vigente de quién reporta bajo IFRS hoy; verificado el 2 de septiembre de 2026, las 248 filas del listado general son de 2008 y 2009. Elija tipo_listado=general (default), c556, ofc457 u ofc485. Para los EEFF actuales de una empresa use cmf_empresa_eeff. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         tipo_listado: z.enum(["general", "c556", "ofc457", "ofc485"]).default("general").describe("Listado: general (default), c556=Circular 556, ofc457/ofc485=respuestas a oficios"), ...paginacion(300) }),
     },

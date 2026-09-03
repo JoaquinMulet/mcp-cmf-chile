@@ -108,8 +108,9 @@ const TOOLS: Record<string, ToolDef> = {
   cmf_documento_info: { args: { s567: "abcdef0123456789" }, expect: { s567: "string", sin_verificar: "boolean" } },
   cmf_documento_markdown: { args: { url: "https://www.cmfchile.cl/institucional/mercados/ver_archivo.php?archivo=/web/compendio/cir/cir_2343_2024.pdf", max_chars: 2000 }, expect: { pdf_type: "string", markdown: "string", escaneado: "boolean" } },
   cmf_documento_descargar: { args: { s567: "abcdef0123456789" }, expectError: /HTML|inválido|expirado/i },
-  cmf_bancos_tasas: { args: { indice: "4.1" } },
-  cmf_bancos_cronologia: { args: { indice: "8.0" } },
+  // Los 2 servlets de la ex SBIF migraron (lección 17). la respuesta honesta es el error de fuente.
+  cmf_bancos_tasas: { args: { indice: "4.1" }, expectError: /BEST|no devolvió datos parseables/i },
+  cmf_bancos_cronologia: { args: { indice: "8.0" }, expectError: /migró|no devolvió datos parseables/i },
   cmf_bancos_reportes: { args: { reporte: "MR1", codUnicoBank: "001", periodo_inicial: "2026-06" }, expect: { filas: (v: unknown) => Array.isArray(v) && v.length > 0 } },
 
   // ---------- Paquetes ----------

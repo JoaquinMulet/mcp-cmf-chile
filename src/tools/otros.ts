@@ -8,6 +8,7 @@ import { bytesABase64 } from "../util/zip.js";
 import { unzip, } from "../util/unzip.js";
 import { toolDeGrid } from "../util/grid.js";
 import { paginacionBase64, tramoBase64, avisoDeTramoBase64 } from "../util/binario.js";
+import { filtrosLocales, filtrarFilas } from "../util/filtros.js";
 
 /** Decodifica páginas legacy (latin1) de los hosts de datos bancarios. */
 function decodificarLatin1(bytes: ArrayBuffer): string {
@@ -539,11 +540,12 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       inputSchema: z.object({
         peri: z.string().regex(/^\d{6}$/, "AAAAMM").describe("Período AAAAMM (ej: 202512)"),
         seccion: z.enum(["identifi", "prodramo", "intercia"]).default("identifi").describe("Sección: identifi=catálogo de corredores (default), prodramo=producción por ramo, intercia=producción por compañía"),
+        texto: filtrosLocales.texto.describe("Se queda con las filas donde algún campo contiene este texto (código del corredor, RUT o nombre de la compañía). El ZIP de la CMF trae el mes entero; el filtro es del servidor"),
         offset: offsetSchema,
         limit: limitSchema,
       }),
     },
-    async ({ peri, seccion, offset, limit }) => {
+    async ({ peri, seccion, texto, offset, limit }) => {
       try {
         const bytes = await getLegacyBinario(
           "/institucional/estadisticas/merc_seguros/produccion/ispro/descarga_ispro2.php",
@@ -572,9 +574,10 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
           }
           return { periodo: l.slice(0, 6).trim(), cod_corredor: l.slice(6, 16).trim(), tipo: l.slice(17, 19).trim(), rut_cia: l.slice(19, 29).trim(), nombre_cia: l.slice(29, 49).trim(), importe: l.slice(49).trim() };
         });
-        const { filas: paginadas, paginado } = paginar(filas, offset, limit);
-        const texto = `ISPRO ${seccion} ${peri} (${filas.length} filas; cabecera del archivo: ${lineas[0]?.slice(0, 80)}):\n${resumirTabla(paginadas, Object.keys(paginadas[0] ?? {}))}`;
-        return toolOk(texto + avisoDeTramo(paginadas.length, paginado, "cmf_seguros_produccion_corredores"), {  peri, seccion, filas: paginadas, total: paginado.total, next_offset: paginado.next_offset });
+        const filtradas = filtrarFilas(filas, { texto });
+        const { filas: paginadas, paginado } = paginar(filtradas, offset, limit);
+        const resumen = `ISPRO ${seccion} ${peri} (${filtradas.length} filas; cabecera del archivo: ${lineas[0]?.slice(0, 80)}):\n${resumirTabla(paginadas, Object.keys(paginadas[0] ?? {}))}`;
+        return toolOk(resumen + avisoDeTramo(paginadas.length, paginado, "cmf_seguros_produccion_corredores"), {  peri, seccion, filas: paginadas, total: paginado.total, next_offset: paginado.next_offset });
       } catch (e) {
         return fromError(e);
       }
@@ -938,18 +941,19 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       title: "Resoluciones que prohíben depósito de pólizas",
       description:
         "Devuelve las resoluciones de la CMF que prohíben a una aseguradora depositar pólizas (registro desde abril de 2009), con número, fecha, póliza afectada, materia y archivo. Sin filtros; use offset/limit para paginar. Use esta tool para saber qué aseguradoras tienen restringido el depósito; para buscar pólizas depositadas use cmf_seguros_deposito_polizas. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
-      inputSchema: z.object({ offset: offsetSchema, limit: limitSchema }),
+      inputSchema: z.object({ texto: filtrosLocales.texto, offset: offsetSchema, limit: limitSchema }),
       outputSchema: z.object({
         total: z.number().describe("Total de resoluciones de prohibición"),
         next_offset: z.number().nullable().describe("Offset para la siguiente página (null si no hay más)"),
         resoluciones: z.array(z.record(z.string(), z.unknown())).describe("Filas de resoluciones de prohibición"),
       }).passthrough(),
     },
-    async ({ offset, limit }) => {
+    async ({ texto, offset, limit }) => {
       try {
         const html = await getLegacy("/institucional/mercados/banner_resolucion_prohibe.php", {}, env);
-        const filas = htmlTablaAJson(html, ["numero", "fecha", "poliza", "materia", "archivo"]).filter(
-          (f) => /^\d+$/.test(f.numero ?? ""),
+        const filas = filtrarFilas(
+          htmlTablaAJson(html, ["numero", "fecha", "poliza", "materia", "archivo"]).filter((f) => /^\d+$/.test(f.numero ?? "")),
+          { texto },
         );
         const { filas: paginadas, paginado } = paginar(filas, offset, limit);
         const textoOut = paginadas.length

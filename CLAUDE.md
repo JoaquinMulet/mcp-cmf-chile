@@ -511,6 +511,16 @@ exige el nombre exacto), que las filas de la API oficial vienen ANIDADAS y una t
 mostrar un objeto (ahora se aplanan), y que «hoy» en UTC ya es mañana a las 22:30 de Chile
 (ahora se calcula en America/Santiago).
 
+**26. Un nombre de columna arrastra lo que la celda tenía adentro (2 de septiembre de 2026).**
+Qué falló. `cmf_tomas_control` entregaba «Fecha vineta» y la pestaña 42 «Fecha Fecha (orden
+inverso)», porque las cabeceras ordenables traen un segundo `<a class="ordena_ascendente">`
+con el texto del botón; `cmf_sanciones_cursadas` entregaba «N&ordm;» porque el decodificador
+de entidades no conocía `&ordm;`; y el cuadro APV corría los valores una columna porque su
+`<thead>` tiene 2 filas de `<th>` con `colspan` y solo se leía la primera. Prescripción.
+`celdasDeUnaFila` quita los enlaces `ordena_ascendente`, `decodificarEntidades` conoce
+`&ordm;`, `&ordf;`, `&deg;` y toda entidad numérica, `cabeceraDeDosPisos` también une 2 filas
+de `<th>`, y `fixMojibake` deja «ï¿½» como un solo signo. Lo vigila `test/cabeceras.test.ts`.
+
 ## Gotchas
 
 - **La fuente se cae, y eso no es un defecto tuyo.** El servlet BaseDato devuelve a veces el
