@@ -437,6 +437,42 @@ títulos de deuda», y arrastra el número de inscripción a cada documento. La 
 regla de prueba. toda tool con un parámetro que selecciona (RUT, fecha, código) se prueba con
 2 valores distintos y se compara la respuesta; si sale igual, el parámetro no llega.
 
+**21. Un archivo entero dentro de la respuesta no cabe, y el Worker no tiene disco (2 de
+septiembre de 2026).** Qué falló. Un PDF de 339 KB produjo 462.000 caracteres de base64 y
+desbordó al cliente; la API oficial de resultados devolvía 308.000 caracteres sin filtro ni
+paginación; el paquete de documentos se desbordaba con 1 solo PDF y el ZIP apagado, porque
+cada archivo suelto viajaba además en base64. Causa raíz. Las tools de descarga trataban el
+binario como un valor más del JSON, sin tramos, y la promesa «hasta 4 MB inline» era
+inmanejable desde medio megabyte. Prescripción. `tramoBase64` de `src/util/binario.ts`. el
+base64 se entrega por tramos con `offset_chars`, `max_chars` (default 200.000), `total_chars`
+y `siguiente_offset_chars`, igual que el texto de un documento, y el TEXTO nunca lleva el
+base64, solo el tamaño y cómo seguir. Los archivos sueltos del paquete solo traen base64 con
+`incluir_archivos_base64=true`. Y las 3 tools de la API oficial que devolvían el JSON crudo
+(`balance`, `resultados`, `accionistas`) pasan por `toolOkTabla` con `filasDeLaApi`, que
+toma la primera lista del objeto sin escribir su nombre de memoria; `resultados` filtra por
+prefijo de cuenta en local porque la API no lo hace, y `accionistas` aparta SUBTOTAL, OTROS y
+TOTAL en `totales`. Lo vigila `test/descargas.test.ts`.
+
+**22. Las cabeceras de la CMF vienen de 4 formas más, y en las 4 el total mentía (2 de
+septiembre de 2026).** Qué falló. `cmf_sanciones_cursadas` entregaba el título de la página y
+«Ir a más sanciones» como filas; `cmf_seguros_clasificacion_riesgo` entregaba «Feller-Rate,
+Fitch Chile» como si fuera una compañía; `cmf_resultados_av_cb` perdía a Banchile por
+prestarlo como cabecera; `cmf_empresa_info` devolvía el RUT consultado como nombre de campo;
+`cmf_empresa_eeff_filiales` perdía la primera filial; `cmf_prestamos_otorgados` traía 2 filas
+de cabecera y la de totales como datos; `cmf_empresa_accionistas` metía «Período: 12 / 2025»
+entre los accionistas. Causa raíz, por forma. una fila de 1 celda con `colspan` es un título;
+un `<thead>` con sus `<th>` sueltos y sin `<tr>` es una cabecera que el bucle de `<tr>` no
+veía; una cabecera de 2 pisos hecha con `<td>`, `rowspan` y `colspan` no tiene ningún `<th>`;
+una tabla de 2 columnas sin cabecera (campo y valor) presta su primera fila; y una planilla
+con cabecera de 3 pisos llega del lector de XLS como 2 filas de datos. Prescripción. En
+`src/client/parsers.ts`, `celdasDeUnaFila` mide `colspan` y `rowspan`, `filasDeUnTable`
+descarta los títulos y lee el `<thead>` suelto, y `cabeceraDeDosPisos` arma un nombre por
+columna. Las tablas de campo y valor se leen con nombres explícitos (`["campo", "valor"]`),
+que es lo que evita prestar la primera fila. Y `unirCabeceraPartida` pega los pisos que el
+XLS dejó como filas. Lo vigila `test/cabeceras.test.ts`. La regla de prueba. el total que
+dice la tool se compara con las filas que una persona cuenta en la página; si difieren en 1
+o 2, hay una cabecera o una nota contando como dato.
+
 ## Gotchas
 
 - **La fuente se cae, y eso no es un defecto tuyo.** El servlet BaseDato devuelve a veces el

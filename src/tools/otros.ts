@@ -7,6 +7,7 @@ import { fromError, toolError, toolErrorFuente, toolOk, resumirTabla, paginarTex
 import { bytesABase64 } from "../util/zip.js";
 import { unzip, } from "../util/unzip.js";
 import { toolDeGrid } from "../util/grid.js";
+import { paginacionBase64, tramoBase64, avisoDeTramoBase64 } from "../util/binario.js";
 
 /** Decodifica páginas legacy (latin1) de los hosts de datos bancarios. */
 function decodificarLatin1(bytes: ArrayBuffer): string {
@@ -103,11 +104,12 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: normativaDescargaSchema,
       title: "Descargar norma (PDF)",
       description:
-        "Descarga el PDF de una norma del compendio de la CMF y lo devuelve en base64 si es pequeño (<4MB) o con la URL directa si es más grande. Requiere la ruta exacta del archivo dentro del compendio (ej: /web/compendio/cir/cir_2343_2024.pdf). Si la respuesta no es un PDF directo (puede requerir autenticación), lo indica. Use esta tool cuando conozca la ruta del documento; para encontrar normas use cmf_normativa_buscar; para leer el PDF como texto use cmf_documento_markdown con la URL. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Descarga el PDF de una norma del compendio de la CMF y devuelve su tamaño, su URL directa y el binario en base64 por TRAMOS (max_chars es el tamaño del tramo, default 200000 caracteres, y offset_chars dónde empieza; la respuesta trae total_chars y siguiente_offset_chars, o suba max_chars para traerlo entero). Requiere la ruta exacta del archivo dentro del compendio (ej: /web/compendio/cir/cir_2343_2024.pdf). Si la respuesta no es un PDF directo (puede requerir autenticación), lo indica. Use esta tool cuando conozca la ruta del documento; para encontrar normas use cmf_normativa_buscar; para leer el PDF como texto use cmf_documento_markdown con la URL. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
-        archivo: z.string().describe("Ruta del archivo del compendio (ej: /web/compendio/cir/cir_2343_2024.pdf)"), ...paginacion(50) }),
+        archivo: z.string().describe("Ruta del archivo del compendio (ej: /web/compendio/cir/cir_2343_2024.pdf)"),
+        ...paginacionBase64, ...paginacion(50) }),
     },
-    async ({ archivo, offset, limit }) => {
+    async ({ archivo, offset_chars, max_chars, offset, limit }) => {
       try {
         const bytes = await getLegacyBinario("/institucional/mercados/ver_archivo.php", { archivo }, env);
         const esPdf = bytes.length > 5 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46;
@@ -118,18 +120,10 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         }
         const tamano = bytes.length;
         const urlPdf = `https://www.cmfchile.cl/institucional/mercados/ver_archivo.php?archivo=${encodeURIComponent(archivo)}`;
-        if (tamano > 4 * 1024 * 1024) {
-          return toolOk(
-            `Norma descargada (${Math.round(tamano / 1024 / 1024)}MB): demasiado grande para inline. Use cmf_documento_markdown con la URL ${urlPdf} para leerla como texto.`,
-            { archivo, tamano_kb: Math.round(tamano / 1024), formato: "pdf", url: urlPdf },
-          );
-        }
-        let bin = "";
-        const chunk = 0x8000;
-        for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
+        const tramo = tramoBase64(bytes, offset_chars, max_chars);
         return toolOk(
-          `Norma descargada (${Math.round(tamano / 1024)} KB). Para LEERLA como texto use cmf_documento_markdown con la URL ${urlPdf}. El binario en base64 queda disponible para llamadores programáticos.`,
-          { archivo, tamano_kb: Math.round(tamano / 1024), formato: "pdf", base64: btoa(bin), url: urlPdf },
+          `Norma descargada (${Math.round(tamano / 1024)} KB). Para LEERLA como texto use cmf_documento_markdown con la URL ${urlPdf}. ${avisoDeTramoBase64(tramo, "cmf_normativa_descargar")}`,
+          { archivo, tamano_kb: Math.round(tamano / 1024), formato: "pdf", url: urlPdf, ...tramo },
         );
       } catch (e) {
         return fromError(e);
@@ -747,12 +741,13 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: documentoDescargaSchema,
       title: "Descargar documento firmado",
       description:
-        "Descarga un documento firmado de la CMF (PDF/XLS/XLSX) usando su token s567 (el token viaja en la URL de la CMF; se devuelve en la salida solo como eco del input). Documentos de hasta 4MB vuelven en base64 inline; los más grandes indican usar cmf_documento_markdown (para PDFs) o las tools de paquetes. Use esta tool para obtener el archivo original; para leer un PDF como texto use cmf_documento_markdown.",
+        "Descarga un documento firmado de la CMF (PDF/XLS/XLSX) usando su token s567 (el token viaja en la URL de la CMF; se devuelve en la salida solo como eco del input). El binario vuelve en base64 por TRAMOS, nunca recortado sin salida: max_chars es el tamaño del tramo (default 200000 caracteres, unos 150 KB) y offset_chars dónde empieza; la respuesta trae total_chars y siguiente_offset_chars para pedir el resto, o suba max_chars para traerlo entero. Use esta tool para obtener el archivo original; para leer un PDF como texto use cmf_documento_markdown, que es lo que un modelo necesita.",
       inputSchema: z.object({
         s567: z.string().min(10).describe("Token del documento (de hechos/sanciones/resoluciones)"),
+        ...paginacionBase64,
       }),
     },
-    async ({ s567 }) => {
+    async ({ s567, offset_chars, max_chars }) => {
       try {
         const url = `https://www.cmfchile.cl/sitio/aplic/serdoc/ver_sgd.php?s567=${encodeURIComponent(s567)}&secuencia=-1&t=${Date.now()}`;
         const res = await fetchCmf(url, {}, env);
@@ -767,16 +762,10 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
               "Obtenga un token fresco de las tools de hechos/sanciones/resoluciones y reintente.",
           );
         }
-        if (tamano > 4 * 1024 * 1024) {
-          return toolError(
-            `Documento de ${Math.round(tamano / 1024 / 1024)}MB (${contentType}): demasiado grande para inline. ` +
-              `Si es un PDF, use cmf_documento_markdown con el mismo token; para descargas masivas use cmf_empresa_paquete_documentos.`,
-          );
-        }
-        const base64 = bytesABase64(new Uint8Array(buf));
+        const tramo = tramoBase64(new Uint8Array(buf), offset_chars, max_chars);
         return toolOk(
-          `Documento descargado (${Math.round(tamano / 1024)} KB, ${contentType}).`,
-          { s567, tamano, contentType, base64 },
+          `Documento descargado (${Math.round(tamano / 1024)} KB, ${contentType}). ${avisoDeTramoBase64(tramo, "cmf_documento_descargar")}`,
+          { s567, tamano, contentType, ...tramo },
         );
       } catch (e) {
         return fromError(e);

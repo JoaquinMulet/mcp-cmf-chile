@@ -7,7 +7,8 @@ import { nombrarPrimeraColumna } from "./fondos-mutuos.js";
 import { fromError, toolOk, } from "../util/errors.js";
 import { barrerPeriodos, conSemafotoGlobal, estimarTiempoS, mb } from "../util/paquete.js";
 import { carpetaEmpresa, extensionDeContentType, rutaUnica, tipoDocumento, urlDocumentoCmf } from "../util/nombres.js";
-import { construirZip, zipABase64, bytesABase64 } from "../util/zip.js";
+import { construirZip, bytesABase64 } from "../util/zip.js";
+import { paginacionBase64, tramoBase64, avisoDeTramoBase64, type TramoBase64 } from "../util/binario.js";
 import { enteroSchema, numeroSchema,
   anioSchema, mesSchema, rutSchema } from "../util/schemas.js";
 
@@ -392,9 +393,14 @@ export function registrarToolsPaquete(server: McpServer, env: CmfEnv): void {
         max_documentos: enteroSchema().min(1).max(24).default(12).describe("Máximo de documentos descargados (1-24, default 12); el resto se omite y se reporta"),
         max_mb: numeroSchema().min(1).max(50).default(10).describe("Máximo total de MB descargados (1-50, default 10)"),
         incluir_zip: z.boolean().default(true).describe("true = arma el ZIP en base64 (default); false = solo devuelve los archivos sueltos"),
+        incluir_archivos_base64: z
+          .boolean()
+          .default(false)
+          .describe("true = cada archivo suelto trae además su base64 (hasta 4 MB cada uno; la respuesta crece mucho). Default false: los archivos viajan solo dentro del ZIP"),
+        ...paginacionBase64,
       }),
     },
-    async ({ rut, anio_inicio, anio_fin, periodos, secciones, tipo, norma, max_documentos, max_mb, incluir_zip }) => {
+    async ({ rut, anio_inicio, anio_fin, periodos, secciones, tipo, norma, max_documentos, max_mb, incluir_zip, incluir_archivos_base64, offset_chars, max_chars }) => {
       return conSemafotoGlobal(async () => {
         try {
           const anioAct = new Date().getFullYear();
@@ -450,14 +456,17 @@ export function registrarToolsPaquete(server: McpServer, env: CmfEnv): void {
               const rutaFinal = rutaUnica(ruta + ext, usadas);
               bytesPorRuta.set(rutaFinal, bytes);
               const truncado = tam > 4 * 1024 * 1024;
-              const base64 = bytesABase64(bytes.subarray(0, Math.min(bytes.length, 4 * 1024 * 1024)));
               descargados.push({
                 ruta: rutaFinal,
                 nombre: rutaFinal.split("/").pop(),
                 tamano_kb: Math.round(tam / 1024),
                 estado: "ok",
-                base64,
-                base64_truncado: truncado,
+                // El base64 de cada archivo solo se pide a propósito. con 12
+                // PDF adentro la respuesta desbordaba al cliente aunque el ZIP
+                // viniera apagado.
+                ...(incluir_archivos_base64
+                  ? { base64: bytesABase64(bytes.subarray(0, Math.min(bytes.length, 4 * 1024 * 1024))), base64_truncado: truncado }
+                  : {}),
                 seccion,
               });
             } catch {
@@ -602,7 +611,7 @@ export function registrarToolsPaquete(server: McpServer, env: CmfEnv): void {
           const { fallidos: fallosSecciones } = await barrerPeriodos(specs, 2);
           faltantes.push(...fallosSecciones.map((f) => ({ ruta: f.clave, motivo: f.motivo })));
 
-          let zip: { nombre: string; base64: string; tamano_mb: number; archivos: number; faltantes: number } | undefined;
+          let zip: ({ nombre: string; tamano_mb: number; archivos: number; faltantes: number } & TramoBase64) | undefined;
           if (incluir_zip && descargados.length > 0) {
             const zipEntries: { ruta: string; bytes: Uint8Array }[] = [];
             for (const d of descargados) {
@@ -619,7 +628,7 @@ export function registrarToolsPaquete(server: McpServer, env: CmfEnv): void {
             const zipBytes = construirZip(zipEntries);
             zip = {
               nombre: `${carpeta}_paquete.zip`,
-              base64: zipABase64(zipBytes),
+              ...tramoBase64(zipBytes, offset_chars, max_chars),
               tamano_mb: mb(zipBytes.length),
               archivos: zipEntries.length,
               faltantes: faltantes.length,
@@ -639,7 +648,7 @@ export function registrarToolsPaquete(server: McpServer, env: CmfEnv): void {
 
           const texto = [
             `Documentos de ${info.razonSocial || rut}: ${descargados.length} descargados (${mb(totalBytes)}MB), ${faltantes.length} fallidos, ${omitidosPorLimite} omitidos por límite, ${omitidosPorTamano} por tamaño.`,
-            zip ? `ZIP: ${zip.nombre} (${zip.tamano_mb}MB, ${zip.archivos} archivos, incluye manifiesto.json).` : "Sin ZIP.",
+            zip ? `ZIP: ${zip.nombre} (${zip.tamano_mb}MB, ${zip.archivos} archivos, incluye manifiesto.json). ${avisoDeTramoBase64(zip, "cmf_empresa_paquete_documentos")}` : "Sin ZIP.",
             `Requests CMF: ~${requests} (≈${estimarTiempoS(requests)}s).`,
             faltantes.length ? `Fallidos: ${faltantes.map((f) => `${f.ruta}: ${f.motivo}`).join("; ")}` : "",
           ].join("\n");

@@ -58,12 +58,22 @@ export function fixMojibake(s: string): string {
 interface CeldaTabla {
   texto: string;
   enlace: string;
+  /** Cuántas columnas abarca (colspan). 1 casi siempre. */
+  ancho: number;
+  /** Cuántas filas abarca (rowspan). 1 casi siempre. */
+  alto: number;
 }
 
 /** Fila de tabla: celdas + si todas vienen de <th> (encabezado, nunca es dato). */
 interface FilaTabla {
   celdas: CeldaTabla[];
   esHeader: boolean;
+  /**
+   * Una sola celda que abarca varias columnas (colspan). Es el título de la
+   * tabla o una nota («Período: 12 / 2025», «Ir a más sanciones»), nunca un
+   * dato, y por eso no cuenta para el total ni para la paginación.
+   */
+  esTitulo: boolean;
 }
 
 /**
@@ -109,10 +119,16 @@ function bloqueDe(tag: string): RegExp {
 function celdasDeUnaFila(tr: string): FilaTabla {
   const celdas: CeldaTabla[] = [];
   let todasTh = true;
-  const reCelda = /<t([dh])[^>]*>([\s\S]*?)<\/t\1>/gi;
+  const reCelda = /<t([dh])([^>]*)>([\s\S]*?)<\/t\1>/gi;
   let cm: RegExpExecArray | null;
+  let abarcaVarias = false;
+  const medida = (attrs: string, nombre: string) => Number(new RegExp(`\\b${nombre}\\s*=\\s*["']?(\\d+)`, "i").exec(attrs)?.[1] ?? 1) || 1;
   while ((cm = reCelda.exec(tr)) !== null) {
     if (cm[1] !== "h") todasTh = false;
+    const ancho = medida(cm[2], "colspan");
+    const alto = medida(cm[2], "rowspan");
+    if (ancho > 1) abarcaVarias = true;
+    cm[2] = cm[3];
     // Las fichas de emisor abren el documento con onClick="ventana('/sitio/...')"
     // y dejan href="#", así que el enlace real vive en el onClick.
     // El href puede venir sin comillas (buscador de sanciones), con comillas
@@ -124,19 +140,28 @@ function celdasDeUnaFila(tr: string): FilaTabla {
     celdas.push({
       texto: fixMojibake(decodificarEntidades(cm[2].replace(/<[^>]+>/g, " "))),
       enlace: href.startsWith("/") ? `https://www.cmfchile.cl${href}` : href,
+      ancho,
+      alto,
     });
   }
-  return { celdas, esHeader: todasTh };
+  return { celdas, esHeader: todasTh, esTitulo: celdas.length === 1 && abarcaVarias };
 }
 
 /** Las filas de una `<table>`, sin las que no tienen ninguna celda. */
 function filasDeUnTable(tabla: string): FilaTabla[] {
   const filas: FilaTabla[] = [];
+  // Un <thead> con sus <th> sueltos, sin <tr> (cuadros de agentes y
+  // corredores), es la cabecera aunque ningún <tr> la contenga.
+  const thead = /<thead[^>]*>([\s\S]*?)<\/thead\s*>/i.exec(tabla);
+  if (thead && !/<tr\b/i.test(thead[1])) {
+    const fila = celdasDeUnaFila(thead[1]);
+    if (fila.celdas.length > 0) filas.push({ ...fila, esHeader: true });
+  }
   const reFila = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
   let rm: RegExpExecArray | null;
   while ((rm = reFila.exec(tabla)) !== null) {
     const fila = celdasDeUnaFila(rm[1]);
-    if (fila.celdas.length > 0) filas.push(fila);
+    if (fila.celdas.length > 0 && !fila.esTitulo) filas.push(fila);
   }
   return filas;
 }
@@ -185,24 +210,56 @@ export function htmlTablaAJson(html: string, columnas?: string[]): Record<string
 function nombresDeColumna(
   t: FilaTabla[],
   columnas: string[] | undefined,
-): { cols: string[]; prestada: FilaTabla | undefined } {
+): { cols: string[]; prestadas: FilaTabla[] } {
   const cabecera = t.find((f) => f.esHeader);
+  if (columnas) return { cols: columnas, prestadas: [] };
+  if (cabecera) return { cols: cabecera.celdas.map((c) => c.texto), prestadas: [] };
+  const dosPisos = cabeceraDeDosPisos(t);
+  if (dosPisos) return { cols: dosPisos.cols, prestadas: t.slice(0, 2) };
   // Solo se sacrifica una fila de datos cuando NO hay cabecera de verdad.
-  const prestada = columnas ?? cabecera ? undefined : (t.find((f) => !f.esHeader) ?? t[0]);
-  const cols = columnas ?? (cabecera ?? prestada)?.celdas.map((c) => c.texto) ?? [];
-  return { cols, prestada };
+  const primera = t[0];
+  return { cols: primera?.celdas.map((c) => c.texto) ?? [], prestadas: primera ? [primera] : [] };
+}
+
+/**
+ * Una cabecera de 2 pisos hecha con <td>. la primera fila tiene celdas que
+ * abarcan varias columnas (colspan) o varias filas (rowspan) y la segunda
+ * trae los nombres de abajo. Es la tabla de clasificación de riesgo de
+ * seguros («Compañías» con rowspan, «Sociedades Clasificadoras» con colspan
+ * 4, y debajo Feller-Rate, Fitch, Humphreys y Moody's). Sin esto, la segunda
+ * fila salía como dato. Devuelve los nombres por columna y cuántas filas
+ * dejan de ser dato, o undefined si la tabla no tiene esa forma.
+ */
+function cabeceraDeDosPisos(t: FilaTabla[]): { cols: string[] } | undefined {
+  const [arriba, abajo] = t;
+  if (!arriba || !abajo || arriba.esHeader || abajo.esHeader) return undefined;
+  if (!arriba.celdas.some((c) => c.ancho > 1 || c.alto > 1)) return undefined;
+  const cols: string[] = [];
+  let j = 0;
+  for (const c of arriba.celdas) {
+    if (c.alto > 1) {
+      cols.push(c.texto);
+      continue;
+    }
+    for (let k = 0; k < c.ancho; k++) {
+      const sub = abajo.celdas[j++]?.texto ?? "";
+      cols.push([c.texto, sub].filter((x) => x !== "").join(" "));
+    }
+  }
+  // Si la segunda fila no calza con los huecos, no era una cabecera.
+  return j === abajo.celdas.length ? { cols } : undefined;
 }
 
 function filasDeUnaTabla(t: FilaTabla[], columnas?: string[]): Record<string, string>[] {
   if (t.length === 0) return [];
-  const { cols, prestada } = nombresDeColumna(t, columnas);
+  const { cols, prestadas } = nombresDeColumna(t, columnas);
   // Una clave `url` vacía en todas las filas no es un dato, es una columna de
   // ruido que el texto para el modelo igual dibuja. Solo existe cuando esta
   // tabla tiene al menos un enlace que valga la pena entregar.
   const conEnlaces = t.some((f) => f.celdas.some((c) => c.enlace));
   const out: Record<string, string>[] = [];
   for (const filaTabla of t) {
-    if (filaTabla.esHeader || filaTabla === prestada) continue;
+    if (filaTabla.esHeader || prestadas.includes(filaTabla)) continue;
     const fila: Record<string, string> = {};
     filaTabla.celdas.forEach((celda, j) => {
       if (j < cols.length) fila[cols[j]] = celda.texto;

@@ -2,7 +2,7 @@
 import * as z from "zod/v4";
 import { empresaArraySchema, historialSchema, globalesSchema, paginadoSchema, filasSchema } from "../util/schemas-output.js";
 import { getLegacy, postLegacy, postLegacyBinario, getLegacyBinario, fetchCmf, fetchCmfBinario, getLegacyConCookies, type CmfEnv } from "../client/cmf-client.js";
-import { htmlTablaAJson, xlsAJson, fechaLegacy, fechaLegacyCompleta, fixMojibake, txtCsvAJson } from "../client/parsers.js";
+import { htmlTablaAJson, xlsAJson, fechaLegacy, fechaLegacyCompleta, fixMojibake, txtCsvAJson, separarTotales } from "../client/parsers.js";
 import { pedirCaptchaCMF, obtenerCaptcha, ultimoCaptcha, consumirCaptcha } from "../captcha.js";
 import { fromError, toolOk, toolError, toolErrorFuente, sinDatosOFuente, resumirTabla, paginarTexto } from "../util/errors.js";
 import { paginar } from "../util/paginate.js";
@@ -85,6 +85,21 @@ function filasDeLiquidez(html: string): Record<string, string>[] {
     for (const f of htmlTablaAJson(sinTitulo)) filas.push({ fecha, ...f });
   }
   return filas;
+}
+
+/**
+ * Pega a los nombres de columna las filas de cabecera que el lector de XLS
+ * dejó como datos. Una fila es cabecera mientras no traiga la columna
+ * `clave` (la de la entidad), y su texto se suma al nombre de cada columna.
+ * «Número de» + «Prestamos» + «(1)» → «Número de Prestamos (1)».
+ */
+function unirCabeceraPartida(filas: Record<string, string>[], clave: string): Record<string, string>[] {
+  const nombres = new Map<string, string>();
+  let i = 0;
+  for (; i < filas.length && !(clave in filas[i]); i++) {
+    for (const [k, v] of Object.entries(filas[i])) nombres.set(k, `${nombres.get(k) ?? k} ${v}`.trim());
+  }
+  return filas.slice(i).map((f) => Object.fromEntries(Object.entries(f).map(([k, v]) => [nombres.get(k) ?? k, v])));
 }
 
 /** Compara sin acentos ni mayúsculas, como escribe una persona un nombre. */
@@ -304,7 +319,12 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
     async ({ rut, offset, limit }) => {
       try {
         const html = await getLegacy(fichaUrl(rut, 1), {}, env);
-        const filas = htmlTablaAJson(html);
+        // La ficha es una tabla de 2 columnas sin cabecera, campo y valor.
+        // Sin nombres explícitos el parser tomaba la primera fila («RUT» y
+        // «90690000 - 9») como nombres de columna, así que el RUT consultado
+        // pasaba a ser el nombre del campo y la ficha cambiaba de forma con
+        // cada RUT.
+        const filas = htmlTablaAJson(html, ["campo", "valor"]);
         return sinDatosOFuente(
           html,
           filas,
@@ -533,7 +553,9 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
     async ({ rut, anio, mes, offset, limit }) => {
       try {
         const html = await postLegacy(fichaUrl(rut, 5), { mm: mes ?? "12", aa: anio }, env);
-        const filas = htmlTablaAJson(html);
+        // La pestaña trae 2 tablas. una de 1 celda con «Período: 12 / 2025»
+        // y la de accionistas. La primera no es un accionista.
+        const filas = htmlTablaAJson(html).filter((f) => Object.keys(f).length > 1);
         const texto = filas.length
           ? `Accionistas ${rut} período ${anio}-${mes ?? "12"} (total ${filas.length}):\n${resumirTabla(filas, Object.keys(filas[0]).slice(0, 6))}`
           : `Sin accionistas publicados para ${rut} en ${anio}.`;
@@ -551,7 +573,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: empresaArraySchema("directorio"),
       title: "Directorio y administración",
       description:
-        "Devuelve los directores y gerentes de un emisor (nombre, cargo y fechas de designación/cese) desde la ficha de la CMF. Identifique el emisor por rut (numérico; se acepta con o sin DV, ej: 61808000). Use esta tool para gobierno corporativo; para la composición accionaria use cmf_empresa_accionistas. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Devuelve los directores y gerentes de un emisor (nombre y cargo; la ficha de la CMF no publica fechas de designación ni de cese) desde la ficha de la CMF. Identifique el emisor por rut (numérico; se acepta con o sin DV, ej: 61808000). Use esta tool para gobierno corporativo; para la composición accionaria use cmf_empresa_accionistas. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({ rut: rutSchema, ...paginacion(100) }),
     },
     async ({ rut, offset, limit }) => {
@@ -721,9 +743,16 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
     async ({ rut, anio, mes, offset, limit }) => {
       try {
         const html = await postLegacy(fichaUrl(rut, 33), { aa: anio, mm: mes ?? "12" }, env);
-        const filas = htmlTablaAJson(html);
+        // Una fila por filial, con 1 celda de texto («Descarga X - Periodo
+        // :202412 - Descargar Archivo PDF - (13/03/2025)») y su enlace. Sin
+        // nombre explícito la primera filial se volvía el nombre de la
+        // columna y se perdía. El texto se parte en sus 3 partes.
+        const filas = htmlTablaAJson(html, ["descarga"]).map((f) => {
+          const m = /^Descarga\s+(.*?)\s+-\s+Periodo\s*:\s*(\d{6})\s+-.*?\((\d{2}\/\d{2}\/\d{4})\)/.exec(f.descarga);
+          return m ? { filial: m[1], periodo: m[2], fecha_publicacion: m[3], url: f.url } : f;
+        });
         const texto = filas.length
-          ? `EEFF filiales ${rut} ${anio}-${mes ?? "12"} (${filas.length}):\n${resumirTabla(filas, Object.keys(filas[0]).slice(0, 4))}`
+          ? `EEFF filiales ${rut} ${anio}-${mes ?? "12"} (${filas.length}):\n${resumirTabla(filas, Object.keys(filas[0]))}`
           : `Sin EEFF de filiales para ${rut} en ${anio}.`;
         return toolOkPaginado(texto, { rut, anio }, "filiales", filas, offset, limit, "cmf_empresa_eeff_filiales");
       } catch (e) {
@@ -1592,12 +1621,15 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
             "https://www.cmfchile.cl/institucional/estadisticas/valores_agentes_cuadro.php",
           );
         }
+        // La unidad está en el párrafo de arriba de las tablas («Miles de $»).
+        const unidad = /Miles de \$/.test(html) ? ["Cifras en miles de pesos"] : [];
         return toolOkTabla({
           titulo: `Cuadro ${tipo} ${aa}-${mm}, tablas corredores y agentes`,
           vacio: "Sin resultados.",
           base: { tipo, anio: aa, mes: mm },
           campo: "filas",
           filas,
+          notas: unidad,
           offset,
           limit,
           tool: "cmf_resultados_av_cb",
@@ -1686,19 +1718,24 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
           { id_mes: mm, id_anio: aa },
           env,
         );
-        const filas = xlsAJson(bytes) as Record<string, unknown>[];
-        if (filas.length === 0) {
+        const crudas = xlsAJson(bytes) as Record<string, string>[];
+        if (crudas.length === 0) {
           return toolOk(
             `La CMF no publicó reporte de préstamos para ${aa}-${mm} (meses sin reporte devuelven solo el título).`,
             { anio: aa, mes: mm, filas: [] },
           );
         }
+        // La planilla trae una cabecera de 3 pisos («Número de» / «Prestamos»
+        // / «(1)») que el lector de XLS entrega como 2 filas de datos. Los
+        // pisos se pegan al nombre de la columna y esas filas dejan de contar.
+        const { datos, totales } = separarTotales(unirCabeceraPartida(crudas, "ASEGURADORA"));
         return toolOkTabla({
-          titulo: `Préstamos otorgados ${aa}-${mm}`,
+          titulo: `Préstamos otorgados por compañías de seguros ${aa}-${mm}`,
           vacio: "Sin resultados.",
           base: { anio: aa, mes: mm },
           campo: "filas",
-          filas,
+          filas: datos,
+          totales,
           offset,
           limit,
           tool: "cmf_prestamos_otorgados",

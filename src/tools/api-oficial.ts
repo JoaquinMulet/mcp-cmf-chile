@@ -4,9 +4,31 @@ import { apiSerieSchema, apiPeriodoSchema } from "../util/schemas-output.js";
 import { apiV3, type CmfEnv } from "../client/cmf-client.js";
 import { fromError, toolOk } from "../util/errors.js";
 import { anioSchema, mesSchema, serieIndicadorSchema, diaSchema, codigoSchema } from "../util/schemas.js";
-import { paginacion, toolOkPaginado } from "../util/tramos.js";
+import { paginacion, toolOkPaginado, toolOkTabla } from "../util/tramos.js";
 
 /** Tools de la API oficial v3 (api.sbif.cl). Requieren CMF_API_KEY en el entorno del servidor. */
+
+/**
+ * La API v3 envuelve las filas en un objeto con una sola lista
+ * (`{CodigosBalances: [...]}`, `{CodigosResultados: [...]}`). Se toma la
+ * primera lista que traiga, sea cual sea su nombre, para que el nombre no
+ * se escriba de memoria.
+ */
+/** Aparta las filas que son SUBTOTAL, OTROS o TOTAL, mire donde mire el texto. */
+function separarAgregados(filas: Record<string, unknown>[]): { datos: Record<string, unknown>[]; totales: Record<string, unknown>[] } {
+  const esAgregado = (f: Record<string, unknown>) => Object.values(f).some((v) => /^(SUB)?TOTAL(ES)?\b|^OTROS\b/i.test(String(v ?? "").trim()));
+  return { datos: filas.filter((f) => !esAgregado(f)), totales: filas.filter(esAgregado) };
+}
+
+function filasDeLaApi(data: unknown): Record<string, unknown>[] {
+  if (Array.isArray(data)) return data as Record<string, unknown>[];
+  if (data && typeof data === "object") {
+    for (const v of Object.values(data as Record<string, unknown>)) {
+      if (Array.isArray(v)) return v as Record<string, unknown>[];
+    }
+  }
+  return [];
+}
 
 const SERIES_DESC: Record<string, string> = {
   uf: "Unidad de Fomento",
@@ -114,24 +136,30 @@ export function registrarToolsApi(server: McpServer, env: CmfEnv): void {
       outputSchema: apiPeriodoSchema,
       title: "Balance de institución financiera",
       description:
-        "Devuelve el balance mensual de instituciones financieras (bancos) supervisadas, desde la API oficial v3 de la CMF. Filtre el período con anio (AAAA) y mes (MM); use institucion para un banco específico (999 = sistema financiero total) y cuenta para una sola cuenta contable (ej: 210000), sin ellos devuelve los datos completos del período. Requiere la API key oficial configurada en el servidor (CMF_API_KEY). Use esta tool para activos y pasivos contables; para ingresos y gastos del mismo período use cmf_api_resultados_institucion.",
+        "Devuelve el balance mensual de instituciones financieras (bancos) supervisadas, desde la API oficial v3 de la CMF. Filtre el período con anio (AAAA) y mes (MM); use institucion para un banco específico (999 = sistema financiero total) y cuenta para una sola cuenta contable (ej: 210000), sin ellos devuelve los datos completos del período, con una fila por cuenta (código, descripción, institución y montos por moneda). Requiere la API key oficial configurada en el servidor (CMF_API_KEY). Use esta tool para activos y pasivos contables; para ingresos y gastos del mismo período use cmf_api_resultados_institucion. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         anio: anioSchema,
         mes: mesSchema,
         institucion: codigoSchema.optional().describe("Código SBIF de la institución (ej: 001=Banco de Chile, 037=Banco Santander-Chile, 012=Banco Estado; 999=sistema total; vea el resource cmf://bancos/codigos; acepta 999 o '999')"),
-        cuenta: codigoSchema.optional().describe("Código de cuenta (ej: 210000)"),
-      }),
+        cuenta: codigoSchema.optional().describe("Código de cuenta (ej: 210000)"), ...paginacion(300) }),
     },
-    async ({ anio, mes, institucion, cuenta }) => {
+    async ({ anio, mes, institucion, cuenta, offset, limit }) => {
       try {
         let path = `/balances/${anio}/${mes}`;
         if (cuenta) path += `/cuentas/${cuenta}`;
         if (institucion) path += `/instituciones/${institucion}`;
         const data = await apiV3<unknown>(path, env);
-        return toolOk(
-          `Balance ${anio}-${mes}${institucion ? ` institución ${institucion}` : ""}${cuenta ? ` cuenta ${cuenta}` : ""}: ${JSON.stringify(data).slice(0, 4000)}`,
-          { anio, mes, institucion, cuenta, data },
-        );
+        return toolOkTabla({
+          titulo: `Balance ${anio}-${mes}${institucion ? ` institución ${institucion}` : ""}${cuenta ? ` cuenta ${cuenta}` : ""}`,
+          vacio: "La API no devolvió cuentas para ese período.",
+          base: { anio, mes, institucion, cuenta },
+          campo: "filas",
+          filas: filasDeLaApi(data),
+          offset,
+          limit,
+          tool: "cmf_api_balance_institucion",
+          unidad: "cuentas",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -145,22 +173,32 @@ export function registrarToolsApi(server: McpServer, env: CmfEnv): void {
       outputSchema: apiPeriodoSchema,
       title: "Estado de resultados de institución financiera",
       description:
-        "Devuelve el estado de resultados mensual de instituciones financieras (bancos), desde la API oficial v3 de la CMF. Filtre el período con anio (AAAA) y mes (MM); use institucion para un banco específico (999 = sistema financiero total), sin institucion devuelve los datos del período completo. Requiere la API key oficial configurada en el servidor (CMF_API_KEY). Use esta tool para ingresos y gastos del mes; para el balance contable use cmf_api_balance_institucion.",
+        "Devuelve el estado de resultados mensual de instituciones financieras (bancos), desde la API oficial v3 de la CMF, con una fila por cuenta (código, descripción, institución y montos por moneda). Filtre el período con anio (AAAA) y mes (MM); use institucion para un banco específico (999 = sistema financiero total), sin institucion devuelve los datos del período completo; use cuenta para quedarse con las cuentas cuyo código EMPIEZA con ese prefijo (ej: 4 = ingresos, 41 = intereses). Requiere la API key oficial configurada en el servidor (CMF_API_KEY). Use esta tool para ingresos y gastos del mes; para el balance contable use cmf_api_balance_institucion. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         anio: anioSchema,
         mes: mesSchema,
         institucion: codigoSchema.optional().describe("Código SBIF de la institución (ej: 001=Banco de Chile, 037=Banco Santander-Chile, 012=Banco Estado; 999=sistema total; vea el resource cmf://bancos/codigos; acepta 999 o '999')"),
-      }),
+        cuenta: codigoSchema.optional().describe("Prefijo del código de cuenta (ej: 4, 41, 410100)"), ...paginacion(300) }),
     },
-    async ({ anio, mes, institucion }) => {
+    async ({ anio, mes, institucion, cuenta, offset, limit }) => {
       try {
         let path = `/resultados/${anio}/${mes}`;
         if (institucion) path += `/instituciones/${institucion}`;
         const data = await apiV3<unknown>(path, env);
-        return toolOk(
-          `Resultados ${anio}-${mes}${institucion ? ` institución ${institucion}` : ""}: ${JSON.stringify(data).slice(0, 4000)}`,
-          { anio, mes, institucion, data },
-        );
+        // La API de resultados no filtra por cuenta, así que el filtro es
+        // local, por prefijo del código, sobre las filas ya bajadas.
+        const filas = filasDeLaApi(data).filter((f) => !cuenta || String(f.CodigoCuenta ?? "").startsWith(cuenta));
+        return toolOkTabla({
+          titulo: `Resultados ${anio}-${mes}${institucion ? ` institución ${institucion}` : ""}${cuenta ? ` cuentas ${cuenta}*` : ""}`,
+          vacio: "La API no devolvió cuentas para ese período y ese filtro.",
+          base: { anio, mes, institucion, cuenta },
+          campo: "filas",
+          filas,
+          offset,
+          limit,
+          tool: "cmf_api_resultados_institucion",
+          unidad: "cuentas",
+        });
       } catch (e) {
         return fromError(e);
       }
@@ -233,21 +271,29 @@ export function registrarToolsApi(server: McpServer, env: CmfEnv): void {
       annotations: { readOnlyHint: true, destructiveHint: false },
       outputSchema: apiPeriodoSchema,
       title: "Accionistas de institución financiera",
-      description: "Devuelve la lista de accionistas de una institución financiera para un período, desde la API oficial v3 de la CMF. Identifique la institución con institucion (ej: 001) y el período con anio (AAAA) y mes (MM). Requiere la API key oficial configurada en el servidor (CMF_API_KEY). Use esta tool para la estructura de propiedad de un banco; para su directorio use cmf_api_integrantes_institucion.",
+      description: "Devuelve la lista de accionistas de una institución financiera para un período, desde la API oficial v3 de la CMF, con una fila por accionista; las filas SUBTOTAL, OTROS y TOTAL que la API agrega al final viajan aparte en totales, así que sumar la columna no las cuenta 2 veces. Identifique la institución con institucion (ej: 001) y el período con anio (AAAA) y mes (MM). Requiere la API key oficial configurada en el servidor (CMF_API_KEY). Use esta tool para la estructura de propiedad de un banco; para su directorio use cmf_api_integrantes_institucion. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         institucion: codigoSchema.describe("Código SBIF de la institución financiera (ej: 001=Banco de Chile, 037=Banco Santander-Chile, 012=Banco Estado; vea cmf://bancos/codigos)"),
         anio: anioSchema,
-        mes: mesSchema,
-      }),
+        mes: mesSchema, ...paginacion(300) }),
     },
-    async ({ institucion, anio, mes }) => {
+    async ({ institucion, anio, mes, offset, limit }) => {
       try {
         const data = await apiV3<unknown>(`/accionistas/instituciones/${institucion}/anhos/${anio}/meses/${mes}/ficha`, env);
-        return toolOk(`Accionistas institución ${institucion} (${anio}-${mes}): ${JSON.stringify(data).slice(0, 4000)}`, {
-          institucion,
-          anio,
-          mes,
-          data,
+        // La API cierra la lista con SUBTOTAL, OTROS y TOTAL. Son agregados,
+        // y sumarlos con los accionistas daba casi el doble.
+        const { datos, totales } = separarAgregados(filasDeLaApi(data));
+        return toolOkTabla({
+          titulo: `Accionistas institución ${institucion} (${anio}-${mes})`,
+          vacio: "La API no devolvió accionistas para ese período.",
+          base: { institucion, anio, mes },
+          campo: "filas",
+          filas: datos,
+          totales,
+          offset,
+          limit,
+          tool: "cmf_api_accionistas_institucion",
+          unidad: "accionistas",
         });
       } catch (e) {
         return fromError(e);
