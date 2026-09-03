@@ -178,7 +178,9 @@ export async function getLegacy(
   const res = await fetchCmf(url, {}, env);
   const bytes = await res.arrayBuffer();
   const texto = decodificarBody(bytes);
-  if (cacheClave) cacheHttp.set(cacheClave, texto, config(env).cacheTtlS * 1000);
+  // Una página de error 5xx cacheada deja la tool muerta todo el TTL aunque
+  // la CMF ya se haya recuperado. Solo se guarda lo que respondió bien.
+  if (cacheClave && res.ok) cacheHttp.set(cacheClave, texto, config(env).cacheTtlS * 1000);
   return texto;
 }
 
@@ -248,6 +250,61 @@ export async function postLegacy(
   );
   const bytes = await res.arrayBuffer();
   return decodificarBody(bytes);
+}
+
+/**
+ * Envía un formulario legacy A DONDE APUNTA DE VERDAD.
+ *
+ * Las páginas índice de estadísticas (`..._index.php`) muestran el
+ * formulario, pero el atributo action de ese formulario apunta a OTRA
+ * página (`sa_eeff_ifrs2grid.php`, `seg_gen_fecu1.php`, ...) y a veces
+ * lleva en la query un token que solo existe en el índice
+ * (`control=Berlin36`). Enviar el POST al índice devuelve el índice
+ * intacto, con total mayor que cero y sin ningún error, y eso pasó en 7
+ * tools el 2 de septiembre de 2026. Por eso acá se lee el índice, se
+ * busca el formulario y se envía a su action, resuelto contra el índice.
+ *
+ * El índice se cachea por su ruta y sus parámetros, así que el costo de
+ * la segunda petición se paga una vez por TTL, no por consulta.
+ */
+export async function enviarFormularioLegacy(
+  opciones: {
+    /** Ruta de la página índice, la que muestra el formulario. */
+    indice: string;
+    parametrosIndice?: Record<string, string>;
+    /** Nombre del <form>. En las estadísticas de la CMF es f1. */
+    formulario?: string;
+    /** Campos del formulario. Un array se envía repetido (`sociedad[]`). */
+    cuerpo: Record<string, string | number | string[] | undefined>;
+  },
+  env: CmfEnv = {},
+): Promise<string> {
+  const { indice, parametrosIndice = {}, formulario = "f1", cuerpo } = opciones;
+  const qs = new URLSearchParams(parametrosIndice).toString();
+  const html = await getLegacy(indice, parametrosIndice, env, `formulario:v1:${indice}?${qs}`);
+  const action = accionDeFormulario(html, formulario);
+  if (!action) {
+    throw new Error(
+      `La página índice de la CMF ${indice} no trae el formulario ${formulario}; la CMF pudo cambiar la página. Verifique en https://www.cmfchile.cl${indice}`,
+    );
+  }
+  // El action puede venir con &amp; en vez de &, y así el token viajaría
+  // como clave «amp;control» y la CMF devolvería el grid vacío.
+  const destino = new URL(action.replace(/&amp;/g, "&"), `https://www.cmfchile.cl${indice}`);
+  return postLegacy(destino.pathname, cuerpo, env, Object.fromEntries(destino.searchParams));
+}
+
+/** El atributo action del <form name="..."> pedido, o undefined si no está. */
+function accionDeFormulario(html: string, nombre: string): string | undefined {
+  const re = /<form\b[^>]*>/gi;
+  for (let m = re.exec(html); m !== null; m = re.exec(html)) {
+    const tag = m[0];
+    const n = /\bname\s*=\s*["']?([^"'\s>]+)/i.exec(tag);
+    if (!n || n[1] !== nombre) continue;
+    const a = /\baction\s*=\s*["']([^"']*)["']/i.exec(tag);
+    return a?.[1] ?? undefined;
+  }
+  return undefined;
 }
 
 /** GET legacy binario (XLS/BIFF): bytes crudos, sin pasar por texto (TextEncoder corrompe bytes >127). */

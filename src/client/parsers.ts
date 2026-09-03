@@ -113,7 +113,14 @@ function celdasDeUnaFila(tr: string): FilaTabla {
   let cm: RegExpExecArray | null;
   while ((cm = reCelda.exec(tr)) !== null) {
     if (cm[1] !== "h") todasTh = false;
-    const href = cm[2].match(/href="([^"]+)"/i)?.[1] ?? "";
+    // Las fichas de emisor abren el documento con onClick="ventana('/sitio/...')"
+    // y dejan href="#", así que el enlace real vive en el onClick.
+    // El href puede venir sin comillas (buscador de sanciones), con comillas
+    // dobles o simples. Las 3 formas son la misma clase.
+    const h = cm[2].match(/href=(?:"([^"]+)"|'([^']+)'|([^\s>]+))/i);
+    const hrefAttr = h?.[1] ?? h?.[2] ?? h?.[3] ?? "";
+    const ventana = cm[2].match(/ventana\('([^']+)'\)/i)?.[1];
+    const href = (hrefAttr === "#" || hrefAttr === "") && ventana ? ventana : hrefAttr;
     celdas.push({
       texto: fixMojibake(decodificarEntidades(cm[2].replace(/<[^>]+>/g, " "))),
       enlace: href.startsWith("/") ? `https://www.cmfchile.cl${href}` : href,
@@ -435,6 +442,178 @@ export function gridGoogleVisAJson(html: string): {
   } catch {
     return { columnas: [], filas: [] };
   }
+}
+
+/**
+ * Convierte el literal JavaScript de un objeto (claves sin comillas, strings
+ * con comilla simple y escapes `\'`) al JSON equivalente. Es un recorrido
+ * carácter a carácter y no una expresión regular, porque las etiquetas del
+ * grid traen enlaces con comillas escapadas y dos puntos adentro, y un
+ * reemplazo global los rompe en silencio.
+ */
+function literalJsAJson(src: string): string {
+  const CLAVE = /([A-Za-z_$][\w$]*)\s*:/y;
+  // Un número tal como lo escribe JavaScript. La CMF emite «-.9771», «.5»
+  // y «03», que JavaScript acepta y JSON rechaza. Se normaliza con Number.
+  const NUMERO = /-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/y;
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === "'" || ch === '"') {
+      const cadena = leerCadenaJs(src, i);
+      out += JSON.stringify(cadena.texto);
+      i = cadena.fin;
+      continue;
+    }
+    CLAVE.lastIndex = i;
+    const clave = CLAVE.exec(src);
+    if (clave) {
+      out += `"${clave[1]}":`;
+      i = CLAVE.lastIndex;
+      continue;
+    }
+    NUMERO.lastIndex = i;
+    const numero = NUMERO.exec(src);
+    if (numero && numero[0] !== "-") {
+      out += String(Number(numero[0]));
+      i = NUMERO.lastIndex;
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
+/** La cadena JS que empieza en `src[desde]` (una comilla), ya sin escapes. */
+function leerCadenaJs(src: string, desde: number): { texto: string; fin: number } {
+  const comilla = src[desde];
+  let texto = "";
+  let i = desde + 1;
+  while (i < src.length && src[i] !== comilla) {
+    if (src[i] !== "\\") {
+      texto += src[i++];
+      continue;
+    }
+    const n = src[i + 1] ?? "";
+    const hex = n === "u" ? src.slice(i + 2, i + 6) : n === "x" ? src.slice(i + 2, i + 4) : "";
+    if (hex && /^[0-9a-fA-F]+$/.test(hex)) {
+      texto += String.fromCharCode(Number.parseInt(hex, 16));
+      i += 2 + hex.length;
+      continue;
+    }
+    texto += ESCAPES_JS[n] ?? n;
+    i += 2;
+  }
+  return { texto, fin: i + 1 };
+}
+
+const ESCAPES_JS: Record<string, string> = { n: "\n", t: "\t", r: "\r", b: "\b", f: "\f", "0": "\0" };
+
+/** Fin (exclusivo) del objeto que abre en `src[abre]`, saltando las cadenas. */
+function finDelObjetoJs(src: string, abre: number): number {
+  let profundidad = 0;
+  let i = abre;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === "'" || ch === '"') {
+      i = leerCadenaJs(src, i).fin;
+      continue;
+    }
+    if (ch === "{" || ch === "[") profundidad++;
+    if (ch === "}" || ch === "]") profundidad--;
+    i++;
+    if (profundidad === 0) return i;
+  }
+  return -1;
+}
+
+/** Texto de una celda o etiqueta del grid, sin marcado, entidades ni sangría. */
+function textoDeGrid(s: unknown): string {
+  if (s === null || s === undefined) return "";
+  if (typeof s === "number") return String(s);
+  return decodificarEntidades(String(s).replace(/<[^>]+>/g, " "));
+}
+
+/** Nombre único dentro de un objeto. la segunda «Otros» pasa a «Otros (2)». */
+function claveUnica(nombre: string, usadas: Map<string, number>): string {
+  const n = (usadas.get(nombre) ?? 0) + 1;
+  usadas.set(nombre, n);
+  return n === 1 ? nombre : `${nombre} (${n})`;
+}
+
+interface CeldaGrid { v?: unknown; f?: unknown }
+interface GridGoogle { cols: Array<{ label?: string }>; rows: Array<{ c: Array<CeldaGrid | null> }> }
+
+/**
+ * Lee el grid de Google Charts con que la CMF sirve los estados financieros
+ * e indicadores (sa_eeff_ifrs2grid, seg_*_fecu1, sa_fecu1grid,
+ * intermediarios_*). Los datos NO viajan en una <table>: van en un objeto
+ * `var dataAsJson = {cols:[...], rows:[...]}` dentro de un <script>, y en
+ * la página hay una <table> de adorno que no lleva nada.
+ *
+ * La columna 0 es la etiqueta de la fila (la cuenta o el indicador) y cada
+ * columna siguiente es una entidad en un período («EMPRESAS COPEC S.A.
+ * 12 / 2024»). Por defecto cada fila del grid es una fila de salida, con
+ * el campo `cuenta` y un campo por entidad. Con `porEntidad` se traspone.
+ * cada entidad es una fila, con el campo `entidad` y un campo por cuenta.
+ *
+ * Devuelve null cuando la página no trae el grid, que es distinto de un
+ * grid sin columnas. lo primero es «no pude leer la fuente» y lo segundo
+ * es «la fuente no tiene datos para esta consulta».
+ */
+export function gridDataAsJsonAJson(
+  html: string,
+  opciones: { porEntidad?: boolean } = {},
+): { entidades: string[]; filas: Record<string, string>[]; nota?: string } | null {
+  const inicio = html.indexOf("var dataAsJson");
+  if (inicio < 0) return null;
+  const abre = html.indexOf("{", inicio);
+  const cierre = abre < 0 ? -1 : finDelObjetoJs(html, abre);
+  if (cierre < 0) return null;
+  let grid: GridGoogle;
+  try {
+    grid = JSON.parse(literalJsAJson(html.slice(abre, cierre))) as GridGoogle;
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(grid.cols) || !Array.isArray(grid.rows)) return null;
+  // Los nombres reservados de la fila (`entidad`, `cuenta`) ya cuentan como
+  // usados, así que una etiqueta real que se llame igual sale como «(2)»
+  // en vez de pisar el campo.
+  const nombresCol = new Map<string, number>([["cuenta", 1]]);
+  const entidades = grid.cols.slice(1).map((c) => claveUnica(textoDeGrid(c.label), nombresCol));
+  const celda = (r: { c: Array<CeldaGrid | null> }, j: number) => textoDeGrid(r.c?.[j]?.v);
+  const etiquetas = grid.rows.map((r) => celda(r, 0));
+  const conDatos = grid.rows.map((_, i) => entidades.some((_e, k) => celda(grid.rows[i], k + 1) !== ""));
+  // Una fila sin etiqueta y sin valores es un separador visual del grid.
+  const filasUtiles = grid.rows.map((_, i) => etiquetas[i] !== "" || conDatos[i]);
+  const m = /Cifras en [^<]{5,300}/.exec(html);
+  const nota = m ? decodificarEntidades(m[0]) : undefined;
+  let filas: Record<string, string>[];
+  if (opciones.porEntidad) {
+    const nombresFila = new Map<string, number>([["entidad", 1]]);
+    const claves = etiquetas.map((e, i) => claveUnica(e === "" ? `(sin etiqueta ${i + 1})` : e, nombresFila));
+    filas = entidades.map((entidad, k) => {
+      const fila: Record<string, string> = { entidad };
+      grid.rows.forEach((r, i) => {
+        if (filasUtiles[i]) fila[claves[i]] = celda(r, k + 1);
+      });
+      return fila;
+    });
+  } else {
+    filas = grid.rows
+      .map((r, i) => {
+        const fila: Record<string, string> = { cuenta: etiquetas[i] };
+        entidades.forEach((e, k) => {
+          fila[e] = celda(r, k + 1);
+        });
+        return fila;
+      })
+      .filter((_, i) => filasUtiles[i]);
+  }
+  return { entidades, filas, ...(nota ? { nota } : {}) };
 }
 
 /** Convierte fecha YYYY-MM-DD a dd/mm/aaaa (legacy) o a partes. */

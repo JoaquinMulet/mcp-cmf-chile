@@ -1,10 +1,11 @@
 ﻿import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { gridSchema, paginadoSchema, filasSchema } from "../util/schemas-output.js";
-import { getLegacy, postLegacy, type CmfEnv } from "../client/cmf-client.js";
-import { htmlTablaAJson, gridGoogleVisAJson } from "../client/parsers.js";
+import { getLegacy, postLegacyBinario, type CmfEnv } from "../client/cmf-client.js";
+import { htmlTablaAJson, xlsAJson } from "../client/parsers.js";
 import { fromError, toolOk, resumirTabla } from "../util/errors.js";
 import { paginar } from "../util/paginate.js";
+import { toolDeGrid } from "../util/grid.js";
 import { avisoDeTramo, paginacion, toolOkTabla } from "../util/tramos.js";
 import {
   anioSchema, mesSchema, offsetSchema, limitSchema } from "../util/schemas.js";
@@ -28,36 +29,31 @@ export function registrarToolsFondosInversion(server: McpServer, env: CmfEnv): v
     },
     async ({ admins, fondos, anio1, anio2, mes1, mes2, offset, limit }) => {
       try {
-        const html = await postLegacy(
-          "/institucional/estadisticas/merc_valores/fondos_ifrs/fondos_ifrs1.php",
+        // El índice trae 2 formularios. f1_ifrs consulta por fondo (tc1=1,
+        // ffmm1[]) y f3_ifrs por administradora (tc1=3, admins). Los 2
+        // apuntan a fondos_ifrs1.php con un token en la query.
+        const porAdministradora = admins !== "0";
+        const rango = { mes1: mes1 ?? "12", anno1: anio1, mes2: mes2 ?? "12", anno2: anio2 };
+        return await toolDeGrid(
           {
-            tc1: "1",
-            ifrs_sistema: "FIIFR",
-            admins,
-            "ffmm1[]": fondos,
-            mes1: mes1 ?? "12",
-            anno1: anio1,
-            mes2: mes2 ?? "12",
-            anno2: anio2,
+            que: "EEFF IFRS FI",
+            indice: "/institucional/estadisticas/merc_valores/fondos_ifrs/fondos_ifrs_index.php",
+            formulario: porAdministradora ? "f3_ifrs" : "f1_ifrs",
+            cuerpo: porAdministradora
+              ? { tc1: "3", ifrs_sistema: "FIIFR", admins, ...rango }
+              : { tc1: "1", ifrs_sistema: "FIIFR", "ffmm1[]": fondos, ...rango },
+            titulo: `EEFF IFRS FI ${anio1}-${mes1 ?? "12"} → ${anio2}-${mes2 ?? "12"}`,
+            vacio: "Sin resultados de EEFF IFRS FI para esa selección y ese rango.",
+            base: { admins, fondos, anio1, anio2 },
+            // columnas y total_filas los declara el outputSchema de esta tool,
+            // así que sacarlos rompe su contrato. Lo caza verify-endpoints.
+            baseDeGrid: (g) => ({ columnas: ["cuenta", ...g.entidades], total_filas: g.filas.length }),
+            offset,
+            limit,
+            tool: "cmf_fondos_inversion_eeff_ifrs",
           },
           env,
-          { auth: "", send: "", lang: "es", control: "Berlin39", xls: "n" },
         );
-        const { columnas, filas } = gridGoogleVisAJson(html);
-        return toolOkTabla({
-          titulo: `EEFF IFRS FI ${anio1}-${mes1 ?? "12"} → ${anio2}-${mes2 ?? "12"}, ${Math.max(0, columnas.length - 1)} fondos`,
-          vacio: "Sin resultados de EEFF IFRS FI (puede requerir re-solución del anti-bot; reintente).",
-          // total_filas lo declara el outputSchema de esta tool, asi que
-          // sacarlo rompe su contrato. Lo caza verify-endpoints, no la suite.
-          base: { columnas, total_filas: filas.length },
-          campo: "filas",
-          filas,
-          offset,
-          limit,
-          tool: "cmf_fondos_inversion_eeff_ifrs",
-          columnas,
-          unidad: "cuentas",
-        });
       } catch (e) {
         return fromError(e);
       }
@@ -103,21 +99,29 @@ export function registrarToolsFondosInversion(server: McpServer, env: CmfEnv): v
       annotations: { readOnlyHint: true, destructiveHint: false },
       outputSchema: filasSchema,
       title: "Comisiones máximas de Fondos de Inversión",
-      description: "Devuelve las filas del informe de comisiones máximas aplicables a fondos de inversión que publica la CMF (tabla HTML parseada; hasta 200 filas en filas). El informe es el vigente publicado. Si no hay filas parseables, el informe está disponible como PDF en el sitio de la CMF. Use esta tool para conocer los topes de comisiones; para las comisiones cobradas a fondos de pensiones use cmf_fondos_comisiones_maximas (tipo=fi). Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
-      inputSchema: z.object({ ...paginacion(200) }),
+      description: "Devuelve el informe de comisiones máximas de fondos de inversión (TGCA, tasa de gastos y comisiones anualizada, con la remuneración fija, los gastos y la base de cálculo por fondo en miles de pesos) que la CMF genera como planilla Excel para un período. Fije mes en MM y anio en AAAA, y fondo por RUN (default % = todos). COBERTURA, verificada el 2 de septiembre de 2026: la CMF respondió 'Sin Información' para todos los períodos probados entre 2023 y 2025, tanto para todos los fondos como para uno solo; si eso le pasa, el informe no está publicado para ese período. Use esta tool para conocer los topes de comisiones; para las comisiones cobradas a fondos de pensiones use cmf_fondos_comisiones_maximas (tipo=fi). Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+      inputSchema: z.object({
+        mes: mesSchema.describe("Mes del informe en MM"),
+        anio: anioSchema.describe("Año del informe en AAAA"),
+        fondo: z.string().default("%").describe("RUN del fondo (default % = todos)"), ...paginacion(200) }),
     },
-    async ({ offset, limit }) => {
+    async ({ mes, anio, fondo, offset, limit }) => {
       try {
-        const html = await getLegacy(
-          "/institucional/estadisticas/valores_fondosinversion_informe_commax.php",
-          {},
+        // La página HTML solo trae el formulario. el botón «GENERAR ARCHIVO»
+        // envía por JavaScript a la ruta _excel.php y baja una planilla BIFF.
+        const bytes = await postLegacyBinario(
+          "/institucional/estadisticas/valores_fondosinversion_informe_commax_excel.php",
+          { mes, anno: anio, fondo },
           env,
+          { lang: "es" },
         );
-        const filas = htmlTablaAJson(html);
+        const todas = xlsAJson(bytes);
+        const sinInformacion = todas.some((f) => Object.values(f).includes("Sin Información"));
+        const filas = sinInformacion ? [] : todas;
         return toolOkTabla({
-          titulo: `Comisiones máximas FI`,
-          vacio: "Informe disponible sin tablas parseables (puede ser PDF).",
-          base: {  },
+          titulo: `Comisiones máximas FI ${anio}-${mes}`,
+          vacio: `La CMF no tiene informe de comisiones máximas para ${anio}-${mes} (la planilla dice 'Sin Información').`,
+          base: { mes, anio, fondo },
           campo: "filas",
           filas,
           offset,

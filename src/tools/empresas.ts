@@ -10,6 +10,7 @@ import { urlDocumentoCmf } from "../util/nombres.js";
 import { bytesABase64 } from "../util/zip.js";
 import { pdfAMarkdown, notaLimitacionesPdf, RESUMEN_LIMITACIONES_PDF } from "../pdf.js";
 import { procesarTablasEEFF, textoVerificacion, textoAviso } from "../eeff-tables.js";
+import { toolDeGrid, NOTA_ESCALA_IFRS_SA } from "../util/grid.js";
 import { avisoDeTramo, paginacion, toolOkPaginado, toolOkTabla } from "../util/tramos.js";
 import { enteroSchema,
   anioSchema,
@@ -34,6 +35,30 @@ function fichaUrl(rut: string, pestania: number): string {
 
 /** Columnas típicas de hechos esenciales */
 const COLS_HECHOS = ["fecha_hora", "numero", "entidad", "materia", "url"];
+
+/** Los 2 registros de la CMF entre los que eligen las estadísticas de SA. */
+const registroSchema = z
+  .enum(["RVEMI", "RGEIN"])
+  .default("RVEMI")
+  .describe("RVEMI = Registro de Valores, emisores (default); RGEIN = Registro de Entidades Informantes");
+
+/**
+ * Las 9 casillas tipo_estado[] del formulario sa_eeff_ifrs_index.php. Sin
+ * ellas el grid trae solo la cabecera (moneda, tipo de balance y fechas).
+ */
+const TIPOS_DE_ESTADO_IFRS = ["esf", "er", "efe", "cla", "liq", "fuc", "nar", "dir", "ind"];
+
+const OPERACIONES_DE_CAPITAL = {
+  reparto: { path: "/institucional/estadisticas/acc_reparto1.php", titulo: "Repartos", plural: "repartos" },
+  canje: { path: "/institucional/estadisticas/acc_canje1.php", titulo: "Canjes", plural: "canjes" },
+  liberadas: { path: "/institucional/estadisticas/acc_liberadaspago1.php", titulo: "Liberadas", plural: "acciones liberadas" },
+} as const;
+
+/** Compara sin acentos ni mayúsculas, como escribe una persona un nombre. */
+function contieneTexto(texto: string, buscado: string): boolean {
+  const plano = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  return plano(texto).includes(plano(buscado));
+}
 
 export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
   // ---------- Búsqueda y catálogos ----------
@@ -576,10 +601,15 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
     },
     async ({ rut, desde, hasta, tipo, offset, limit }) => {
       try {
-        const pestania = tipo === "ordinaria" ? 78 : tipo === "extraordinaria" ? 79 : 80;
+        // Los códigos salen de los enlaces de la propia ficha. pestaña 78 lleva
+        // tipo_junta=O y tipo_documento=A, la 79 lleva E y A, y la 80 (reforma
+        // de estatutos) solo tipo_documento=R. Con los 2 campos vacíos la CMF
+        // responde la lista vacía, y eso se leía como «sin actas».
+        const [pestania, tipoJunta, tipoDocumento] =
+          tipo === "ordinaria" ? [78, "O", "A"] : tipo === "extraordinaria" ? [79, "E", "A"] : [80, "", "R"];
         const html = await postLegacy(
           fichaUrl(rut, pestania),
-          { fecha_desde: fechaLegacyCompleta(desde), fecha_hasta: fechaLegacyCompleta(hasta), tipo_documento: "", tipo_junta: "" },
+          { fecha_desde: fechaLegacyCompleta(desde), fecha_hasta: fechaLegacyCompleta(hasta), tipo_documento: tipoDocumento, tipo_junta: tipoJunta },
           env,
         );
         const filas = htmlTablaAJson(html);
@@ -767,18 +797,19 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: globalesSchema("sanciones"),
       title: "Sanciones globales por mercado",
       description:
-        "Devuelve las sanciones aplicadas en todo un mercado (V=valores, O=otros, S=seguros) en un rango de fechas. Fije desde/hasta opcionales en YYYY-MM-DD (default 01/01/2020 a 31/12/2100) y tipoentidad opcional (ej: RVEMI; default ALL=todas). Use esta tool para tendencias sancionatorias del mercado; para sanciones de un emisor específico use cmf_empresa_sanciones. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Devuelve las sanciones aplicadas en todo un mercado (V=valores, O=otros, S=seguros, B=bancos) en un rango de fechas, con número, fecha, materia y enlace. Fije desde/hasta opcionales en YYYY-MM-DD (default 01/01/2020 a 31/12/2100), tipoentidad opcional (ej: RVEMI; default ALL=todas) y texto opcional para quedarse solo con las filas cuya materia lo contiene (ej: 'BANCO DE CHILE'; sin acentos ni mayúsculas importa). Verificado el 2 de septiembre de 2026: las multas a bancos (Banco de Chile, Santander) salen bajo mercado O, y bajo B salen las fintech; use texto para encontrar una entidad. Use esta tool para tendencias sancionatorias del mercado y para las sanciones de un banco o una aseguradora, porque cmf_empresa_sanciones solo cubre la ficha de emisores de valores. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
-        mercado: mercadoSchema.describe("Mercado: V=valores, O=otros, S=seguros"),
+        mercado: mercadoSchema.describe("Mercado: V=valores, O=otros, S=seguros, B=bancos"),
         desde: fechaSchema.optional(),
         hasta: fechaSchema.optional(),
-        tipoentidad: z.string().optional().describe("Tipo de entidad (ej: RVEMI; default ALL=todas)"), ...paginacion(200) }),
+        tipoentidad: z.string().optional().describe("Tipo de entidad (ej: RVEMI; default ALL=todas)"),
+        texto: z.string().optional().describe("Filtro por texto en la materia (ej: 'BANCO DE CHILE')"), ...paginacion(200) }),
     },
-    async ({ mercado, desde, hasta, tipoentidad, offset, limit }) => {
+    async ({ mercado, desde, hasta, tipoentidad, texto: filtro, offset, limit }) => {
       try {
         const url = `/institucional/sanciones/sanciones_mercados_entidad.php?mercado=${mercado}&entidad=${tipoentidad ?? "ALL"}&nom_entidad=&desde=${desde ? fechaLegacyCompleta(desde) : "01/01/2020"}&hasta=${hasta ? fechaLegacyCompleta(hasta) : "31/12/2100"}`;
         const html = await getLegacy(url, {}, env);
-        const filas = htmlTablaAJson(html);
+        const filas = htmlTablaAJson(html).filter((f) => !filtro || contieneTexto(Object.values(f).join(" "), filtro));
         const texto = filas.length
           ? `Sanciones mercado ${mercado} (${filas.length}):\n${resumirTabla(filas, Object.keys(filas[0]).slice(0, 4))}`
           : `Sin sanciones en mercado ${mercado}.`;
@@ -934,44 +965,41 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "EEFF IFRS de sociedades anónimas",
       description:
-        "Devuelve los estados financieros IFRS de sociedades anónimas y otras entidades (sistema sa_eeff_ifrs) para un rango de períodos. Seleccione sociedades por RUT (array; default ['0']=todas), anio1/anio2 en AAAA (ej: 2024) y mes1/mes2 opcionales en MM (default 12). Use esta tool para cifras agregadas de SA; para EEFF de un emisor con PDFs auditados use cmf_empresa_eeff. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Devuelve los estados financieros IFRS completos (situación financiera, resultados y flujo de efectivo, con sus 500 y tantas cuentas de la taxonomía) de sociedades anónimas y otras entidades, para un rango de períodos. Cada fila es una cuenta y cada columna una sociedad en un período (la lista entidades trae esas columnas); las cifras van en unidades de la moneda de la fila Moneda, no en miles. Seleccione sociedades por RUT sin DV (array; default ['0']=todas, que devuelve cientos de columnas), registro (RVEMI = emisores de valores, default; RGEIN = otras entidades informantes), anio1/anio2 en AAAA (ej: 2024) y mes1/mes2 opcionales en MM (default 12; solo 03, 06, 09 y 12). Use esta tool para cifras comparables entre SA; para EEFF de un emisor con PDFs auditados use cmf_empresa_eeff. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
+        registro: registroSchema,
         anio1: anioSchema,
         anio2: anioSchema.describe("Año final del rango en AAAA (ej: 2025)"),
         mes1: mesSchema.optional(),
         mes2: mesSchema.optional().describe("Mes final del rango en MM (default 12)"), ...paginacion(300) }),
     },
-    async ({ sociedades, anio1, anio2, mes1, mes2, offset, limit }) => {
+    async ({ sociedades, registro, anio1, anio2, mes1, mes2, offset, limit }) => {
       try {
-        const html = await postLegacy(
-          "/institucional/estadisticas/merc_valores/sa_eeff_ifrs/sa_eeff_ifrs_index.php",
+        return await toolDeGrid(
           {
-            lang: "es",
-            rg_rf: "RGEIN",
-            "sociedad[]": sociedades,
-            anno1: anio1,
-            anno2: anio2,
-            mes1: mes1 ?? "12",
-            mes2: mes2 ?? "12",
-            indcon: "C",
-            buscasoc: "",
-            xls: "n",
-            enviar: "Buscar",
+            que: "EEFF IFRS SA",
+            indice: "/institucional/estadisticas/merc_valores/sa_eeff_ifrs/sa_eeff_ifrs_index.php",
+            parametrosIndice: { lang: "es", rg_rf: registro },
+            cuerpo: {
+              "sociedad[]": sociedades,
+              anno1: anio1,
+              anno2: anio2,
+              mes1: mes1 ?? "12",
+              mes2: mes2 ?? "12",
+              indcon: "0",
+              "tipo_estado[]": TIPOS_DE_ESTADO_IFRS,
+            },
+            titulo: `EEFF IFRS SA ${anio1}-${mes1 ?? "12"} → ${anio2}-${mes2 ?? "12"}`,
+            vacio: "Sin resultados EEFF IFRS SA para esas sociedades y ese rango.",
+            base: { sociedades, registro, anio1, anio2 },
+            offset,
+            limit,
+            tool: "cmf_eeff_ifrs_sa",
+            notas: [NOTA_ESCALA_IFRS_SA],
           },
           env,
         );
-        const tablas = htmlTablaAJson(html);
-        return toolOkTabla({
-          titulo: `EEFF IFRS SA ${anio1}-${mes1 ?? "12"} → ${anio2}-${mes2 ?? "12"}`,
-          vacio: "Sin resultados EEFF IFRS SA.",
-          base: { sociedades, anio1, anio2 },
-          campo: "filas",
-          filas: tablas,
-          offset,
-          limit,
-          tool: "cmf_eeff_ifrs_sa",
-        });
       } catch (e) {
         return fromError(e);
       }
@@ -985,28 +1013,32 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Indicadores financieros IFRS de SA",
       description:
-        "Devuelve los indicadores financieros IFRS calculados de sociedades anónimas (liquidez, endeudamiento, rentabilidad) para un corte, con hasta 300 filas. Fije fecha_max en formato AAAAMM (ej: 202512). Use esta tool para comparar ratios entre SA; para los EEFF detallados use cmf_eeff_ifrs_sa y para ratios bajo norma local use cmf_indicadores_financieros_nch. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Devuelve los indicadores financieros IFRS calculados de sociedades anónimas (rentabilidad, liquidez, endeudamiento, capital de trabajo) para un corte. Cada fila es una sociedad en ese corte, con un campo por indicador y su unidad en el nombre del campo. Fije fecha_max en formato AAAAMM (ej: 202512; solo meses 03, 06, 09 y 12), sociedades por RUT sin DV (array; default ['0']=todas) y registro (RVEMI = emisores de valores, default; RGEIN = otras entidades informantes). Use esta tool para comparar ratios entre SA; para los EEFF detallados use cmf_eeff_ifrs_sa y para ratios bajo norma local use cmf_indicadores_financieros_nch. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
-        fecha_max: z.string().regex(/^\d{6}$/, "AAAAMM").describe("Corte en formato AAAAMM (ej: 202512)"), ...paginacion(300) }),
+        fecha_max: z.string().regex(/^\d{6}$/, "AAAAMM").describe("Corte en formato AAAAMM (ej: 202512)"),
+        sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
+        registro: registroSchema, ...paginacion(300) }),
     },
-    async ({ fecha_max, offset, limit }) => {
+    async ({ fecha_max, sociedades, registro, offset, limit }) => {
       try {
-        const html = await getLegacy(
-          "/institucional/estadisticas/merc_valores/sa_indicadores_ifrs/sa_indicadoresfinancieros.php",
-          { auth: "", send: "", lang: "es", rg_rf: "RGEIN", fecha_max },
+        const anno = fecha_max.slice(0, 4);
+        const mes = fecha_max.slice(4, 6);
+        return await toolDeGrid(
+          {
+            que: `Indicadores IFRS SA corte ${fecha_max}`,
+            indice: "/institucional/estadisticas/merc_valores/sa_indicadores_ifrs/sa_indicadoresfinancieros_index.php",
+            parametrosIndice: { lang: "es", rg_rf: registro },
+            cuerpo: { "sociedad[]": sociedades, anno1: anno, anno2: anno, mes1: mes, mes2: mes, indcon: "0" },
+            porEntidad: true,
+            titulo: `Indicadores IFRS SA corte ${fecha_max}`,
+            vacio: "Sin indicadores IFRS para ese corte y esas sociedades.",
+            base: { fecha_max, sociedades, registro },
+            offset,
+            limit,
+            tool: "cmf_indicadores_financieros_sa",
+          },
           env,
         );
-        const filas = htmlTablaAJson(html);
-        return toolOkTabla({
-          titulo: `Indicadores IFRS SA corte ${fecha_max}`,
-          vacio: "Sin indicadores para el corte.",
-          base: { fecha_max },
-          campo: "filas",
-          filas,
-          offset,
-          limit,
-          tool: "cmf_indicadores_financieros_sa",
-        });
       } catch (e) {
         return fromError(e);
       }
@@ -1020,43 +1052,43 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "EEFF NCH de sociedades anónimas",
       description:
-        "Devuelve los estados financieros bajo norma chilena (NCH/FECU) de sociedades anónimas para un rango de períodos. Seleccione sociedades por RUT (array; default todas), anio1/anio2 en AAAA y mes1/mes2 opcionales en MM (default 12). Use esta tool para períodos pre-IFRS o agregados bajo norma local; para los EEFF IFRS con PDF auditado de UN emisor use cmf_empresa_eeff (norma=IFRS); para el sistema IFRS de todas las SA use cmf_eeff_ifrs_sa. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Devuelve la FECU resumida bajo norma chilena (NCH, anterior a IFRS, o sea hasta 2009 para la mayoría) de sociedades anónimas para un rango de períodos, en miles de pesos o de la moneda que corresponda. Cada fila es una sociedad en un período, con un campo por partida (RUT, razón social, moneda, activos, pasivos, resultados). Seleccione sociedades por RUT sin DV (array; default ['0']=todas), registro (RVEMI = emisores de valores, default; RGEIN = otras entidades informantes), indcon (0 = todos, I = individual, C = consolidado; default 0), anio1/anio2 en AAAA y mes1/mes2 opcionales en MM (default 12). Use esta tool para períodos pre-IFRS; para los EEFF IFRS con PDF auditado de UN emisor use cmf_empresa_eeff (norma=IFRS); para el sistema IFRS de todas las SA use cmf_eeff_ifrs_sa. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
+        registro: registroSchema,
+        indcon: z.enum(["0", "I", "C"]).default("0").describe("0 = todos, I = individual, C = consolidado"),
         anio1: anioSchema,
-        anio2: anioSchema.describe("Año final del rango en AAAA (ej: 2025)"),
+        anio2: anioSchema.describe("Año final del rango en AAAA (ej: 2009)"),
         mes1: mesSchema.optional(),
         mes2: mesSchema.optional().describe("Mes final del rango en MM (default 12)"), ...paginacion(300) }),
     },
-    async ({ sociedades, anio1, anio2, mes1, mes2, offset, limit }) => {
+    async ({ sociedades, registro, indcon, anio1, anio2, mes1, mes2, offset, limit }) => {
       try {
-        const html = await postLegacy(
-          "/institucional/estadisticas/sa_fecu_index.php",
+        return await toolDeGrid(
           {
-            lang: "es",
-            rg_rf: "RGEIN",
-            "sociedad[]": sociedades,
-            anno1: anio1,
-            anno2: anio2,
-            mes1: mes1 ?? "12",
-            mes2: mes2 ?? "12",
-            indcon: "C",
-            xls: "n",
-            enviar: "Buscar",
+            que: "EEFF NCH SA",
+            indice: "/institucional/estadisticas/sa_fecu_index.php",
+            parametrosIndice: { lang: "es", rg_rf: registro },
+            cuerpo: {
+              "sociedad[]": sociedades,
+              anno1: anio1,
+              anno2: anio2,
+              mes1: mes1 ?? "12",
+              mes2: mes2 ?? "12",
+              indcon,
+              rg_rf: registro,
+              xls: "n",
+            },
+            porEntidad: true,
+            titulo: `EEFF NCH SA ${anio1}-${mes1 ?? "12"} → ${anio2}-${mes2 ?? "12"}`,
+            vacio: "Sin resultados EEFF NCH para esas sociedades y ese rango.",
+            base: { sociedades, registro, indcon, anio1, anio2 },
+            offset,
+            limit,
+            tool: "cmf_empresa_eeff_nch",
           },
           env,
         );
-        const tablas = htmlTablaAJson(html);
-        return toolOkTabla({
-          titulo: `EEFF NCH SA ${anio1}-${mes1 ?? "12"} → ${anio2}-${mes2 ?? "12"}`,
-          vacio: "Sin resultados EEFF NCH.",
-          base: { sociedades, anio1, anio2 },
-          campo: "filas",
-          filas: tablas,
-          offset,
-          limit,
-          tool: "cmf_empresa_eeff_nch",
-        });
       } catch (e) {
         return fromError(e);
       }
@@ -1070,43 +1102,45 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Indicadores financieros NCH de SA",
       description:
-        "Devuelve los indicadores financieros calculados bajo norma chilena (NCH) de sociedades anónimas para un rango de períodos. Seleccione sociedades por RUT (array; default todas), anio1/anio2 en AAAA y mes1/mes2 opcionales en MM (default 12). Use esta tool para ratios NCH; para indicadores IFRS use cmf_indicadores_financieros_sa. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Devuelve los indicadores financieros calculados bajo norma chilena (NCH, anterior a IFRS, o sea hasta 2009 para la mayoría) de sociedades anónimas para un rango de períodos. Cada fila es una sociedad en un período, con un campo por partida e indicador (activo total, patrimonio, ingresos, rentabilidad, liquidez, endeudamiento). Seleccione sociedades por RUT sin DV (array; default ['0']=todas), registro (RVEMI = emisores de valores, default; RGEIN = otras entidades informantes), indcon (0 = todos, I = individual, C = consolidado; default 0), anio1/anio2 en AAAA y mes1/mes2 opcionales en MM (default 12). Use esta tool para ratios NCH; para indicadores IFRS use cmf_indicadores_financieros_sa. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
+        registro: registroSchema,
+        indcon: z.enum(["0", "I", "C"]).default("0").describe("0 = todos, I = individual, C = consolidado"),
         anio1: anioSchema,
-        anio2: anioSchema.describe("Año final del rango en AAAA (ej: 2025)"),
+        anio2: anioSchema.describe("Año final del rango en AAAA (ej: 2009)"),
         mes1: mesSchema.optional(),
         mes2: mesSchema.optional().describe("Mes final del rango en MM (default 12)"), ...paginacion(300) }),
     },
-    async ({ sociedades, anio1, anio2, mes1, mes2, offset, limit }) => {
+    async ({ sociedades, registro, indcon, anio1, anio2, mes1, mes2, offset, limit }) => {
       try {
-        const html = await postLegacy(
-          "/institucional/estadisticas/sa_indicadoresfinancieros_index.php",
+        return await toolDeGrid(
           {
-            lang: "es",
-            rg_rf: "RGEIN",
-            "sociedad[]": sociedades,
-            anno1: anio1,
-            anno2: anio2,
-            mes1: mes1 ?? "12",
-            mes2: mes2 ?? "12",
-            indcon: "C",
-            xls: "n",
-            enviar: "Buscar",
+            que: "Indicadores NCH SA",
+            indice: "/institucional/estadisticas/sa_indicadoresfinancieros_index.php",
+            parametrosIndice: { lang: "es", rg_rf: registro },
+            cuerpo: {
+              "sociedad[]": sociedades,
+              anno1: anio1,
+              anno2: anio2,
+              mes1: mes1 ?? "12",
+              mes2: mes2 ?? "12",
+              anual: "n",
+              actual: "n",
+              indcon,
+              rg_rf: registro,
+              xls: "n",
+            },
+            porEntidad: true,
+            titulo: `Indicadores NCH SA ${anio1}-${mes1 ?? "12"} → ${anio2}-${mes2 ?? "12"}`,
+            vacio: "Sin indicadores NCH para esas sociedades y ese rango.",
+            base: { sociedades, registro, indcon, anio1, anio2 },
+            offset,
+            limit,
+            tool: "cmf_indicadores_financieros_nch",
           },
           env,
         );
-        const filas = htmlTablaAJson(html);
-        return toolOkTabla({
-          titulo: `Indicadores NCH SA`,
-          vacio: "Sin indicadores NCH.",
-          base: {  },
-          campo: "filas",
-          filas,
-          offset,
-          limit,
-          tool: "cmf_indicadores_financieros_nch",
-        });
       } catch (e) {
         return fromError(e);
       }
@@ -1120,7 +1154,7 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Dividendos de sociedades",
       description:
-        "Devuelve los dividendos declarados por sociedades anónimas (detalle por sociedad, del grid acc_dividendos1grid de la CMF). Seleccione sociedades por RUT (array; el catálogo de sociedades del form usa RUTs específicos: pruebe con un RUT concreto si ['0'] no devuelve), anio en AAAA, anio2 opcional para rangos, mes/mes2 opcionales en MM (default 01-12) y tipodiv (0=dividendos, default 0). Si una sociedad no tiene dividendos en el período, la CMF lo dice y la tool lo reporta como ausencia real. Use esta tool para historial de dividendos; para operaciones de capital use cmf_operaciones_capital. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Devuelve los dividendos declarados que la CMF publica en su estadística de dividendos, con una fila por dividendo (sociedad y fecha de pago) y sus campos: RUT, razón social, número y tipo de dividendo, fechas de acuerdo, cierre, límite y pago, moneda, dividendo por acción, número de acciones y montos. COBERTURA, verificada el 2 de septiembre de 2026: el formulario de la CMF solo ofrece 176 sociedades, casi todas concesionarias y sanitarias (aeropuertos, Aguas Araucanía, autopistas); las sociedades de bolsa como Copec NO están y para ellas los dividendos se leen en sus hechos esenciales con cmf_empresa_hechos. Seleccione sociedades por RUT sin DV (array; ['0'] = todas), anio en AAAA, anio2 opcional para rangos, mes/mes2 opcionales en MM (default 01-12) y tipodiv (0=dividendos, default 0). Si una sociedad no tiene dividendos en el período, la CMF lo dice y la tool lo reporta como ausencia real. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
         anio: anioSchema,
@@ -1131,55 +1165,31 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
     },
     async ({ sociedades, anio, anio2, mes, mes2, tipodiv, offset, limit }) => {
       try {
-        const html = await postLegacy(
-          "/institucional/estadisticas/divi/acc_dividendos1grid.php",
+        return await toolDeGrid(
           {
-            anno: anio,
-            anno2: anio2 ?? anio,
-            mes: mes ?? "01",
-            mes2: mes2 ?? "12",
-            tipodiv,
-            "sociedad[]": sociedades,
-            enviar: "Buscar",
-          },
-          env,
-          { lang: "es" },
-        );
-        if (html.includes("dataAsJson")) {
-          const { filas: filasGrid } = gridGoogleVisAJson(html);
-          const filas = filasGrid as Record<string, unknown>[];
-          return toolOkTabla({
-            titulo: `Dividendos ${anio}`,
-            vacio: `Sin dividendos para la selección.`,
-            base: { anio },
-            campo: "filas",
-            filas,
+            que: `Dividendos ${anio}`,
+            indice: "/institucional/estadisticas/divi/acc_dividendos_index.php",
+            cuerpo: {
+              anno: anio,
+              anno2: anio2 ?? anio,
+              mes: mes ?? "01",
+              mes2: mes2 ?? "12",
+              tipodiv,
+              "sociedad[]": sociedades,
+            },
+            // Cada columna del grid es un dividendo (sociedad y fecha), así
+            // que la fila natural es el dividendo con sus campos.
+            porEntidad: true,
+            sinDatosSi: /no se encuentran datos/i,
+            titulo: `Dividendos ${anio}${anio2 && anio2 !== anio ? `-${anio2}` : ""}`,
+            vacio: `Sin dividendos para las sociedades seleccionadas en el período ${anio} (la CMF no encontró datos).`,
+            base: { anio, sociedades },
             offset,
             limit,
             tool: "cmf_dividendos",
-            unidad: "registros",
-          });
-        }
-        if (/no se encuentran datos/i.test(html)) {
-          return toolOk(`Sin dividendos para las sociedades seleccionadas en el período ${anio} (la CMF no encontró datos).`, { anio, filas: [] });
-        }
-        if (!/<table/i.test(html)) {
-          return toolErrorFuente(
-            `Dividendos ${anio}`,
-            "https://www.cmfchile.cl/institucional/estadisticas/divi/acc_dividendos_index.php",
-          );
-        }
-        const filas = htmlTablaAJson(html);
-        return toolOkTabla({
-          titulo: `Dividendos ${anio}`,
-          vacio: "Sin resultados.",
-          base: { anio },
-          campo: "filas",
-          filas,
-          offset,
-          limit,
-          tool: "cmf_dividendos",
-        });
+          },
+          env,
+        );
       } catch (e) {
         return fromError(e);
       }
@@ -1193,32 +1203,35 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Operaciones de capital (repartos, canjes, liberadas)",
       description:
-        "Devuelve las operaciones de capital de sociedades anónimas para un año: repartos de capital, canjes de acciones o acciones liberadas de pago. Elija tipo=reparto, canje o liberadas; seleccione sociedades por RUT (array; default todas) y fije anio en AAAA. Use esta tool para eventos corporativos sobre el capital; para dividendos use cmf_dividendos. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Devuelve las operaciones de capital de sociedades anónimas: repartos de capital, canjes de acciones o acciones liberadas de pago, con una fila por operación (sociedad y año) y sus campos (RUT, razón social, número, serie, fechas de acuerdo, límite y pago, moneda, monto por acción, acciones y totales en miles). Elija tipo=reparto, canje o liberadas; seleccione sociedades por RUT sin DV (array; ['0'] = todas) y fije anio en AAAA, o anio='0' para todos los años, que es lo más útil porque estas operaciones son pocas por año. Use esta tool para eventos corporativos sobre el capital; para dividendos use cmf_dividendos. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         tipo: z.enum(["reparto", "canje", "liberadas"]).describe("Operación: reparto=repartos de capital, canje=canjes de acciones, liberadas=acciones liberadas de pago"),
         sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
-        anio: anioSchema, ...paginacion(300) }),
+        anio: z.union([z.literal("0"), z.literal(0), anioSchema]).transform(String).describe("Año en AAAA, o '0' para todos los años"), ...paginacion(300) }),
     },
     async ({ tipo, sociedades, anio, offset, limit }) => {
       try {
-        const path =
-          tipo === "reparto"
-            ? "/institucional/estadisticas/acc_reparto1.php"
-            : tipo === "canje"
-              ? "/institucional/estadisticas/acc_canje1.php"
-              : "/institucional/estadisticas/acc_liberadaspago1.php";
-        const html = await postLegacy(path, { "sociedad[]": sociedades, anno3: anio, enviar: "Buscar" }, env);
-        const filas = htmlTablaAJson(html);
-        return toolOkTabla({
-          titulo: `${tipo === "reparto" ? "Repartos" : tipo === "canje" ? "Canjes" : "Liberadas"} ${anio}`,
-          vacio: `Sin ${tipo}s de capital para ${anio}.`,
-          base: { tipo, anio },
-          campo: "filas",
-          filas,
-          offset,
-          limit,
-          tool: "cmf_operaciones_capital",
-        });
+        const operacion = OPERACIONES_DE_CAPITAL[tipo];
+        // Estas páginas son índice y resultado a la vez. su formulario f5
+        // se envía a la misma ruta, y el grid viene en dataAsJson. La opción
+        // «Todas» del select vale "" y no "0". con "0" la CMF no encuentra nada.
+        return await toolDeGrid(
+          {
+            que: `${operacion.titulo} ${anio === "0" ? "todos los años" : anio}`,
+            indice: operacion.path,
+            formulario: "f5",
+            cuerpo: { "sociedad[]": sociedades.map((s) => (s === "0" ? "" : s)), anno3: anio },
+            porEntidad: true,
+            sinDatosSi: /no se encuentran datos/i,
+            titulo: `${operacion.titulo} ${anio === "0" ? "todos los años" : anio}`,
+            vacio: `Sin ${operacion.plural} de capital para ${anio === "0" ? "ningún año" : anio} (la CMF no encontró datos).`,
+            base: { tipo, anio, sociedades },
+            offset,
+            limit,
+            tool: "cmf_operaciones_capital",
+          },
+          env,
+        );
       } catch (e) {
         return fromError(e);
       }
@@ -1397,43 +1410,42 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "EEFF IFRS de intermediarios (AV/CB/CBP)",
       description:
-        "Devuelve los estados financieros IFRS de intermediarios de valores (agentes de valores, corredores de bolsa y corredores de bolsa de productos) para un rango de períodos. Seleccione sociedades por RUT (array; default todas), anio1/anio2 en AAAA y mes1/mes2 opcionales en MM (default 12). Use esta tool para EEFF de intermediarios; para sociedades anónimas use cmf_eeff_ifrs_sa. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Devuelve los estados financieros IFRS de intermediarios de valores (corredores de bolsa y agentes de valores) para un rango de períodos, en miles de pesos. Cada fila es una cuenta (con su código, ej. 11.01.00 Efectivo) y cada columna un intermediario en un período (la lista entidades trae esas columnas). Seleccione tipo (0 = todos, 1 = corredores, 2 = agentes; default 0), sociedades por RUT sin DV (array; default ['0']=todas), anio1/anio2 en AAAA y mes1/mes2 opcionales en MM (default 12; solo 03, 06, 09 y 12). Use esta tool para EEFF de intermediarios; para sociedades anónimas use cmf_eeff_ifrs_sa. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
+        tipo: z.enum(["0", "1", "2"]).default("0").describe("0 = todos, 1 = corredores de bolsa, 2 = agentes de valores"),
         sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
         anio1: anioSchema,
         anio2: anioSchema.describe("Año final del rango en AAAA (ej: 2025)"),
         mes1: mesSchema.optional(),
         mes2: mesSchema.optional().describe("Mes final del rango en MM (default 12)"), ...paginacion(300) }),
     },
-    async ({ sociedades, anio1, anio2, mes1, mes2, offset, limit }) => {
+    async ({ tipo, sociedades, anio1, anio2, mes1, mes2, offset, limit }) => {
       try {
-        const html = await postLegacy(
-          "/institucional/estadisticas/merc_valores/intermediarios_fecu_ifrs/intermediarios_ifrs_index.php",
+        return await toolDeGrid(
           {
-            lang: "es",
-            tiposociedad: "0",
-            "sociedad[]": sociedades,
-            anno1: anio1,
-            anno2: anio2,
-            mes1: mes1 ?? "12",
-            mes2: mes2 ?? "12",
-            indcon: "C",
-            xls: "n",
-            enviar: "Buscar",
+            que: "EEFF IFRS intermediarios",
+            indice: "/institucional/estadisticas/merc_valores/intermediarios_fecu_ifrs/intermediarios_ifrs_index.php",
+            cuerpo: {
+              tiposociedad: tipo,
+              "sociedad[]": sociedades,
+              estimado: "2",
+              cuenta: "",
+              ag: "",
+              anno1: anio1,
+              anno2: anio2,
+              mes1: mes1 ?? "12",
+              mes2: mes2 ?? "12",
+              xls: "n",
+            },
+            titulo: `EEFF IFRS intermediarios ${anio1}-${mes1 ?? "12"} → ${anio2}-${mes2 ?? "12"}`,
+            vacio: "Sin resultados de intermediarios para ese rango.",
+            base: { tipo, sociedades, anio1, anio2 },
+            offset,
+            limit,
+            tool: "cmf_intermediarios_eeff_ifrs",
           },
           env,
         );
-        const filas = htmlTablaAJson(html);
-        return toolOkTabla({
-          titulo: `EEFF IFRS intermediarios ${anio1}-${anio2}`,
-          vacio: "Sin resultados de intermediarios.",
-          base: { sociedades, anio1, anio2 },
-          campo: "filas",
-          filas,
-          offset,
-          limit,
-          tool: "cmf_intermediarios_eeff_ifrs",
-        });
       } catch (e) {
         return fromError(e);
       }
@@ -1447,42 +1459,45 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Indicadores IFRS de intermediarios",
       description:
-        "Devuelve los indicadores financieros IFRS de intermediarios de valores (agentes de valores y corredores de bolsa) para un rango de períodos. Seleccione sociedades por RUT (array; default todas), anio1/anio2 en AAAA y mes1/mes2 opcionales en MM (default 12). Use esta tool para ratios de intermediarios; para sus EEFF use cmf_intermediarios_eeff_ifrs. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Devuelve los indicadores financieros IFRS de intermediarios de valores (corredores de bolsa y agentes de valores) para un rango de períodos. Cada fila es un intermediario en un período, con un campo por indicador (rentabilidad sobre el patrimonio, comisiones sobre resultado, resultado por intermediación) y los saldos con que se calculan. Seleccione tipo (0 = todos, 1 = corredores, 2 = agentes; default 0), sociedades por RUT sin DV (array; default ['0']=todas), anio1/anio2 en AAAA y mes1/mes2 opcionales en MM (default 12; solo 03, 06, 09 y 12). Use esta tool para ratios de intermediarios; para sus EEFF use cmf_intermediarios_eeff_ifrs. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
+        tipo: z.enum(["0", "1", "2"]).default("0").describe("0 = todos, 1 = corredores de bolsa, 2 = agentes de valores"),
         sociedades: z.array(z.string()).default(["0"]).describe("RUTs de sociedades sin DV (['0'] = todas)"),
         anio1: anioSchema,
         anio2: anioSchema.describe("Año final del rango en AAAA (ej: 2025)"),
         mes1: mesSchema.optional(),
         mes2: mesSchema.optional().describe("Mes final del rango en MM (default 12)"), ...paginacion(300) }),
     },
-    async ({ sociedades, anio1, anio2, mes1, mes2, offset, limit }) => {
+    async ({ tipo, sociedades, anio1, anio2, mes1, mes2, offset, limit }) => {
       try {
-        const html = await postLegacy(
-          "/institucional/estadisticas/merc_valores/intermediarios_indicadores_ifrs/intermediarios_indicadoresfinancieros_index.php",
+        return await toolDeGrid(
           {
-            tiposociedad: "0",
-            "sociedad[]": sociedades,
-            anno1: anio1,
-            anno2: anio2,
-            mes1: mes1 ?? "12",
-            mes2: mes2 ?? "12",
-            indcon: "C",
-            xls: "n",
-            enviar: "Buscar",
+            que: "Indicadores IFRS intermediarios",
+            indice: "/institucional/estadisticas/merc_valores/intermediarios_indicadores_ifrs/intermediarios_indicadoresfinancieros_index.php",
+            cuerpo: {
+              tiposociedad: tipo,
+              "sociedad[]": sociedades,
+              estimado: "4",
+              dia1: "0",
+              dia2: "0",
+              cuenta: "",
+              ag: "",
+              anno1: anio1,
+              anno2: anio2,
+              mes1: mes1 ?? "12",
+              mes2: mes2 ?? "12",
+              xls: "n",
+            },
+            porEntidad: true,
+            titulo: `Indicadores IFRS intermediarios ${anio1}-${mes1 ?? "12"} → ${anio2}-${mes2 ?? "12"}`,
+            vacio: "Sin indicadores de intermediarios para ese rango.",
+            base: { tipo, sociedades, anio1, anio2 },
+            offset,
+            limit,
+            tool: "cmf_intermediarios_indicadores_ifrs",
           },
           env,
         );
-        const filas = htmlTablaAJson(html);
-        return toolOkTabla({
-          titulo: `Indicadores IFRS intermediarios`,
-          vacio: "Sin indicadores de intermediarios.",
-          base: {  },
-          campo: "filas",
-          filas,
-          offset,
-          limit,
-          tool: "cmf_intermediarios_indicadores_ifrs",
-        });
       } catch (e) {
         return fromError(e);
       }

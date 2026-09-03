@@ -92,7 +92,7 @@ export const serieIndicadorSchema = z
 export const mercadoSchema = z
   .coerce.string()
   .transform((s) => s.trim().toUpperCase())
-  .pipe(z.enum(["V", "O", "S"], { message: "Mercado inválido. Use V (valores), O (otros) o S (seguros)" }))
+  .pipe(z.enum(["V", "O", "S", "B"], { message: "Mercado inválido. Use V (valores), O (otros), S (seguros) o B (bancos)" }))
   .describe("Mercado: V (valores), O (otros) o S (seguros)");
 
 export const tipoEntidadSchema = z

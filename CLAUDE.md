@@ -96,6 +96,9 @@ del dueño. Si molesta, se hace más rápido, no más corto.
   `fondos-inversion.ts`, `otros.ts` (seguros, normativa, bancos), `api-oficial.ts`,
   `paquete.ts` (descargas masivas) y `code-mode.ts`.
 - `src/util/tramos.ts` — paginación honesta. `paginacion()`, `toolOkPaginado` y `toolOkTabla`.
+- `src/util/grid.ts` — `toolDeGrid`, el camino único de las estadísticas que la CMF sirve con
+  un grid de Google Charts (EEFF e indicadores de SA, seguros e intermediarios). Lee el índice,
+  envía el formulario a donde apunta y saca el grid del `<script>`. Ver la lección 16.
 - `src/util/errors.ts` — el resultado estándar de una tool, y `resumirTabla`, que escribe el
   texto que de verdad lee el modelo.
 - `src/util/schemas.ts` y `src/util/schemas-output.ts` — contratos de entrada y de salida.
@@ -351,6 +354,74 @@ clase la vigila `test/porton-local-igual-ci.test.ts`: lee los flujos de `.github
 con el parser YAML real y falla si algún comando de la CI no está en un hook ni en un script
 local, y falla si `deploy` pierde su `predeploy`. Con el hook viejo se puso roja por las 2
 razones exactas antes de aplicar el arreglo.
+
+**16. Un POST a la página índice devuelve el índice, y el parser lo entrega como dato (2 de
+septiembre de 2026).** Qué falló. 7 tools de EEFF e indicadores (`cmf_seguros_eeff`,
+`cmf_eeff_ifrs_sa`, `cmf_indicadores_financieros_sa`, `cmf_empresa_eeff_nch`,
+`cmf_indicadores_financieros_nch`, `cmf_intermediarios_eeff_ifrs`,
+`cmf_intermediarios_indicadores_ifrs`) devolvían filas como «Crear cartera de sociedades» y
+«Limpiar búsqueda», con total mayor que cero y sin error. Causa raíz. Triple. El formulario
+`f1` de cada `..._index.php` apunta con su `action` a OTRA página (`sa_eeff_ifrs2grid.php`,
+`seg_gen_fecu1.php`, `sa_fecu1grid.php`, `intermediarios_ifrs1.php`) y a veces con un token
+en la query (`control=Berlin36`, sin el cual el grid viene vacío); las tools enviaban el POST
+al índice. Además los datos de esas páginas NO viajan en una `<table>`, van en un literal
+JavaScript `var dataAsJson = {cols, rows}` dentro de un `<script>`, con claves sin comillas y
+números como `-.9771` que JSON rechaza. Y `htmlTablaAJson` no distingue una tabla de datos de
+la tabla de adorno del formulario. Prescripción. Las 7 pasan por `toolDeGrid` de
+`src/util/grid.ts`, que usa `enviarFormularioLegacy` (lee el índice, cacheado, y envía a
+donde apunta `f1`) y `gridDataAsJsonAJson` (tokenizador propio, nunca un `replace` global).
+Cuando la página no trae el grid, la respuesta es `toolErrorFuente`, que es distinto de «sin
+resultados». Lo vigila `test/grid-formulario.test.ts`, con una comprobación de clase que
+prohíbe cualquier `postLegacy` a una ruta `_index.php`. Verificado contra la CMF real. la
+escala de los grids IFRS de SA no está declarada en la página, y el total de activos de Copec
+a 12/2024 sale 28.481.540.000 con Moneda DOLAR, o sea unidades, no miles; esa nota viaja en
+`NOTA_ESCALA_IFRS_SA`. Seguros, NCH e intermediarios sí declaran «Cifras en miles de pesos» y
+esa frase viaja en `notas`. Para leer el formulario real de una página de la CMF.
+`getLegacy` del índice y buscar `<form name="f1"` con su `action` y sus `<select>`; los
+campos `tipo_estado[]` del grid IFRS son obligatorios o el grid trae solo la cabecera.
+
+**17. Un cero sin causa es un defecto hasta que la fuente diga lo contrario (2 de septiembre de
+2026).** Qué falló. 8 tools devolvían 0 filas donde sí hay datos, cada una por una razón
+distinta, y ninguna lo decía. Causas, una por tool, todas leídas de la página real de la CMF.
+`cmf_dividendos` y `cmf_fondos_inversion_eeff_ifrs` buscaban el grid en el formato
+`arrayToDataTable` y la CMF lo sirve como `dataAsJson`. `cmf_empresa_juntas` enviaba
+`tipo_junta` y `tipo_documento` vacíos, y la ficha exige O/E y A, o R para reforma (los códigos
+están en los enlaces de las pestañas 78, 79 y 80). `cmf_operaciones_capital` enviaba
+`sociedad[]=0` y la opción «Todas» de esas páginas vale `""`. `cmf_empresa_sanciones` solo
+cubre la ficha de emisores de valores, y las multas a bancos salen en
+`sanciones_mercados_entidad.php` bajo mercado O, no B. `cmf_bancos_cronologia` y
+`cmf_bancos_tasas` leen servlets de la ex SBIF que ya no entregan la tabla (la cronología
+migró a cronologiabancaria.cmfchile.cl y devuelve la carcasa del portal; las tasas viven en
+el sitio nuevo BEST, best.cmfchile.cl, que es una aplicación Angular sin API visible).
+`cmf_fondos_inversion_comisiones_maximas` leía una página que solo trae el formulario; el
+dato se genera como planilla Excel en `..._commax_excel.php`, y la CMF respondió «Sin
+Información» para todos los períodos probados de 2023 a 2025. Y `cmf_dividendos` tiene una
+cobertura que nadie había medido. el formulario ofrece 176 sociedades, casi todas
+concesionarias y sanitarias, y Copec no está. Prescripción. Un total en cero se explica o se
+convierte en error. `toolDeGrid` distingue «la página no trae el grid» (error de fuente) de
+«la CMF dice que no hay datos» (`sinDatosSi`), y las 2 tools de servlets muertos responden
+`toolErrorFuente` con la página nueva. La cobertura real de una fuente va en la descripción
+de la tool con su fecha de verificación. Y antes de declarar un cero como ausencia, la prueba
+es la del reporte de pruebas del MCP. buscar el mismo dato por otra tool (el hecho esencial
+del dividendo de Copec existía mientras `cmf_dividendos` decía que no hubo dividendos en 2025).
+
+**18. El enlace puede vivir en el onClick y no en el href (2 de septiembre de 2026).** Qué
+falló. Las actas de junta salían con `url: "#"`, porque la ficha abre el PDF con
+`onClick="ventana('/sitio/aplic/serdoc/ver_sgd.php?...')"`. Prescripción.
+`celdasDeUnaFila` de `src/client/parsers.ts` toma el enlace del `ventana(...)` cuando el
+`href` es `#` o está vacío. Es un arreglo de clase. vale para toda tabla de la CMF.
+
+**19. Una revisión adversarial de contexto fresco encuentra lo que el autor no ve (2 de
+septiembre de 2026).** Qué falló. El arreglo de la lección 16 pasó suite, trinquete y
+verificación real, y un revisor fresco encontró 6 defectos con prueba. una página 5xx del
+índice quedaba cacheada 15 minutos y dejaba la tool muerta, los escapes `á` salían como
+«u00e1», el cierre del literal dependía de una cadena exacta, `porEntidad` fabricaba campos
+« (2)» con los separadores, una etiqueta llamada «entidad» pisaba el campo reservado, y un
+`action` con `&amp;` mandaba el token como clave `amp;control`. Prescripción. `getLegacy`
+solo cachea respuestas `ok`, el tokenizador traduce `\u`, `\x` y `\r`, el fin del literal se
+encuentra balanceando llaves, y los nombres reservados nacen ocupados en `claveUnica`. Todo
+está en `test/grid-formulario.test.ts`. La regla del estándar se confirma. antes de integrar
+un lote al trunk, un escéptico que lea SOLO el diff.
 
 ## Gotchas
 

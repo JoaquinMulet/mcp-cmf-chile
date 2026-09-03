@@ -6,6 +6,7 @@ import { htmlTablaAJson, fechaLegacyCompleta, fechaLegacy, xlsAJson } from "../c
 import { fromError, toolError, toolErrorFuente, toolOk, resumirTabla, paginarTexto } from "../util/errors.js";
 import { bytesABase64 } from "../util/zip.js";
 import { unzip, } from "../util/unzip.js";
+import { toolDeGrid } from "../util/grid.js";
 
 /** Decodifica páginas legacy (latin1) de los hosts de datos bancarios. */
 function decodificarLatin1(bytes: ArrayBuffer): string {
@@ -145,10 +146,10 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "EEFF de compañías de seguros",
       description:
-        "Devuelve los estados financieros (FECU) de compañías de seguros generales o de vida de la CMF para un rango de períodos. Requiere anio1/anio2 en AAAA (rango de años); mes1/mes2 en MM opcionales (default 12). Filtre por tipo (generales o vida; default generales) y sociedades (array de códigos de compañía; ['0']=todas). Use esta tool para balances de aseguradoras; para su clasificación de riesgo use cmf_seguros_clasificacion_riesgo. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Devuelve los estados financieros IFRS de compañías de seguros generales o de vida de la CMF para un rango de períodos, en miles de pesos y con las cifras de resultado acumuladas del año a cada corte. Cada fila es una cuenta y cada columna una compañía en un período (la lista entidades trae esas columnas). Requiere anio1/anio2 en AAAA; mes1/mes2 en MM opcionales (default 12; solo 03, 06, 09 y 12). Filtre por tipo (generales o vida; default generales) y sociedades (array de RUT sin DV de la compañía; ['0']=todas). Use esta tool para balances de aseguradoras; para su clasificación de riesgo use cmf_seguros_clasificacion_riesgo. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
         tipo: z.enum(["generales", "vida"]).default("generales").describe("Segmento de seguros: generales o vida (default generales)"),
-        sociedades: z.array(z.string()).default(["0"]).describe("Códigos de compañías (array; ['0']=todas)"),
+        sociedades: z.array(z.string()).default(["0"]).describe("RUT sin DV de las compañías (array; ['0']=todas)"),
         anio1: anioSchema,
         anio2: anioSchema,
         mes1: mesSchema.optional(),
@@ -156,37 +157,35 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
     },
     async ({ tipo, sociedades, anio1, anio2, mes1, mes2, offset, limit }) => {
       try {
-        const path =
-          tipo === "generales"
-            ? "/institucional/estadisticas/seg_gen_fecu_index.php"
-            : "/institucional/estadisticas/seg_vida_fecu_index.php";
-        const html = await postLegacy(
-          path,
+        return await toolDeGrid(
           {
-            lang: "es",
-            tiposociedad: "A",
-            "sociedad[]": sociedades,
-            anno1: anio1,
-            anno2: anio2,
-            mes1: mes1 ?? "12",
-            mes2: mes2 ?? "12",
-            indcon: "C",
-            xls: "n",
-            enviar: "Buscar",
+            que: `EEFF seguros ${tipo}`,
+            indice:
+              tipo === "generales"
+                ? "/institucional/estadisticas/seg_gen_fecu_index.php"
+                : "/institucional/estadisticas/seg_vida_fecu_index.php",
+            cuerpo: {
+              tiposociedad: "A",
+              "sociedad[]": sociedades,
+              anno1: anio1,
+              anno2: anio2,
+              mes1: mes1 ?? "12",
+              mes2: mes2 ?? "12",
+              // anual=y es el valor que el formulario trae marcado. cifras
+              // acumuladas del año a la fecha de cada corte, no del trimestre.
+              anual: "y",
+              porc: "0",
+              xls: "n",
+            },
+            titulo: `EEFF seguros ${tipo} ${anio1}-${mes1 ?? "12"} → ${anio2}-${mes2 ?? "12"}`,
+            vacio: "Sin resultados de EEFF de seguros para ese rango.",
+            base: { tipo, sociedades, anio1, anio2 },
+            offset,
+            limit,
+            tool: "cmf_seguros_eeff",
           },
           env,
         );
-        const filas = htmlTablaAJson(html);
-        return toolOkTabla({
-          titulo: `EEFF seguros ${tipo} ${anio1}-${anio2}`,
-          vacio: "Sin resultados de EEFF de seguros.",
-          base: { tipo },
-          campo: "filas",
-          filas,
-          offset,
-          limit,
-          tool: "cmf_seguros_eeff",
-        });
       } catch (e) {
         return fromError(e);
       }
@@ -995,11 +994,14 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         const res = await fetchCmf(url, {}, env);
         const textoRaw = decodificarLatin1(await res.arrayBuffer());
         const filas = htmlTablaAJson(textoRaw);
-        if (filas.length === 0 && !/<table/i.test(textoRaw)) {
+        // El 2 de septiembre de 2026 el servlet devuelve la carcasa del portal
+        // con una tabla vacía, y el propio portal enlaza las tasas al sitio
+        // nuevo BEST. Un cero acá sería mentir. la fuente migró.
+        if (filas.length === 0) {
           return toolErrorFuente(
             `Tasas de interés (índice ${indice})`,
-            "https://tasas.cmfchile.cl/",
-            "el servlet InfoFinanciera no devolvió tablas para esa combinación",
+            "https://best.cmfchile.cl/datos/tasas",
+            "el servlet InfoFinanciera de tasas.cmfchile.cl ya no entrega la tabla; la CMF publica las tasas en su sitio estadístico BEST",
           );
         }
         return toolOkTabla({
@@ -1036,6 +1038,17 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
           env,
         );
         const filas = htmlTablaAJson(html);
+        // El 2 de septiembre de 2026 el servlet no existe en www.cmfchile.cl
+        // (404), responde 500 en datosbanco y tasas, y en su host propio
+        // cronologiabancaria.cmfchile.cl devuelve la carcasa del portal sin la
+        // tabla. Un cero acá era una mentira. la fuente está migrada, y se dice.
+        if (filas.length === 0) {
+          return toolErrorFuente(
+            `Cronología bancaria (índice ${indice})`,
+            `https://cronologiabancaria.cmfchile.cl/sbifweb/servlet/CronologiaBancaria?indice=${indice}`,
+            "la CMF migró la cronología bancaria y la página ya no trae la tabla que esta tool leía",
+          );
+        }
         return toolOkTabla({
           titulo: `Cronología bancaria`,
           vacio: "Cronología cargada; contenido no tabular.",

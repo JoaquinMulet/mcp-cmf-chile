@@ -1,0 +1,259 @@
+<!DOCTYPE HTML>
+<html lang="es"><head><title>CMF Chile - Consulta de Indicadores financieros de agentes de valores y corredores de bolsa</title><!--begin-box-container:W4_tr_HEAD_CCC::7876:Contenedora del head del sitio.--><!--loc('Caja contenedora HTML5')--><!--cont=W4_tr_HEAD_CCC pos=1--><!--begin-box:W4_meta_links_archivos_cid525::8309:Caja en blanco--><!--loc('* Código HTML libre dentro de la página.')--><meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
+<!-- Llamado a fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="pr
+<!-- ... portal recortado ... -->
+ebe ingresar una fecha o un rango de fechas");return false;}else{fe2=document.f2.anno2.value+document.f2.mes2.value;fe1=document.f2.anno1.value+document.f2.mes1.value;if ( fe1>fe2 ){alert("Segunda fecha debe ser posterior o igual a la primera fecha");return false;}else{return true;}}}
+--> 
+ </script>
+
+<script type="text/javascript">window.onload = function(){mostrarrango();}</script>
+<div id="contenido">
+
+<!--
+<h1></h1>
+<h2></h2>
+-->
+<div id="econsulta"><form name="f2b" action="">
+<table>
+<tr>
+<td class="form_consulta">Tipo de consulta</td>
+<td><select name="indcon" size="1" class="select_svs_mult" onchange="expandir_formulario_corredora(this.value)">
+<option value="0" selected>Individual</option>
+<option value="1">Agrupado</option>
+</select> 
+</td>
+</tr>
+</table>
+</form>
+
+<div id="serie"><form name="f1" action="intermediarios_indicadoresfinancieros.php?auth=&send=&lang=es&control=Berlin36" method="post" onsubmit="return valida()">
+<table>
+<tr>
+<td class="form_consulta">Tipo de intermediario</td>
+<td><select name="tiposociedad" size="1" class="select_svs_mult" onchange="window.location='intermediarios_indicadoresfinancieros_index.php?auth=&send=&lang=es&control=Berlin36&vigente=&amp;tiposociedad='+document.f1.tiposociedad.value">
+<option value="0">Todos</option>
+<option value="1">Corredores</option>
+<option value="2">Agentes</option>
+</select> 
+</td></tr>
+<tr>
+<td class="form_consulta">Corredores de bolsa y/o agentes de valores</td>
+<td>
+<select onChange="mostrarrango();" name="sociedad[]" size="10" class="select_svs_mult" multiple>
+<option selected value="0">Todos</option>
+<option value=78705540>ABN AMRO (CHILE) CORREDORES DE BOLSA LIMITADA</option>
+<option value=86099700>AFEX AGENTES DE VALORES LIMITADA</option>
+<option value=76059606>AG AGENCIA DE VALORES S.A.</option>
+<option value=79507160>ALFA  CORREDORES DE BOLSA S.A.</option>
+<option value=76064889>ALHEC AGENTES DE VALORES S.A.</option>
+<option value=76359976>ALLARIA Y CIA. AGENTE DE VALORES SPA</option>
+<option value=76143607>AMM AGENCIA DE VALORES SPA</option>
+<option value=96571220>BANCHILE CORREDORES DE BOLSA S.A.</option>
+<option value=96564330>BANCOESTADO S.A. CORREDORES DE BOLSA</option>
+<option value=79865760>BANDESARROLLO AGENCIA DE VALORES S.A.</option>
+<option value=96611310>BANDESARROLLO S.A. CORREDORES DE BOLSA</option>
+<option value=84341600>BANEDWARDS S.A. CORREDORES DE BOLSA</option>
+<option value=76209873>BANGLOBAL CORREDORES DE BOLSA SPA</option>
+<option value=96567480>BANOSORNO CORREDORES DE BOLSA S.A.</option>
+<option value=96519800>BCI CORREDOR DE BOLSA S.A.</option>
+<option value=76055353>BICE AGENTE DE VALORES LIMITADA</option>
+<option value=79532990>BICE INVERSIONES CORREDORES DE BOLSA S.A.</option>
+<option value=84177300>BTG PACTUAL CHILE S.A. CORREDORES DE BOLSA</option>
+<option value=85646900>CARLOS F. MARIN ORREGO S.A. CORREDORES DE BOLSA</option>
+<option value=76631190>CASH, AGENCIA DE VALORES S.A.</option>
+<option value=96680820>CB CORREDORES DE BOLSA S.A.</option>
+<option value=96786720>CHG CORREDORES DE BOLSA S.A.</option>
+<option value=96502820>CHILE MARKET CORREDORES DE BOLSA SPA</option>
+<option value=95626000>CITI ACCIVAL S.A. CORREDORES DE BOLSA</option>
+<option value=96942770>CITIBANK AGENCIA DE VALORES S.A.</option>
+<option value=94730000>CONSORCIO AGENCIA DE VALORES S.A.</option>
+<option value=96772490>CONSORCIO CORREDORES DE BOLSA S.A.</option>
+<option value=76079605>CORPBANCA AGENCIA DE VALORES S.A.</option>
+<option value=76011193>CORREDORES DE BOLSA SURA S.A.</option>
+<option value=81151300>COVARRUBIAS Y COMPAÑIA, CORREDORES DE BOLSA LTDA.</option>
+<option value=96489000>CREDICORP CAPITAL CORREDORES DE BOLSA SPA</option>
+<option value=76141333>CREDIT SUISSE AGENCIA DE VALORES (CHILE) LIMITADA</option>
+<option value=96929300>CRUZ DEL SUR CORREDORA DE BOLSA S.A.</option>
+<option value=84182100>DE LA CERDA Y HATTON CORREDORES DE BOLSA S.A</option>
+<option value=78221830>DEUTSCHE SECURITIES CORREDORES DE BOLSA SPA</option>
+<option value=96619500>DRESDNER LATEINAMERIKA S.A. CORREDORES DE BOLSA</option>
+<option value=96541320>DUPOL S.A. CORREDORES DE BOLSA</option>
+<option value=83650900>ENRIQUE Y NELSON LAVIN Y COMPAÑIA, CORREDORES DE BOLSA LTDA</option>
+<option value=76043709>ESSEX S.A. CORREDORES DE BOLSA</option>
+<option value=96535530>ETCHEGARAY S.A. CORREDORES DE BOLSA</option>
+<option value=96899230>EUROAMERICA CORREDORES DE BOLSA S.A.</option>
+<option value=95319000>FINANZAS Y NEGOCIOS S.A. CORREDORES DE BOLSA</option>
+<option value=76907320>FIT RESEARCH CORREDORES DE BOLSA S.A.</option>
+<option value=76030737>FT AGENCIA DE VALORES S.A.</option>
+<option value=76015847>FUTUREBROKER AGENTE DE VALORES S.A.</option>
+<option value=76017206>GFI BROKERS (CHILE)  AGENTES DE VALORES SPA.</option>
+<option value=76110817>GS AGENCIA DE VALORES S.A.</option>
+<option value=76441949>GST AGENCIA DE VALORES SPA</option>
+<option value=76084335>HSBC AGENCIA DE VALORES LIMITADA</option>
+<option value=76085090>IB PARTNERS SECURITIES,  AGENCIA DE VALORES LIMITADA</option>
+<option value=76306360>ICB AGENTES DE VALORES S.A.</option>
+<option value=76308040>IM TRUST AGENCIA DE VALORES LIMITADA</option>
+<option value=79791930>INTERVALORES CORREDORES DE BOLSA LIMITADA</option>
+<option value=96598810>INVERLINK CORREDORES DE BOLSA S.A.</option>
+<option value=79516570>ITAU BBA CORREDOR DE BOLSA LIMITADA</option>
+<option value=96665450>ITAU CORREDORES DE BOLSA LIMITADA</option>
+<option value=76109764>J.P. MORGAN CORREDORES DE BOLSA SPA</option>
+<option value=84360700>JAIME LARRAIN Y COMPAÑIA CORREDORES DE BOLSA LTDA</option>
+<option value=96531880>JOSE HERNAN OVALLE S.A. CORREDORA DE BOLSA</option>
+<option value=80537000>LARRAIN VIAL S.A. CORREDORA DE BOLSA</option>
+<option value=96513250>LATINVALORES S.A. AGENTES DE VALORES</option>
+<option value=96752790>LAVIN S.A. CORREDORES DE BOLSA</option>
+<option value=86759300>LIRA Y CIA.,  CORREDORES DE BOLSA LIMITADA</option>
+<option value=76498140>MAGNUS AGENTES DE VALORES S.A.</option>
+<option value=96921130>MBI CORREDORES DE BOLSA S.A.</option>
+<option value=89420200>MCC S.A. CORREDORES DE BOLSA</option>
+<option value=80993900>MERRILL LYNCH CORREDORES DE BOLSA SPA</option>
+<option value=89312800>MOLINA  Y SWETT  S.A. CORREDORES DE BOLSA</option>
+<option value=76615490>MONEDA CORREDORES DE BOLSA LIMITADA</option>
+<option value=99597750>NETINVESTMENT AGENTE DE VALORES S.A.</option>
+<option value=96586750>NEVASA S.A., CORREDORES DE BOLSA</option>
+<option value=99555580>PENTA CORREDORES DE BOLSA S.A.</option>
+<option value=76326741>PLUSKAPITAL AGENTE DE VALORES SPA</option>
+<option value=76215463>PRINCIPAL AGENCIA DE VALORES S.A.</option>
+<option value=99599720>RABOFINANCE CHILE AGENTES DE VALORES S.A.</option>
+<option value=79626340>RAIMUNDO SERRANO MC AULIFFE CORREDORES DE BOLSA S.A.</option>
+<option value=76529250>RENTA 4 CORREDORES DE BOLSA S.A.</option>
+<option value=96623460>SANTANDER AGENTE DE VALORES LIMITADA</option>
+<option value=96683200>SANTANDER CORREDORES DE BOLSA LIMITADA</option>
+<option value=96531680>SANTANDER INVESTMENT S.A. CORREDORES DE BOLSA</option>
+<option value=96521580>SANTIAGO AGENTE DE VALORES LIMITADA</option>
+<option value=96524180>SANTIAGO CORREDORES DE BOLSA LIMITADA</option>
+<option value=96568550>SCOTIA CORREDORA DE BOLSA CHILE LIMITADA</option>
+<option value=96535720>SCOTIA CORREDORA DE BOLSA CHILE LIMITADA</option>
+<option value=87733300>SERGIO CONTRERAS Y COMPAÑIA LIMITADA, CORREDORES DE BOLSA</option>
+<option value=76013298>STEINSAPIR AGENCIA DE VALORES S.A.</option>
+<option value=76245069>STF CAPITAL CORREDORES DE BOLSA SPA</option>
+<option value=92071000>SURANDINAS AGENTE DE VALORES S.A.</option>
+<option value=80962600>TANNER CORREDORES DE BOLSA S.A.</option>
+<option value=76121415>TOESCA AGENCIA DE VALORES SPA</option>
+<option value=76176690>TRADITION CHILE AGENTES DE VALORES LIMITADA</option>
+<option value=96901660>TRANSAMAS AGENTE DE VALORES S.A.</option>
+<option value=94791000>TRANSFERENCIA DE VALORES S.A. AGENTE DE VALORES</option>
+<option value=85544000>UGARTE Y COMPAÑIA CORREDORES DE BOLSA S.A.</option>
+<option value=96527210>VALENZUELA LAFOURCADE S.A. CORREDORES DE BOLSA</option>
+<option value=96515580>VALORES SECURITY S.A., CORREDORES DE BOLSA</option>
+<option value=76547150>VANTRUST CAPITAL CORREDORES DE BOLSA S.A.</option>
+<option value=76513680>VECTOR CAPITAL CORREDORES DE BOLSA SPA</option>
+<option value=76389549>VECTORGLOBAL WMG  AGENCIA DE VALORES SPA</option>
+<option value=78368270>VMF AGENTES DE VALORES LIMITADA</option>
+<option value=76690832>XTB AGENTE DE VALORES SPA</option>
+<option value=85598800>YRARRAZAVAL Y COMPAÑIA, CORREDORES DE BOLSA LIMITADA</option>
+<option value=96960160>ZURICH AGENTE DE VALORES S.A.</option>
+<option value=76020595>ZURICH CORREDORA DE BOLSA S.A.</option>
+</select></td>
+<tr><td> </td><td><input type="button" onclick="window.location='intermediarios_indicadoresfinancieros_index.php?auth=&send=&lang=es&control=Berlin36&tiposociedad=&vigente=1'" value="Vigentes">
+<input type="button" onclick="window.location='intermediarios_indicadoresfinancieros_index.php?auth=&send=&lang=es&control=Berlin36&vigente=2'" value="No vigentes">
+<input type="button" onclick="window.location='intermediarios_indicadoresfinancieros_index.php?auth=&send=&lang=es&control=Berlin36&vigente='" value="Todos"></td>
+</tr>
+<tr>
+<td class="form_consulta">Serie de indicadores</td>
+<td><select id="estimado" name="estimado" size="1" class="select_svs_mult" onChange="cambia_meses();">
+<option value="4" selected>Trimestral IFRS desde Diciembre 2010</option>
+<option value="1">Trimestral hasta Diciembre 2010</option>
+<option value="2">Estimado mensual</option>
+<option value="3">Información diaria</option>
+</select> 
+</td></tr>
+<tr>
+<td class="form_consulta">Fecha</td>
+<td><table><tr><td>
+<select id="dia1" name="dia1" size="1" class="select_svs_mult" disabled>
+<option value="0" selected>Día</option>
+<option value="01">1</option>
+<option value="02">2</option>
+<option value="03">3</option>
+<option value="04">4</option>
+<option value="05">5</option>
+<option value="06">6</option>
+<option value="07">7</option>
+<option value="08">8</option>
+<option value="09">9</option>
+<option value="10">10</option>
+<option value="11">11</option>
+<option value="12">12</option>
+<option value="13">13</option>
+<option value="14">14</option>
+<option value="15">15</option>
+<option value="16">16</option>
+<option value="17">17</option>
+<option value="18">18</option>
+<option value="19">19</option>
+<option value="20">20</option>
+<option value="21">21</option>
+<option value="22">22</option>
+<option value="23">23</option>
+<option value="24">24</option>
+<option value="25">25</option>
+<option value="26">26</option>
+<option value="27">27</option>
+<option value="28">28</option>
+<option value="29">29</option>
+<option value="30">30</option>
+<option value="31">31</option>
+</select><select name="mes1" size="1" class="select_svs_mult">
+<option value="0" selected>Mes</option>
+</select> 
+ <select name="anno1" size="1" class="select_svs_mult">
+<option value="0" selected>Año</option>
+</select>
+</td><td><span id="selefecha2"> hasta:  <select id="dia2" name="dia2" size="1" class="select_svs_mult" disable>
+<option value="0" selected>Día</option>
+<option value="01">1</option>
+<option value="02">2</option>
+<option value="03">3</option>
+<option value="04">4</option>
+<option value="05">5</option>
+<option value="06">6</option>
+<option value="07">7</option>
+<option value="08">8</option>
+<option value="09">9</option>
+<option value="10">10</option>
+<option value="11">11</option>
+<option value="12">12</option>
+<option value="13">13</option>
+<option value="14">14</option>
+<option value="15">15</option>
+<option value="16">16</option>
+<option value="17">17</option>
+<option value="18">18</option>
+<option value="19">19</option>
+<option value="20">20</option>
+<option value="21">21</option>
+<option value="22">22</option>
+<option value="23">23</option>
+<option value="24">24</option>
+<option value="25">25</option>
+<option value="26">26</option>
+<option value="27">27</option>
+<option value="28">28</option>
+<option value="29">29</option>
+<option value="30">30</option>
+<option value="31">31</option>
+</select> <select name="mes2" size="1" class="select_svs_mult">
+<option value="0" selected>Mes</option>
+</select> 
+<input type="hidden" value=0 name="cuenta">
+<input type="hidden" value=0 name="ag">
+ <select name="anno2" size="1" class="select_svs_mult">
+<option value="0">Año</option>
+</select></span>
+</td></tr></table></td></tr>
+<tr>
+<td> </td>
+<td><input type="submit" name="imageField" title="Consultar" value=Consultar></td>
+</tr>
+</table>
+<input type="hidden" name="xls" value="n">
+</form>
+<!-- ... resto recortado ... -->
+_recuadros_documentos_descargar::7631:Template para los recuadros que permiten descargar archivos o recursos del eidox.--><!--loc('* Template reutilizable')--><!--end-box--><!--end-box--><!--end-box--></body><!--
+    fecha = 2026-06-30T17:58:29.712-04:00
+    aid   = 15095
+    lid   = 1284--></html>
