@@ -2,7 +2,7 @@
 import * as z from "zod/v4";
 import { empresaArraySchema, historialSchema, globalesSchema, paginadoSchema, filasSchema } from "../util/schemas-output.js";
 import { getLegacy, postLegacy, postLegacyBinario, getLegacyBinario, fetchCmf, fetchCmfBinario, getLegacyConCookies, type CmfEnv } from "../client/cmf-client.js";
-import { gridGoogleVisAJson, htmlTablaAJson, xlsAJson, fechaLegacy, fechaLegacyCompleta, fixMojibake, txtCsvAJson } from "../client/parsers.js";
+import { htmlTablaAJson, xlsAJson, fechaLegacy, fechaLegacyCompleta, fixMojibake, txtCsvAJson } from "../client/parsers.js";
 import { pedirCaptchaCMF, obtenerCaptcha, ultimoCaptcha, consumirCaptcha } from "../captcha.js";
 import { fromError, toolOk, toolError, toolErrorFuente, sinDatosOFuente, resumirTabla, paginarTexto } from "../util/errors.js";
 import { paginar } from "../util/paginate.js";
@@ -53,6 +53,39 @@ const OPERACIONES_DE_CAPITAL = {
   canje: { path: "/institucional/estadisticas/acc_canje1.php", titulo: "Canjes", plural: "canjes" },
   liberadas: { path: "/institucional/estadisticas/acc_liberadaspago1.php", titulo: "Liberadas", plural: "acciones liberadas" },
 } as const;
+
+/**
+ * El campo rango_fechas del formulario de liquidez, tal como lo arma su
+ * JavaScript. cada día del rango como AAAAMMDD% pegado, con tope de 31 días.
+ * Devuelve el mensaje de error cuando el rango no cabe.
+ */
+function rangoFechasLiquidez(inicio: Date, fin: Date): { rango: string } | { error: string } {
+  const dias = Math.round((fin.getTime() - inicio.getTime()) / 86_400_000);
+  if (dias < 0 || dias > 31) {
+    return { error: `El rango va de ${dias} días y el formulario de la CMF acepta entre 0 y 31. Pida tramos de un mes.` };
+  }
+  const rango = Array.from({ length: dias + 1 }, (_, i) => {
+    const d = new Date(inicio.getTime() + i * 86_400_000);
+    return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(d.getUTCDate()).padStart(2, "0")}%`;
+  }).join("");
+  return { rango };
+}
+
+/**
+ * La CMF arma UNA tabla por día, con una primera fila de título
+ * «Fecha: dd/mm/aaaa» en un th que abarca las 5 columnas y recién después
+ * la cabecera real. Se saca esa fecha y se pega a cada fila.
+ */
+function filasDeLiquidez(html: string): Record<string, string>[] {
+  const filas: Record<string, string>[] = [];
+  for (const tabla of html.match(/<table[\s\S]*?<\/table>/gi) ?? []) {
+    const fecha = /Fecha:\s*([0-9/]+)/.exec(tabla)?.[1];
+    if (!fecha) continue;
+    const sinTitulo = tabla.replace(/<tr>\s*<th[^>]*colspan[\s\S]*?<\/tr>/i, "");
+    for (const f of htmlTablaAJson(sinTitulo)) filas.push({ fecha, ...f });
+  }
+  return filas;
+}
 
 /** Compara sin acentos ni mayúsculas, como escribe una persona un nombre. */
 function contieneTexto(texto: string, buscado: string): boolean {
@@ -706,16 +739,32 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: empresaArraySchema("productos"),
       title: "Registro de productos",
       description:
-        "Devuelve el registro de productos inscritos de una entidad ante la CMF: valores, cuotas y series. Identifique la entidad por rut (numérico; se acepta con o sin DV, ej: 61808000). Use esta tool para ver qué instrumentos tiene inscritos una entidad; para identificarla primero use cmf_buscar_entidad. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Devuelve los títulos de deuda inscritos por un emisor ante la CMF (pestaña 'Inscripción títulos de deuda' de su ficha), con una fila por documento de cada inscripción: número de inscripción, fecha, tipo de documento (acta de directorio, certificado de clasificación de riesgo, prospecto, entre otros) y enlace al archivo. Identifique la entidad por rut (numérico; se acepta con o sin DV, ej: 90690000). Use esta tool para ver qué bonos y efectos de comercio tiene inscritos un emisor; para identificarlo primero use cmf_buscar_entidad, y para los prospectos de bonos use la pestaña 42 con cmf_empresa_info. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({ rut: rutSchema, ...paginacion(200) }),
     },
     async ({ rut, offset, limit }) => {
       try {
-        const html = await getLegacy(fichaUrl(rut, 31), {}, env);
-        const filas = htmlTablaAJson(html);
+        // La pestaña 31 que se leía antes no pertenece a la ficha del emisor.
+        // la CMF respondía el padrón de la Bolsa de Productos (maíz, trigo,
+        // vino) para cualquier RUT, 471 filas idénticas. La pestaña 100 sí es
+        // del emisor. Su tabla trae el número de inscripción en una fila sola
+        // y los documentos debajo, así que el número se arrastra a cada uno.
+        const html = await getLegacy(fichaUrl(rut, 100), {}, env);
+        const crudas = htmlTablaAJson(html);
+        const colNumero = Object.keys(crudas[0] ?? {})[0] ?? "N° Inscripción";
+        let inscripcion = "";
+        const filas: Record<string, string>[] = [];
+        for (const f of crudas) {
+          const valores = Object.entries(f).filter(([k]) => k !== colNumero && k !== "url").map(([, v]) => v);
+          if (valores.every((v) => v === "")) {
+            inscripcion = f[colNumero].replace(/^-\s*/, "");
+            continue;
+          }
+          filas.push({ ...f, [colNumero]: inscripcion });
+        }
         const texto = filas.length
-          ? `Registro de productos ${rut} (${filas.length}):\n${resumirTabla(filas, Object.keys(filas[0]).slice(0, 6))}`
-          : `Sin productos registrados para ${rut}.`;
+          ? `Títulos de deuda inscritos ${rut} (${filas.length} documentos):\n${resumirTabla(filas, Object.keys(filas[0]).slice(0, 6))}`
+          : `Sin títulos de deuda inscritos para ${rut}.`;
         return toolOkPaginado(texto, { rut }, "productos", filas, offset, limit, "cmf_empresa_registro_productos");
       } catch (e) {
         return fromError(e);
@@ -1566,36 +1615,43 @@ export function registrarToolsEmpresas(server: McpServer, env: CmfEnv): void {
       outputSchema: filasSchema,
       title: "Índices de liquidez/solvencia de intermediarios",
       description:
-        "Devuelve los índices de liquidez y solvencia de los intermediarios de valores. Filtre opcionalmente por intermediario (texto libre; default todos) y por rango desde/hasta en YYYY-MM-DD (default 01/01/2024 a 31/12/2026). Use esta tool para monitorear la salud financiera de intermediarios; para sus EEFF use cmf_intermediarios_eeff_ifrs. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
+        "Devuelve los índices diarios de liquidez y solvencia de los intermediarios de valores, con una fila por intermediario y día. Filtre por intermediario (TODOS, COBOL = todos los corredores de bolsa, AGVAL = todos los agentes de valores, o el código de uno; default TODOS) y por rango desde/hasta en YYYY-MM-DD de a lo más 31 días, que es el tope del formulario de la CMF (default: los últimos 7 días). Use esta tool para monitorear la salud financiera de intermediarios; para sus EEFF use cmf_intermediarios_eeff_ifrs. Las filas vienen paginadas. usa offset y limit para recorrerlas todas, porque la respuesta trae total y next_offset.",
       inputSchema: z.object({
-        intermediario: z.string().optional().describe("Nombre o código del intermediario (texto libre, opcional; default todos)"),
-        desde: fechaSchema.optional(),
-        hasta: fechaSchema.optional(), ...paginacion(300) }),
+        intermediario: z.string().default("TODOS").describe("TODOS, COBOL (corredores), AGVAL (agentes) o el código de un intermediario"),
+        desde: fechaSchema.optional().describe("Inicio del rango en YYYY-MM-DD (default: hace 7 días)"),
+        hasta: fechaSchema.optional().describe("Fin del rango en YYYY-MM-DD (default: hoy; a lo más 31 días desde el inicio)"), ...paginacion(300) }),
     },
     async ({ intermediario, desde, hasta, offset, limit }) => {
       try {
-        const f1 = desde ? fechaLegacy(desde) : { dd: "01", mm: "01", aa: "2024" };
-        const f2 = hasta ? fechaLegacy(hasta) : { dd: "31", mm: "12", aa: "2026" };
+        // El formulario de la CMF no usa las fechas sueltas. su JavaScript
+        // arma rango_fechas con cada día del rango como AAAAMMDD% pegado, y
+        // rechaza rangos de más de 31 días. Acá se hace lo mismo.
+        const fin = hasta ? new Date(`${hasta}T12:00:00Z`) : new Date();
+        const inicio = desde ? new Date(`${desde}T12:00:00Z`) : new Date(fin.getTime() - 7 * 86_400_000);
+        const rango = rangoFechasLiquidez(inicio, fin);
+        if ("error" in rango) return toolError(rango.error);
+        const f1 = fechaLegacy(inicio.toISOString().slice(0, 10));
+        const f2 = fechaLegacy(fin.toISOString().slice(0, 10));
         const html = await getLegacy(
           "/institucional/mercados/liquidez.php",
           {
-            sel_inter: intermediario ?? "0",
-            rango_fechas: "0",
+            sel_inter: intermediario,
+            rango_fechas: rango.rango,
             dd_ini: f1.dd,
             mm_ini: f1.mm,
             aaaa_ini: f1.aa,
             dd_fin: f2.dd,
             mm_fin: f2.mm,
             aaaa_fin: f2.aa,
-            consulta: "Buscar",
+            consulta: "1",
           },
           env,
         );
-        const filas = htmlTablaAJson(html);
+        const filas = filasDeLiquidez(html);
         return toolOkTabla({
-          titulo: `Índices liquidez/solvencia`,
-          vacio: "Sin índices.",
-          base: {  },
+          titulo: `Índices liquidez/solvencia ${intermediario} ${inicio.toISOString().slice(0, 10)} → ${fin.toISOString().slice(0, 10)}`,
+          vacio: "Sin índices para ese intermediario y ese rango.",
+          base: { intermediario, desde: inicio.toISOString().slice(0, 10), hasta: fin.toISOString().slice(0, 10) },
           campo: "filas",
           filas,
           offset,

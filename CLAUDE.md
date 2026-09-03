@@ -423,6 +423,20 @@ encuentra balanceando llaves, y los nombres reservados nacen ocupados en `claveU
 está en `test/grid-formulario.test.ts`. La regla del estándar se confirma. antes de integrar
 un lote al trunk, un escéptico que lea SOLO el diff.
 
+**20. Una tool que ignora su parámetro principal se descubre comparando 2 entradas (2 de
+septiembre de 2026).** Qué falló. `cmf_empresa_registro_productos` devolvía las mismas 471
+filas para Copec y para Colbún (maíz, trigo, vino), y `cmf_liquidez_intermediarios` aceptaba
+un rango de 2024 y respondía con el corte de hoy. Causa raíz. La pestaña 31 no existe en la
+ficha de un emisor (la lista de pestañas está en los enlaces `pestania=N` de la propia ficha),
+así que la CMF respondía una página genérica, el padrón de la Bolsa de Productos. Y el
+formulario de liquidez no usa las fechas sueltas. su JavaScript arma `rango_fechas` pegando
+cada día del rango como `AAAAMMDD%`, con tope de 31 días, y `sel_inter` vale TODOS, COBOL,
+AGVAL o un código, nunca 0. Prescripción. La tool de productos lee la pestaña 100, «Inscripción
+títulos de deuda», y arrastra el número de inscripción a cada documento. La de liquidez arma
+`rango_fechas` como el JavaScript y rechaza con error los rangos de más de 31 días. Y como
+regla de prueba. toda tool con un parámetro que selecciona (RUT, fecha, código) se prueba con
+2 valores distintos y se compara la respuesta; si sale igual, el parámetro no llega.
+
 ## Gotchas
 
 - **La fuente se cae, y eso no es un defecto tuyo.** El servlet BaseDato devuelve a veces el

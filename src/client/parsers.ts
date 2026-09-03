@@ -416,34 +416,6 @@ export function xlsAJson(bytes: ArrayBuffer | Uint8Array): Record<string, unknow
   return out;
 }
 
-/** Extrae el JSON de Google Visualization (grid fondos_ifrs FI): formato {c:[{v,f}]}. */
-export function gridGoogleVisAJson(html: string): {
-  columnas: string[];
-  filas: Record<string, string>[];
-} {
-  const re = /google\.visualization\.arrayToDataTable\(([\s\S]*?)\);/;
-  const m = html.match(re);
-  if (!m) return { columnas: [], filas: [] };
-  try {
-    const data = JSON.parse(m[1].replace(/'/g, '"').replace(/(\w+):/g, '"$1":'));
-    if (!Array.isArray(data) || data.length === 0) return { columnas: [], filas: [] };
-    const columnas = (data[0] as string[]).map((c) => decodificarEntidades(c));
-    const filas = (data.slice(1) as unknown[][]).map((fila) => {
-      const obj: Record<string, string> = {};
-      columnas.forEach((c, i) => {
-        const v = fila[i];
-        if (Array.isArray(v)) obj[c] = String(v[0] ?? "");
-        else if (v && typeof v === "object") obj[c] = String((v as { v?: unknown }).v ?? "");
-        else obj[c] = String(v ?? "");
-      });
-      return obj;
-    });
-    return { columnas, filas };
-  } catch {
-    return { columnas: [], filas: [] };
-  }
-}
-
 /**
  * Convierte el literal JavaScript de un objeto (claves sin comillas, strings
  * con comilla simple y escapes `\'`) al JSON equivalente. Es un recorrido

@@ -273,6 +273,51 @@ test("cmf_empresa_juntas: envía los códigos de junta y documento que la ficha 
   }
 });
 
+// ---------- parámetros que la CMF sí exige ----------
+
+test("cmf_empresa_registro_productos: lee la pestaña 100 del emisor y arrastra el número de inscripción a cada documento", async () => {
+  // La pestaña 31 no es del emisor. la CMF devolvía el padrón de la Bolsa de
+  // Productos, 471 filas iguales para Copec y para Colbún.
+  const mock = conFetchPorUrl([{ si: () => true, body: leer("entidad-titulos-deuda-copec-100.html") }]);
+  try {
+    const client = await clienteConectado();
+    const r = await client.callTool({ name: "cmf_empresa_registro_productos", arguments: { rut: "90690000" } });
+    assert.equal(r.isError ?? false, false);
+    assert.ok(mock.llamadas[0].url.includes("pestania=100"), mock.llamadas[0].url);
+    const sc = r.structuredContent as { productos: Array<Record<string, string>>; total: number };
+    assert.ok(sc.total >= 4);
+    for (const p of sc.productos) {
+      assert.equal(Object.values(p)[0], "1186", JSON.stringify(p));
+      assert.match(p.url, /ver_sgd\.php/);
+    }
+  } finally {
+    mock.restaurar();
+  }
+});
+
+test("cmf_liquidez_intermediarios: arma rango_fechas con cada día del rango, como el JavaScript del formulario", async () => {
+  const mock = conFetchPorUrl([{ si: () => true, body: leer("liquidez-cobol-2024-03.html") }]);
+  try {
+    const client = await clienteConectado();
+    const r = await client.callTool({ name: "cmf_liquidez_intermediarios", arguments: { desde: "2024-03-01", hasta: "2024-03-04", intermediario: "COBOL" } });
+    const url = decodeURIComponent(mock.llamadas[0].url);
+    assert.ok(url.includes("rango_fechas=20240301%20240302%20240303%20240304%"), url);
+    assert.ok(url.includes("sel_inter=COBOL") && url.includes("consulta=1"), url);
+    // Una tabla por día. la fecha del título viaja en cada fila y la
+    // cabecera real da las columnas.
+    const sc = r.structuredContent as { filas: Array<Record<string, string>>; total: number };
+    assert.equal(sc.total, 3);
+    assert.equal(sc.filas[0].fecha, "01/03/2024");
+    assert.equal(sc.filas[0].Intermediario, "BANCHILE CORREDORES DE BOLSA S.A.");
+    assert.equal(sc.filas[0]["Liq. General (veces)"], "1,25");
+    assert.equal(sc.filas[2].fecha, "04/03/2024");
+    const largo = await client.callTool({ name: "cmf_liquidez_intermediarios", arguments: { desde: "2024-01-01", hasta: "2024-12-31" } });
+    assert.equal(largo.isError, true, "más de 31 días tiene que ser un error dicho, no un cero mudo");
+  } finally {
+    mock.restaurar();
+  }
+});
+
 // ---------- comprobación de clase ----------
 
 const DIR = join(import.meta.dirname, "..", "src", "tools");
