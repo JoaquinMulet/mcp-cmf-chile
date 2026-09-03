@@ -473,6 +473,17 @@ XLS dejó como filas. Lo vigila `test/cabeceras.test.ts`. La regla de prueba. el
 dice la tool se compara con las filas que una persona cuenta en la página; si difieren en 1
 o 2, hay una cabecera o una nota contando como dato.
 
+**23. Cuando la fuente no filtra, el servidor filtra en local y lo dice (2 de septiembre de
+2026).** Qué falló. Para encontrar una sociedad entre 261 tomas de control o un fondo entre
+28.971 filas de cartera había que paginar, porque la página de la CMF no tiene ningún filtro.
+Prescripción. `filtrarFilas` y `filtrosLocales` de `src/util/filtros.ts`. texto (sin acentos
+ni mayúsculas) y desde/hasta sobre el primer campo que parezca fecha, aplicados DESPUÉS de
+bajar la tabla entera, con el total de las filas que cumplen. La descripción de cada tool
+dice que el filtro es del servidor y no de la CMF, porque el costo de red es el mismo con o
+sin filtro. Y el patrimonio de los fondos mutuos. la columna Moneda ya viajaba en la
+planilla pero el texto no la mostraba, y sin ella sumar Patrimonio mezcla pesos con dólares;
+ahora está entre las columnas visibles y la descripción lo advierte.
+
 ## Gotchas
 
 - **La fuente se cae, y eso no es un defecto tuyo.** El servlet BaseDato devuelve a veces el

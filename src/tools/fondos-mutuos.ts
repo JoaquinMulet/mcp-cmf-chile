@@ -7,6 +7,7 @@ import { xlsAJson, txtCsvAJson, htmlTablaAJson, separarNotas, separarTotales } f
 import { fromError, toolError, toolErrorFuente, toolOk, resumirTabla } from "../util/errors.js";
 import { paginar } from "../util/paginate.js";
 import { avisoDeTramo, paginacion, toolOkTabla } from "../util/tramos.js";
+import { filtrosLocales, filtrarFilas } from "../util/filtros.js";
 import {
   anioSchema, carteraSchema, fechaSchema, mesSchema, offsetSchema, limitSchema, codigoSchema, enumTolerante } from "../util/schemas.js";
 
@@ -160,17 +161,18 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
         anio: anioSchema,
         mes: mesSchema,
         cartera: carteraSchema,
+        texto: filtrosLocales.texto.describe("Se queda con las filas donde algún campo contiene este texto, por ejemplo el RUN del fondo o el nombre del instrumento. La CMF entrega la cartera del mes entera (unas 30.000 filas) sin filtro propio; este se aplica en el servidor"),
         ...paginacion(50),
       }),
     },
-    async ({ anio, mes, cartera , offset, limit }) => {
+    async ({ anio, mes, cartera, texto, offset, limit }) => {
       try {
         const res = await postLegacy(
           "/institucional/estadisticas/ffm_download.php",
           { aa: anio, mm: mes, cartera, enviar: "", btnConsulta: "GENERAR ARCHIVO" },
           env,
         );
-        const filas = txtCsvAJson(res);
+        const filas = filtrarFilas(txtCsvAJson(res), { texto });
         return toolOkTabla({
           titulo: `Cartera ${cartera} ${anio}-${mes}`,
           vacio: `Sin cartera ${cartera} para ${anio}-${mes}.`,
@@ -290,7 +292,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
       outputSchema: fondosSchema("filas"),
       title: "Patrimonio, rentabilidad y partícipes de FM",
       description:
-        "Descarga el Boletín de Patrimonio y Rentabilidad (BPR) de fondos mutuos de la CMF: patrimonio, variación, rentabilidad nominal mensual, número de partícipes y valor cuota por serie. Filtre por anio en AAAA, mes en MM (default 12) y admin (RUT de administradora; omitir = todas). Use esta tool para datos por serie; para el agregado del sistema use cmf_fondos_mutuos_antecedentes. La respuesta trae total y next_offset; sube limit, que no tiene máximo, para traer todas las filas de una vez. El significado de los codigos de tipo de fondo esta en el recurso cmf://fondos-mutuos/tipos. Las cifras NO vienen en pesos: la unidad esta en el recurso cmf://fondos-mutuos/tipos y el pie exacto de la planilla viaja en el campo notas de la respuesta.",
+        "Descarga el Boletín de Patrimonio y Rentabilidad (BPR) de fondos mutuos de la CMF: patrimonio, variación, rentabilidad nominal mensual, número de partícipes y valor cuota por serie. Filtre por anio en AAAA, mes en MM (default 12) y admin (RUT de administradora; omitir = todas). Use esta tool para datos por serie; para el agregado del sistema use cmf_fondos_mutuos_antecedentes. La respuesta trae total y next_offset; sube limit, que no tiene máximo, para traer todas las filas de una vez. El significado de los codigos de tipo de fondo esta en el recurso cmf://fondos-mutuos/tipos. Las cifras NO vienen en pesos: el Patrimonio va en millones de la moneda que dice la columna Moneda de cada fila (pesos, dólares o euros), así que sumar la columna sin convertir mezcla monedas; solo la fila Total Sistema, que viaja aparte en totales, viene convertida a moneda nacional al tipo de cambio que declara el pie. La unidad esta en el recurso cmf://fondos-mutuos/tipos y el pie exacto de la planilla viaja en el campo notas de la respuesta.",
       inputSchema: z.object({
         anio: anioSchema,
         mes: mesSchema.optional(),
@@ -323,7 +325,7 @@ export function registrarToolsFondosMutuos(server: McpServer, env: CmfEnv): void
           // leen en pantalla. `Patrimonio (1)` lleva su llamada al pie y
           // `Participes` viene sin tilde. `Nombre` es la primera columna, que
           // la planilla deja sin cabecera.
-          columnas: ["Nombre", "RUN", "Serie de fondo", "Patrimonio (1)", "Valor cuota", "Participes", "Rentabilidad nominal mensual"],
+          columnas: ["Nombre", "RUN", "Serie de fondo", "Moneda", "Patrimonio (1)", "Valor cuota", "Participes", "Rentabilidad nominal mensual"],
           unidad: "series",
         });
       } catch (e) {
