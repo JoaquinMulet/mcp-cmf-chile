@@ -37,7 +37,7 @@
   "dependencies": {
     "@firecrawl/pdf-inspector-wasm": "^1.17.0",
     "@modelcontextprotocol/server": "2.0.0",
-    "agents": "0.21.0",
+    "agents": "0.22.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^4.4.3"
   },
