@@ -25,10 +25,13 @@ test("5 llamadas simultáneas al mismo host salen separadas por el mínimo", asy
       [1, 2, 3, 4, 5].map((i) => fetchCmf(`https://www.cmfchile.cl/institucional/estadisticas/x${i}.php`, {}, env)),
     );
     tiempos.sort((a, b) => a - b);
-    const brechas = tiempos.slice(1).map((t, i) => t - tiempos[i]);
-    // El temporizador puede adelantarse 1 o 2 ms; lo que no puede pasar es
-    // una brecha de 7 ms.
-    assert.ok(brechas.every((b) => b >= 100), `brechas en ms. ${brechas.join(", ")}`);
+    // Se mide desde la PRIMERA llamada, no entre vecinas. Con la máquina
+    // cargada 2 temporizadores vencidos disparan seguidos (brecha de 1 ms) y
+    // la prueba salía roja sin que el limitador fallara (14 de septiembre de
+    // 2026, en el pre-push). Lo que no puede pasar es que la llamada i salga
+    // antes de i × 120 ms desde la primera; la carga solo la puede atrasar.
+    const desde = tiempos.map((t) => t - tiempos[0]);
+    assert.ok(desde.every((d, i) => d >= i * 120 - 5), `desde la primera, en ms. ${desde.join(", ")}`);
   } finally {
     globalThis.fetch = original;
   }

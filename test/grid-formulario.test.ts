@@ -145,7 +145,9 @@ test("enviarFormularioLegacy: una respuesta 5xx del índice no se cachea", async
     return new Response(leer("seg_gen_fecu1-todas-2024-12.html"), { status: 200 });
   }) as typeof fetch;
   try {
-    await assert.rejects(enviarFormularioLegacy({ indice, cuerpo: {} }, ENV), /formulario/);
+    // Desde el 14 de septiembre de 2026 el 5xx sube desde el cliente con su
+    // estado HTTP (CmfUpstreamError), antes de llegar al parser del formulario.
+    await assert.rejects(enviarFormularioLegacy({ indice, cuerpo: {} }, ENV), /HTTP 503|formulario/);
     const html = await enviarFormularioLegacy({ indice, cuerpo: {} }, ENV);
     assert.ok(html.includes("var dataAsJson"), "la segunda llamada tiene que volver a pedir el índice y funcionar");
   } finally {

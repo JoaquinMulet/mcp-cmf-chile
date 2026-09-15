@@ -207,7 +207,15 @@ async function main() {
   for (const [name, def] of Object.entries(TOOLS)) {
     const t0 = Date.now();
     try {
-      const res = await client.callTool({ name, arguments: def.args as Record<string, unknown> }, { timeout: 300_000 });
+      let res = await client.callTool({ name, arguments: def.args as Record<string, unknown> }, { timeout: 300_000 });
+      // Un corte de RED no es un veredicto sobre la tool. El 14 de septiembre de
+      // 2026 el pre-push cayó 3 veces seguidas, cada vez en un endpoint distinto
+      // (antecedentes, costos, 3 con «operation aborted»), y al repetir pasaban.
+      // Se reintenta UNA vez tras 5 s; solo el segundo corte cuenta como fallo.
+      if (res.isError && /fetch failed|operation was aborted/i.test(res.content?.[0]?.text ?? "")) {
+        await new Promise((r) => setTimeout(r, 5_000));
+        res = await client.callTool({ name, arguments: def.args as Record<string, unknown> }, { timeout: 300_000 });
+      }
       const ms = Date.now() - t0;
       const sc = (res as { structuredContent?: unknown }).structuredContent as Record<string, unknown> | undefined;
       const texto = res.content?.[0]?.text ?? "";
