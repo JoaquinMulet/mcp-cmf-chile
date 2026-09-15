@@ -160,6 +160,45 @@ export async function fetchCmf(
     : new Error("Fallo de red hacia la CMF");
 }
 
+/**
+ * La CMF respondió, pero no con datos: 4xx, 5xx o la página «Attack ID» del
+ * cortafuegos F5. Hasta el 14 de septiembre de 2026 estas páginas seguían
+ * al parser y salían como «sin datos» o «Sin ZIP», y el cliente quemaba sus
+ * intentos contra un origen que lo estaba rechazando. El estado HTTP se
+ * lleva en el error para que quien llama distinga bloqueo de dato ausente.
+ */
+export class CmfUpstreamError extends Error {
+  constructor(
+    readonly status: number,
+    readonly host: string,
+    readonly motivo: "http" | "cortafuegos" | "no_binario",
+  ) {
+    super(
+      motivo === "cortafuegos"
+        ? `La CMF (${host}) devolvió la página del cortafuegos (HTTP ${status}, «Attack ID»): bloqueo, no ausencia de datos`
+        : motivo === "no_binario"
+          ? `La CMF (${host}) devolvió una página HTML donde iba un documento (HTTP ${status}): bloqueo o error, no ausencia de datos`
+          : `La CMF (${host}) respondió HTTP ${status} en vez de datos: bloqueo o caída, no ausencia de datos`,
+    );
+    this.name = "CmfUpstreamError";
+  }
+}
+
+const MARCA_CORTAFUEGOS = /Attack ID|The requested URL was rejected/i;
+
+/** Lanza CmfUpstreamError si la respuesta no es datos; deja una línea en los logs del Worker. */
+function exigirRespuestaUtil(res: Response, url: string, texto?: string): void {
+  const host = new URL(url).hostname;
+  const cortafuegos = texto !== undefined && MARCA_CORTAFUEGOS.test(texto.slice(0, 4000));
+  if (res.ok && !cortafuegos) return;
+  console.warn(
+    JSON.stringify({
+      cmf_upstream: { host, status: res.status, cortafuegos, ruta: new URL(url).pathname, inicio: (texto ?? "").slice(0, 160) },
+    }),
+  );
+  throw new CmfUpstreamError(res.status, host, cortafuegos ? "cortafuegos" : "http");
+}
+
 /** Decodifica el body de una respuesta legacy: UTF-8 si es válido, si no windows-1252. */
 function decodificarBody(bytes: ArrayBuffer): string {
   try {
@@ -188,9 +227,8 @@ export async function getLegacy(
   const res = await fetchCmf(url, {}, env);
   const bytes = await res.arrayBuffer();
   const texto = decodificarBody(bytes);
-  // Una página de error 5xx cacheada deja la tool muerta todo el TTL aunque
-  // la CMF ya se haya recuperado. Solo se guarda lo que respondió bien.
-  if (cacheClave && res.ok) cacheHttp.set(cacheClave, texto, config(env).cacheTtlS * 1000);
+  exigirRespuestaUtil(res, url, texto);
+  if (cacheClave) cacheHttp.set(cacheClave, texto, config(env).cacheTtlS * 1000);
   return texto;
 }
 
@@ -259,7 +297,9 @@ export async function postLegacy(
     env,
   );
   const bytes = await res.arrayBuffer();
-  return decodificarBody(bytes);
+  const texto = decodificarBody(bytes);
+  exigirRespuestaUtil(res, url, texto);
+  return texto;
 }
 
 /**
@@ -329,6 +369,7 @@ export async function getLegacyBinario(
   }
   const url = `https://www.cmfchile.cl${path}${qs.size ? `?${qs}` : ""}`;
   const res = await fetchCmf(url, {}, env);
+  exigirRespuestaUtil(res, url);
   return new Uint8Array(await res.arrayBuffer());
 }
 
@@ -359,6 +400,7 @@ export async function postLegacyBinario(
     },
     env,
   );
+  exigirRespuestaUtil(res, url);
   return new Uint8Array(await res.arrayBuffer());
 }
 export async function apiV3<T = unknown>(
@@ -395,8 +437,19 @@ export async function apiV3<T = unknown>(
 /** Lee un resource cmf:// (imagen/documento) con validación de host. */
 export async function fetchCmfBinario(url: string, env: CmfEnv = {}): Promise<{ bytes: Uint8Array; contentType: string }> {
   const res = await fetchCmf(url, {}, env);
+  exigirRespuestaUtil(res, url);
   const buf = await res.arrayBuffer();
   return { bytes: new Uint8Array(buf), contentType: res.headers.get("Content-Type") ?? "application/octet-stream" };
+}
+
+/** Un documento que llega como HTML es una página de error o de bloqueo, no el documento. */
+function exigirBinario(res: Response, url: string, bytes: Uint8Array): void {
+  const contentType = res.headers.get("Content-Type") ?? "";
+  const inicio = new TextDecoder("utf-8", { fatal: false }).decode(bytes.slice(0, 512));
+  if (!/text\/html/i.test(contentType) && !/^\s*<(!doctype|html)/i.test(inicio)) return;
+  const host = new URL(url).hostname;
+  console.warn(JSON.stringify({ cmf_upstream: { host, status: res.status, no_binario: true, ruta: new URL(url).pathname, inicio: inicio.slice(0, 160) } }));
+  throw new CmfUpstreamError(res.status, host, MARCA_CORTAFUEGOS.test(inicio) ? "cortafuegos" : "no_binario");
 }
 
 /** Descarga binaria con caché LRU por clave (para paquetes: re-descargas sin golpear a la CMF). */
@@ -408,9 +461,14 @@ export async function fetchCmfBinarioCached(
   const cacheado = cacheBinario.get(cacheClave);
   if (cacheado) return { bytes: cacheado.bytes, contentType: cacheado.contentType };
   const res = await fetchCmf(url, {}, env);
+  exigirRespuestaUtil(res, url);
   const buf = await res.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  // Antes se cacheaba sin mirar el estado: una página de error quedaba 15
+  // minutos como si fuera el PDF.
+  exigirBinario(res, url, bytes);
   const contentType = res.headers.get("Content-Type") ?? "application/octet-stream";
-  cacheBinario.set(cacheClave, { bytes: new Uint8Array(buf), contentType }, config(env).cacheTtlS * 1000);
-  return { bytes: new Uint8Array(buf), contentType };
+  cacheBinario.set(cacheClave, { bytes, contentType }, config(env).cacheTtlS * 1000);
+  return { bytes, contentType };
 }
 
