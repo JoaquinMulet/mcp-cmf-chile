@@ -3,6 +3,7 @@
  * 6 páginas de cronologiabancaria.cmfchile.cl, bajadas el 3 de septiembre
  * de 2026 y sin cambios adentro.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

@@ -1,6 +1,7 @@
 /**
  * Filtros locales para las tablas que la CMF entrega enteras y sin filtro.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { filtrarFilas, fechaIso } from "../src/util/filtros.js";

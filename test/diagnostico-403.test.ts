@@ -8,6 +8,7 @@
  * que ahora se registra, el reintento único ante 403, la clasificación de
  * las descargas binarias y las cabeceras de navegador por defecto.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {

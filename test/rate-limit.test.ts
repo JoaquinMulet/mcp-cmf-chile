@@ -8,6 +8,7 @@
  * 400 ms). El catálogo de seguros fue el primer sitio que lanzó 5 llamadas
  * juntas al host real de la CMF, y esa ráfaga es justo lo que la CMF bloquea.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fetchCmf } from "../src/client/cmf-client.js";

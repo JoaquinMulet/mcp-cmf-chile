@@ -5,6 +5,7 @@
  * de datos se perdía por prestar los nombres de columna. Fixtures reales
  * del 2 de septiembre de 2026, recortados en filas.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

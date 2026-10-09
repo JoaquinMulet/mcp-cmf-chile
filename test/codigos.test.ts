@@ -10,6 +10,7 @@
  * Los fixtures de seguros son el formulario f1 REAL de los índices de la CMF,
  * recortados en bloques y sin tocar por dentro.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

@@ -7,6 +7,7 @@
  * cuerpo nunca terminaba, toda consulta posterior de la instancia quedaba
  * esperando cupo sin plazo.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fetchCmf } from "../src/client/cmf-client.js";

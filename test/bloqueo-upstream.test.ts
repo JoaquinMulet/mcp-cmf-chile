@@ -9,6 +9,7 @@
  * CMF a 2 consultas por segundo. Ahora la respuesta que no es datos sube
  * como CmfUpstreamError, con el estado HTTP, y nunca se cachea.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {

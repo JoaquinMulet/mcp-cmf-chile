@@ -8,6 +8,7 @@
  * Cloudflare, así que el respaldo es un proxy propio en Chile. Estas pruebas
  * fijan cuándo se usa, qué viaja hacia él y qué pasa cuando no responde.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { CmfUpstreamError, fetchCmf, getLegacy } from "../src/client/cmf-client.js";

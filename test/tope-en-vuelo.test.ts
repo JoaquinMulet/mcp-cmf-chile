@@ -7,6 +7,7 @@
  * try y el catch liberaba otra vez. El contador quedaba en -1 y el tope
  * pasaba a 5 para toda la instancia, sin ningún aviso.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fetchCmf } from "../src/client/cmf-client.js";

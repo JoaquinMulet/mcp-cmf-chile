@@ -4,6 +4,7 @@
  * de septiembre de 2026, sin recortar. el buscador para «colocaciones
  * vivienda por banco» y el cuadro de colocaciones en 2 tramos.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

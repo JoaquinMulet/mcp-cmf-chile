@@ -10,6 +10,7 @@
  * en la cabecera `x-apikey`. Los fixtures son las 2 respuestas reales del
  * 1 de septiembre de 2026, sin recortar.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

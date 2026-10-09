@@ -5,6 +5,7 @@
  * llamaba a sí misma por cada 3xx, sin contador. Un 302 hacia la misma URL
  * dio 201 saltos seguidos, y lo cortó la prueba, no el cliente.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fetchCmf } from "../src/client/cmf-client.js";

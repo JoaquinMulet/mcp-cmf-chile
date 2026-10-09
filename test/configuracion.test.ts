@@ -7,6 +7,7 @@
  * vuelo y sin espera entre consultas. Las otras variables numéricas caían
  * igual. un plazo NaN vence al milisegundo y ninguna consulta llegaba.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fetchCmf } from "../src/client/cmf-client.js";

@@ -6,6 +6,7 @@
  * ZIP apagado. El servidor corre en un Worker sin disco, así que la salida
  * es la de siempre en esta casa. tramos, con el total y cómo pedir el resto.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "../src/server.js";
