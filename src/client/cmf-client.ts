@@ -14,6 +14,8 @@ export interface CmfEnv {
   CMF_CACHE_TTL_S?: string;
   CMF_MAX_ROWS?: string;
   CMF_UPSTREAM_TIMEOUT_MS?: string;
+  /** Cuánto espera una consulta por un cupo del limitador antes de fallar. */
+  CMF_ESPERA_CUPO_MS?: string;
   /** Espera antes del único reintento tras un 403 de la CMF. 0 en pruebas. */
   CMF_REINTENTO_403_MS?: string;
   /** Salida chilena: URL https del proxy propio que consulta a www.cmfchile.cl desde Chile. */
@@ -48,6 +50,9 @@ const configDefault = {
   maxRows: 500,
   upstreamTimeoutMs: 12000,
   reintento403Ms: 6000,
+  // Holgado a propósito. Una consulta lenta ocupa su cupo hasta 3 plazos, y
+  // con tráfico alto la cola es legítima. Esto corta la espera que no termina.
+  esperaCupoMs: 120000,
 };
 
 /** Valores ilegibles ya avisados, para no repetir el aviso en cada consulta. */
@@ -85,6 +90,7 @@ function config(env: CmfEnv) {
     rateLimitMs: enteroDeEnv("CMF_RATE_LIMIT_MS", env.CMF_RATE_LIMIT_MS, configDefault.rateLimitMs),
     cacheTtlS: enteroDeEnv("CMF_CACHE_TTL_S", env.CMF_CACHE_TTL_S, configDefault.cacheTtlS),
     maxRows: enteroDeEnv("CMF_MAX_ROWS", env.CMF_MAX_ROWS, configDefault.maxRows),
+    esperaCupoMs: enteroDeEnv("CMF_ESPERA_CUPO_MS", env.CMF_ESPERA_CUPO_MS, configDefault.esperaCupoMs, 1),
     // Un plazo de 0 vence antes de que nada responda, así que parte en 1.
     upstreamTimeoutMs: enteroDeEnv("CMF_UPSTREAM_TIMEOUT_MS", env.CMF_UPSTREAM_TIMEOUT_MS, configDefault.upstreamTimeoutMs, 1),
   };
@@ -96,9 +102,23 @@ class RateLimiter {
   private inflight = 0;
   constructor(private minMs: number, private maxInflight = 4) {}
 
-  async esperar(host: string): Promise<void> {
+  /**
+   * Espera cupo y turno. Si pasan `esperaCupoMs` sin cupo, lanza. Quien recibe
+   * ese error no tomó cupo, así que no llama a liberar().
+   */
+  async esperar(host: string, esperaCupoMs: number): Promise<void> {
+    const limite = Date.now() + esperaCupoMs;
     while (this.inflight >= this.maxInflight) {
-      await new Promise((r) => setTimeout(r, 100));
+      // Sin este plazo, un cupo perdido por un defecto dejaba a toda consulta
+      // posterior esperando para siempre y sin rastro.
+      const falta = limite - Date.now();
+      if (falta <= 0) {
+        console.warn(JSON.stringify({ cmf_cupo: { en_vuelo: this.inflight, espera_ms: esperaCupoMs, host } }));
+        throw new Error(
+          `El servidor tiene sus ${this.maxInflight} consultas a la CMF ocupadas y esta no alcanzó cupo en ${esperaCupoMs} ms. Reintente en unos minutos.`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, Math.min(100, falta)));
     }
     // El cupo se toma en el mismo paso en que se revisa, antes de esperar el
     // turno. Anotarlo después de la espera dejaba pasar la revisión a todas
@@ -317,7 +337,7 @@ export async function fetchCmf(
   for (let intento = 0; intento < 3; intento++) {
     if (intento > 0 && !trasEspera403) await new Promise((r) => setTimeout(r, 500 * 2 ** (intento - 1)));
     trasEspera403 = false;
-    await rl.esperar(u.hostname);
+    await rl.esperar(u.hostname, cfg.esperaCupoMs);
     // El try cubre SOLO la consulta, para que el cupo se libere exactamente
     // una vez por cada esperar(). Lo que lanza después (una redirección a un
     // destino no permitido) no vuelve a pasar por el catch.

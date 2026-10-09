@@ -86,6 +86,29 @@ test(`10 consultas lanzadas juntas, con espera entre turnos, nunca pasan de ${TO
   assert.equal(maximo, TOPE, `máximo en vuelo. ${maximo}`);
 });
 
+// La espera de cupo tenía una cola sin plazo. Un cupo perdido por un defecto
+// dejaba a toda consulta posterior esperando para siempre y en silencio.
+test("una consulta que no alcanza cupo dentro del plazo falla con un error que lo dice, y no toca el contador", async () => {
+  const env = { CMF_RATE_LIMIT_MS: "0" };
+  const maximo = await conRedLenta(
+    () => undefined,
+    async (avisos) => {
+      const ocupadas = lanzarLentas(TOPE, env);
+      // A OTRO host, para que lo único que la frene sea el cupo. Las 4 de
+      // arriba tardan 120 ms, así que con 30 ms de plazo no lo alcanza.
+      await assert.rejects(
+        fetchCmf("https://api.sbif.cl/sin-cupo", {}, { ...env, CMF_ESPERA_CUPO_MS: "30" }),
+        /4 consultas a la CMF ocupadas.*30 ms/,
+      );
+      assert.ok(avisos.some((a) => a.includes("cmf_cupo")), `sin aviso en el log. ${avisos.join(" | ")}`);
+      await ocupadas;
+      // La que no alcanzó cupo tampoco lo devuelve. Si lo devolviera, el máximo pasaría del tope.
+      await lanzarLentas(10, env);
+    },
+  );
+  assert.equal(maximo, TOPE, `máximo en vuelo. ${maximo}`);
+});
+
 test("una redirección no permitida que llega por la salida chilena es un error de destino, no un proxy caído", async () => {
   const env = {
     CMF_RATE_LIMIT_MS: "0",
