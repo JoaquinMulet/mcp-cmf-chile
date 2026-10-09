@@ -26,7 +26,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { construirRegistro } from "../src/registro.js";
 
-const README = readFileSync(join(import.meta.dirname, "..", "README.md"), "utf8");
+// Con core.autocrlf=true (Windows) el checkout trae CRLF. Sin normalizar, el
+// corte "\n\n" de la tabla no aparece, indexOf devuelve -1 y la prueba lee
+// hasta el final del README como si fuera la tabla. Medido el 9 de octubre
+// de 2026 en el worktree C:/dev/cmf-mcp-403: 10 falsos «sobran».
+const README = readFileSync(join(import.meta.dirname, "..", "README.md"), "utf8").replace(/\r\n/g, "\n");
 
 /** Las tools que de verdad aceptan un parámetro de captcha. */
 function conCaptcha(): string[] {
@@ -54,7 +58,9 @@ test("el README no nombra como de captcha una tool que ya no lo pide", () => {
   // La tabla de captcha del README, solo esa región.
   const ini = README.indexOf("| Herramienta | Qué trae | Por qué la CMF le pone captcha |");
   assert.notEqual(ini, -1, "no encontré la tabla de captcha en el README");
-  const tabla = README.slice(ini, README.indexOf("\n\n", ini));
+  const fin = README.indexOf("\n\n", ini);
+  assert.notEqual(fin, -1, "la tabla de captcha no termina con una línea en blanco");
+  const tabla = README.slice(ini, fin);
   const nombrados = [...tabla.matchAll(/`(cmf_[a-z_]+)`/g)].map((m) => m[1]);
   const sobran = nombrados.filter((n) => !reales.has(n));
   assert.deepEqual(sobran, [], `El README dice que estas piden captcha y ya no lo hacen:\n  ${sobran.join("\n  ")}`);
