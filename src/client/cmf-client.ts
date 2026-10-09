@@ -216,55 +216,12 @@ export async function fetchCmf(
     if (intento > 0 && !trasEspera403) await new Promise((r) => setTimeout(r, 500 * 2 ** (intento - 1)));
     trasEspera403 = false;
     await rl.esperar(u.hostname);
+    // El try cubre SOLO la consulta, para que el cupo se libere exactamente
+    // una vez por cada esperar(). Lo que lanza después (una redirección a un
+    // destino no permitido) no vuelve a pasar por el catch.
+    let res: Response;
     try {
-      const res = await resolverChallenge(porProxy && salida ? salida.fetchFn : fetchConCfg, url, { ...init, headers }, jar);
-      rl.liberar();
-      if (porProxy && salida && res.headers.has(MARCA_COLA) && intento < 2) {
-        // El proxy está sano y pide esperar. Mandar esto a la CMF directa
-        // sería sumar consultas justo cuando hay que bajar el ritmo.
-        trasEspera403 = true;
-        await new Promise((r) => setTimeout(r, ESPERA_COLA_MS));
-        continue;
-      }
-      if (porProxy && salida && !res.headers.has(MARCA_SALIDA) && !res.headers.has(MARCA_COLA)) {
-        // El proxy no contestó como proxy: se olvida y se vuelve al directo.
-        registrarSalida("proxy_fallo", res.status, u);
-        directoBloqueadoHasta.delete(salida.clave);
-        salida = null;
-        porProxy = false;
-        if (bloqueoDirecto) return bloqueoDirecto;
-        trasEspera403 = true;
-        intento--;
-        continue;
-      }
-      if (!porProxy && salida && esBloqueoDeOrigen(res.status)) {
-        // El cambio de camino no gasta un intento: pasa a lo más 1 vez por consulta.
-        registrarSalida("directo_bloqueado", res.status, u);
-        directoBloqueadoHasta.set(salida.clave, Date.now() + MEMORIA_BLOQUEO_MS);
-        porProxy = true;
-        bloqueoDirecto = res;
-        trasEspera403 = true;
-        intento--;
-        continue;
-      }
-      if (res.status >= 300 && res.status < 400 && res.headers.get("location")) {
-        // Redirect manual validado (allowlist)
-        const next = new URL(res.headers.get("location")!, url).toString();
-        validarUrl(next);
-        return fetchCmf(next, { ...init, headers }, env, jar);
-      }
-      if (res.status >= 500 && intento < 2) {
-        ultimoError = new Error(`HTTP ${res.status} de la CMF (intento ${intento + 1})`);
-        continue;
-      }
-      if (res.status === 403 && !reintentado403 && intento < 2) {
-        reintentado403 = true;
-        trasEspera403 = true;
-        await new Promise((r) => setTimeout(r, cfg.reintento403Ms));
-        continue;
-      }
-      if (reintentado403) trasReintento403.add(res);
-      return res;
+      res = await resolverChallenge(porProxy && salida ? salida.fetchFn : fetchConCfg, url, { ...init, headers }, jar);
     } catch (e) {
       rl.liberar();
       if (porProxy && salida) {
@@ -282,6 +239,53 @@ export async function fetchCmf(
       if (intento < 2 && e instanceof DOMException && e.name === "AbortError") continue;
       throw e;
     }
+    rl.liberar();
+    if (porProxy && salida && res.headers.has(MARCA_COLA) && intento < 2) {
+      // El proxy está sano y pide esperar. Mandar esto a la CMF directa
+      // sería sumar consultas justo cuando hay que bajar el ritmo.
+      trasEspera403 = true;
+      await new Promise((r) => setTimeout(r, ESPERA_COLA_MS));
+      continue;
+    }
+    if (porProxy && salida && !res.headers.has(MARCA_SALIDA) && !res.headers.has(MARCA_COLA)) {
+      // El proxy no contestó como proxy: se olvida y se vuelve al directo.
+      registrarSalida("proxy_fallo", res.status, u);
+      directoBloqueadoHasta.delete(salida.clave);
+      salida = null;
+      porProxy = false;
+      if (bloqueoDirecto) return bloqueoDirecto;
+      trasEspera403 = true;
+      intento--;
+      continue;
+    }
+    if (!porProxy && salida && esBloqueoDeOrigen(res.status)) {
+      // El cambio de camino no gasta un intento: pasa a lo más 1 vez por consulta.
+      registrarSalida("directo_bloqueado", res.status, u);
+      directoBloqueadoHasta.set(salida.clave, Date.now() + MEMORIA_BLOQUEO_MS);
+      porProxy = true;
+      bloqueoDirecto = res;
+      trasEspera403 = true;
+      intento--;
+      continue;
+    }
+    if (res.status >= 300 && res.status < 400 && res.headers.get("location")) {
+      // Redirect manual validado (allowlist)
+      const next = new URL(res.headers.get("location")!, url).toString();
+      validarUrl(next);
+      return fetchCmf(next, { ...init, headers }, env, jar);
+    }
+    if (res.status >= 500 && intento < 2) {
+      ultimoError = new Error(`HTTP ${res.status} de la CMF (intento ${intento + 1})`);
+      continue;
+    }
+    if (res.status === 403 && !reintentado403 && intento < 2) {
+      reintentado403 = true;
+      trasEspera403 = true;
+      await new Promise((r) => setTimeout(r, cfg.reintento403Ms));
+      continue;
+    }
+    if (reintentado403) trasReintento403.add(res);
+    return res;
   }
   throw ultimoError instanceof Error
     ? new Error(`La red de la CMF rechazó la conexión tras 3 intentos (algunos hosts, como datosbanco, bloquean IPs de datacenter): ${ultimoError.message}`)
