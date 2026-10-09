@@ -17,9 +17,10 @@
  * lo unico que vale como veredicto.
  *
  * Que hace este porton.
- *   - Falla si hay alertas de severidad alta o critica en src/, que es
- *     el codigo que se despliega.
- *   - Informa, sin fallar, las de las carpetas de prueba.
+ *   - Falla si hay alertas de severidad alta o critica en codigo que
+ *     corre. es todo lo que no esta en test/. el Worker, el proxy de
+ *     infra/ y las herramientas. El reparto vive en alertas-clasificar.mjs.
+ *   - Informa, sin fallar, las de test/.
  *   - Falla si NO PUEDE consultar, en vez de dejar pasar en silencio.
  *
  * Uso.
@@ -27,14 +28,10 @@
  *   node herramientas/alertas.mjs --listar   solo informa, nunca falla
  */
 import { execFileSync } from 'node:child_process'
+import { clasificar } from './alertas-clasificar.mjs'
 
 const REPO = 'JoaquinMulet/mcp-cmf-chile'
 const SOLO_LISTAR = process.argv.includes('--listar')
-
-/** Carpetas cuyo codigo llega al Worker desplegado. */
-const DESPLEGADO = ['src/']
-/** Severidades que bloquean. */
-const BLOQUEAN = new Set(['critical', 'high'])
 
 let crudo
 try {
@@ -75,13 +72,10 @@ const filas = alertas.map((a) => ({
   url: a.html_url ?? '',
 }))
 
-const enProduccion = filas.filter((f) => DESPLEGADO.some((d) => f.ruta.startsWith(d)))
-const bloqueantes = enProduccion.filter((f) => BLOQUEAN.has(f.severidad))
-const otrasProduccion = enProduccion.filter((f) => !BLOQUEAN.has(f.severidad))
-const enPruebas = filas.filter((f) => !DESPLEGADO.some((d) => f.ruta.startsWith(d)))
+const { enProduccion, bloqueantes, otrasProduccion, enPruebas } = clasificar(filas)
 
 process.stdout.write(
-  `ALERTAS abiertas. ${filas.length} en total, ${enProduccion.length} en codigo desplegado`
+  `ALERTAS abiertas. ${filas.length} en total, ${enProduccion.length} en codigo que corre`
   + ` (${bloqueantes.length} de severidad alta o critica), ${enPruebas.length} en pruebas.\n`)
 
 for (const f of bloqueantes) {
@@ -91,7 +85,7 @@ for (const f of otrasProduccion.slice(0, 10)) {
   process.stdout.write(`  aviso  ${f.regla}  ${f.ruta}:${f.linea}\n`)
 }
 if (otrasProduccion.length > 10) {
-  process.stdout.write(`  ... y ${otrasProduccion.length - 10} avisos mas en codigo desplegado\n`)
+  process.stdout.write(`  ... y ${otrasProduccion.length - 10} avisos mas en codigo que corre\n`)
 }
 
 if (SOLO_LISTAR) {
@@ -101,7 +95,7 @@ if (SOLO_LISTAR) {
 
 if (bloqueantes.length > 0) {
   process.stdout.write(
-    `\nROJO. ${bloqueantes.length} alertas de severidad alta o critica en codigo que se despliega.\n`
+    `\nROJO. ${bloqueantes.length} alertas de severidad alta o critica en codigo que corre.\n`
     + 'Arreglalas, o si son falsos positivos, descartalas UNA POR UNA con su razon escrita:\n'
     + `  gh api -X PATCH repos/${REPO}/code-scanning/alerts/<numero> \\\n`
     + '    -f state=dismissed -f dismissed_reason="false positive" -f dismissed_comment="por que"\n'
@@ -109,5 +103,5 @@ if (bloqueantes.length > 0) {
   process.exit(1)
 }
 
-process.stdout.write('\nVERDE. Ninguna alerta de severidad alta o critica en codigo desplegado.\n')
+process.stdout.write('\nVERDE. Ninguna alerta de severidad alta o critica en codigo que corre.\n')
 process.exit(0)
