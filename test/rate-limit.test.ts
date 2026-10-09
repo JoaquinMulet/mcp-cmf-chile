@@ -28,17 +28,22 @@ test("5 llamadas simultáneas al mismo host salen separadas por el mínimo", asy
     // (9 de octubre de 2026). Con otro host no se toca el turno del medido.
     await fetchCmf("https://api.sbif.cl/calentamiento", {}, env);
     tiempos.length = 0;
+    const lanzamiento = Date.now();
     await Promise.all(
       [1, 2, 3, 4, 5].map((i) => fetchCmf(`https://www.cmfchile.cl/institucional/estadisticas/x${i}.php`, {}, env)),
     );
     tiempos.sort((a, b) => a - b);
-    // Se mide desde la PRIMERA llamada, no entre vecinas. Con la máquina
-    // cargada 2 temporizadores vencidos disparan seguidos (brecha de 1 ms) y
-    // la prueba salía roja sin que el limitador fallara (14 de septiembre de
-    // 2026, en el pre-push). Lo que no puede pasar es que la llamada i salga
-    // antes de i × 120 ms desde la primera; la carga solo la puede atrasar.
-    const desde = tiempos.map((t) => t - tiempos[0]);
-    assert.ok(desde.every((d, i) => d >= i * 120 - 5), `desde la primera, en ms. ${desde.join(", ")}`);
+    // Se mide desde el LANZAMIENTO, no entre vecinas ni desde la primera
+    // llamada. Entre vecinas, 2 temporizadores vencidos disparan seguidos con
+    // la máquina cargada (14 de septiembre de 2026). Desde la primera, la que
+    // se atrasa es la primera: reserva su turno a tiempo y sale tarde, y las
+    // demás salen a su hora. Medido el 9 de octubre de 2026 con la máquina
+    // cargada, en 48 corridas. la primera salió hasta 26 ms tarde, y esa vara
+    // dio 2 rojos con el limitador sano. El lanzamiento es anterior a todo
+    // turno, así que la carga solo puede atrasar una llamada respecto de él.
+    // Lo que no puede pasar es que la llamada i salga antes de i × 120 ms.
+    const desde = tiempos.map((t) => t - lanzamiento);
+    assert.ok(desde.every((d, i) => d >= i * 120 - 5), `desde el lanzamiento, en ms. ${desde.join(", ")}`);
   } finally {
     globalThis.fetch = original;
   }
