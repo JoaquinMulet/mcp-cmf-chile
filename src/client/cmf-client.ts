@@ -50,15 +50,35 @@ const configDefault = {
   reintento403Ms: 6000,
 };
 
+/** Valores ilegibles ya avisados, para no repetir el aviso en cada consulta. */
+const ilegiblesAvisados = new Set<string>();
+
+/**
+ * Un entero de configuración. Un valor que no es un entero desde 0 no se usa.
+ * vale el de fábrica, y queda un aviso en el log. Con parseInt, un texto daba
+ * NaN y apagaba la protección en silencio. un ritmo NaN estrenaba limitador en
+ * cada llamada, sin tope ni espera, y un plazo NaN vencía al milisegundo
+ * (medido el 9 de octubre de 2026).
+ */
+function enteroDeEnv(variable: keyof CmfEnv, crudo: string | undefined, deFabrica: number): number {
+  if (!crudo) return deFabrica;
+  const n = Number(crudo);
+  if (Number.isInteger(n) && n >= 0) return n;
+  const clave = `${variable}=${crudo}`;
+  if (!ilegiblesAvisados.has(clave)) {
+    ilegiblesAvisados.add(clave);
+    console.warn(JSON.stringify({ cmf_config: { variable, valor: crudo.slice(0, 40), usado: deFabrica } }));
+  }
+  return deFabrica;
+}
+
 function config(env: CmfEnv) {
   return {
-    reintento403Ms: env.CMF_REINTENTO_403_MS ? parseInt(env.CMF_REINTENTO_403_MS, 10) : configDefault.reintento403Ms,
-    rateLimitMs: env.CMF_RATE_LIMIT_MS ? parseInt(env.CMF_RATE_LIMIT_MS, 10) : configDefault.rateLimitMs,
-    cacheTtlS: env.CMF_CACHE_TTL_S ? parseInt(env.CMF_CACHE_TTL_S, 10) : configDefault.cacheTtlS,
-    maxRows: env.CMF_MAX_ROWS ? parseInt(env.CMF_MAX_ROWS, 10) : configDefault.maxRows,
-    upstreamTimeoutMs: env.CMF_UPSTREAM_TIMEOUT_MS
-      ? parseInt(env.CMF_UPSTREAM_TIMEOUT_MS, 10)
-      : configDefault.upstreamTimeoutMs,
+    reintento403Ms: enteroDeEnv("CMF_REINTENTO_403_MS", env.CMF_REINTENTO_403_MS, configDefault.reintento403Ms),
+    rateLimitMs: enteroDeEnv("CMF_RATE_LIMIT_MS", env.CMF_RATE_LIMIT_MS, configDefault.rateLimitMs),
+    cacheTtlS: enteroDeEnv("CMF_CACHE_TTL_S", env.CMF_CACHE_TTL_S, configDefault.cacheTtlS),
+    maxRows: enteroDeEnv("CMF_MAX_ROWS", env.CMF_MAX_ROWS, configDefault.maxRows),
+    upstreamTimeoutMs: enteroDeEnv("CMF_UPSTREAM_TIMEOUT_MS", env.CMF_UPSTREAM_TIMEOUT_MS, configDefault.upstreamTimeoutMs),
   };
 }
 
@@ -94,6 +114,12 @@ class RateLimiter {
   }
 }
 
+// Un limitador por valor de ritmo. En producción el ritmo es fijo, así que hay
+// uno solo. Si 2 ritmos conviven, cada cambio estrena limitador con el contador
+// en 0 y el tope se suma (8 en vuelo, medido el 9 de octubre de 2026). Se deja
+// así a propósito. Las pruebas cambian el ritmo para partir con el contador en
+// 0, y con un limitador único una prueba que pierde cupos deja la suite colgada
+// en vez de roja.
 let limiter: RateLimiter | null = null;
 let limiterMs = 0;
 function getLimiter(minMs: number): RateLimiter {
