@@ -98,6 +98,22 @@ for (const valor of ["-5", "0.5", " ", "0", "3000000000", "1e2", "0x40", "12000m
   });
 }
 
+test("un ritmo enorme no se usa. no deja al host esperando un turno a 24 días", async () => {
+  // 2147483647 cabe en un temporizador, pero como ritmo reserva el turno
+  // siguiente del host 24,8 días adelante, con un cupo tomado mientras espera.
+  const env = { CMF_RATE_LIMIT_MS: "2147483647" };
+  const { avisos } = await conRedLenta(1, async () => {
+    const juntas = Promise.all([1, 2].map((i) => fetchCmf(`https://www.conocetuseguro.cl/ritmo-enorme${i}`, {}, env)));
+    const fin = await Promise.race([juntas.then(() => "llegaron"), new Promise((r) => setTimeout(() => r("siguen esperando turno"), 4000))]);
+    // Si el ritmo enorme se usa, queda un temporizador de 24 días que nadie
+    // puede cancelar desde acá, y el proceso no terminaría nunca. Este corte
+    // solo corre en ese caso, para que la suite dé rojo y no se quede colgada.
+    if (fin !== "llegaron") setTimeout(() => process.exit(1), 1000).unref();
+    assert.equal(fin, "llegaron");
+  });
+  assert.equal(avisos.filter((a) => a.includes("CMF_RATE_LIMIT_MS")).length, 1, `avisos. ${avisos.join(" | ")}`);
+});
+
 test("un valor que llega como número y no como texto no revienta la consulta", async () => {
   // En wrangler.jsonc basta escribir el valor sin comillas.
   const env = { CMF_RATE_LIMIT_MS: 0, CMF_REINTENTO_403_MS: 1.5 } as unknown as Record<string, string>;

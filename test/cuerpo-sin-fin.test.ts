@@ -153,6 +153,61 @@ test("un cuerpo que tarda más que el plazo pero sigue llegando se entrega compl
   );
 });
 
+/** Un cuerpo que manda un tramo cada 40 ms mientras `sigue()` diga que sí. */
+const goteo = (sigue: () => boolean, alCancelar?: () => void) =>
+  new ReadableStream<Uint8Array>({
+    async pull(c) {
+      await tras(40, null);
+      if (sigue()) c.enqueue(new TextEncoder().encode("gota;"));
+      else c.close();
+    },
+    cancel: alCancelar,
+  });
+
+test("un goteo por la salida chilena sale como plazo total, y el proxy no se da por caído", async () => {
+  // El proxy está sano y es la CMF la que no termina. Tratarlo como proxy
+  // caído entregaba un 403 y mandaba las consultas siguientes a la CMF
+  // directa, que las rechaza.
+  const env = {
+    CMF_RATE_LIMIT_MS: "0",
+    CMF_REINTENTO_403_MS: "0",
+    CMF_UPSTREAM_TIMEOUT_MS: "100",
+    CMF_PROXY_URL: "https://salida-goteo.example.cl/",
+    CMF_PROXY_TOKEN: "token-de-prueba",
+  };
+  const avisos: string[] = [];
+  const avisoOriginal = console.warn;
+  console.warn = (linea: unknown) => void avisos.push(String(linea));
+  let gotea = true;
+  const idas: string[] = [];
+  try {
+    await conRed(
+      () => (url) => {
+        const host = new URL(url).hostname;
+        idas.push(host);
+        return host.endsWith(".example.cl")
+          ? new Response(goteo(() => gotea), { headers: { "x-cmf-salida": "1" } })
+          : new Response("<html><title>403 Forbidden</title></html>", { status: 403 });
+      },
+      async () => {
+        const fin = await fetchCmf("https://www.cmfchile.cl/goteo-proxy.pdf", {}, env).then(
+          (r) => `devolvió ${r.status}`,
+          (e) => `lanzó. ${(e as Error).message}`,
+        );
+        assert.match(fin, /^lanzó\. .*no terminó.*1000 ms.*https:\/\/www\.cmfchile\.cl\/goteo-proxy\.pdf\)$/);
+        assert.ok(!avisos.some((a) => a.includes("proxy_fallo")), `anotó un proxy caído. ${avisos.join(" | ")}`);
+        gotea = false;
+        idas.length = 0;
+        await fetchCmf("https://www.cmfchile.cl/siguiente.php", {}, env).then((r) => r.text());
+        assert.equal(idas[0], "salida-goteo.example.cl", "la consulta siguiente tiene que partir por el proxy");
+      },
+    );
+  } finally {
+    gotea = false;
+    console.warn = avisoOriginal;
+  }
+});
+
 test("un cuerpo que gotea sin terminar nunca se corta al plazo total, sin reintento", async () => {
   // El plazo de silencio no lo ve, porque siempre llega un tramo a tiempo.
   // El plazo total es 10 veces el de silencio. Acá, 1500 ms.
@@ -164,16 +219,7 @@ test("un cuerpo que gotea sin terminar nunca se corta al plazo total, sin reinte
     await conRed(
       () => () => {
         consultas++;
-        return new Response(
-          new ReadableStream<Uint8Array>({
-            async pull(c) {
-              await tras(40, null);
-              if (gotea) c.enqueue(new TextEncoder().encode("gota;"));
-              else c.close();
-            },
-            cancel: () => void (cancelado = true),
-          }),
-        );
+        return new Response(goteo(() => gotea, () => void (cancelado = true)));
       },
       async () => {
         const inicio = Date.now();

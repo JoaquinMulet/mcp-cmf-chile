@@ -50,8 +50,11 @@ const configDefault = {
   maxRows: 500,
   upstreamTimeoutMs: 12000,
   reintento403Ms: 6000,
-  // Holgado a propósito. Una consulta lenta ocupa su cupo hasta 3 plazos, y
-  // con tráfico alto la cola es legítima. Esto corta la espera que no termina.
+  // Lo que una consulta espera en la cola antes de recibir «servidor ocupado».
+  // No es el máximo que un cupo puede estar ocupado. un documento lento lo
+  // ocupa hasta 132 segundos por intento (12 de cabeceras y 120 de cuerpo), y
+  // una consulta de 90000 mucho más. Con los 4 cupos así, las demás fallan a
+  // los 120 segundos sin que haya ningún cupo perdido.
   esperaCupoMs: 120000,
 };
 
@@ -60,6 +63,13 @@ const ilegiblesAvisados = new Set<string>();
 
 /** Lo más que admite un temporizador. Un valor mayor se baja solo a 1 ms. */
 const MAX_ENTERO_DE_ENV = 2147483647;
+/**
+ * Lo más que vale una pausa entre consultas. Estas pausas corren con el cupo
+ * tomado, y el ritmo además reserva el turno siguiente del host. Un ritmo de
+ * 2147483647 dejaba ese turno a 24,8 días y congelaba el proceso (medido el 9
+ * de octubre de 2026).
+ */
+const MAX_PAUSA_MS = 60000;
 
 /**
  * Un entero de configuración. Solo vale si es puros dígitos y cae entre
@@ -71,11 +81,17 @@ const MAX_ENTERO_DE_ENV = 2147483647;
  *
  * El valor puede llegar como número, si en wrangler.jsonc va sin comillas.
  */
-function enteroDeEnv(variable: keyof CmfEnv, crudo: string | number | undefined, deFabrica: number, minimo = 0): number {
+function enteroDeEnv(
+  variable: keyof CmfEnv,
+  crudo: string | number | undefined,
+  deFabrica: number,
+  minimo = 0,
+  maximo = MAX_ENTERO_DE_ENV,
+): number {
   if (crudo === undefined || crudo === "") return deFabrica;
   const texto = String(crudo).trim();
   const n = /^[0-9]+$/.test(texto) ? Number(texto) : Number.NaN;
-  if (n >= minimo && n <= MAX_ENTERO_DE_ENV) return n;
+  if (n >= minimo && n <= maximo) return n;
   const clave = `${variable}=${texto}`;
   if (!ilegiblesAvisados.has(clave)) {
     ilegiblesAvisados.add(clave);
@@ -86,8 +102,8 @@ function enteroDeEnv(variable: keyof CmfEnv, crudo: string | number | undefined,
 
 function config(env: CmfEnv) {
   return {
-    reintento403Ms: enteroDeEnv("CMF_REINTENTO_403_MS", env.CMF_REINTENTO_403_MS, configDefault.reintento403Ms),
-    rateLimitMs: enteroDeEnv("CMF_RATE_LIMIT_MS", env.CMF_RATE_LIMIT_MS, configDefault.rateLimitMs),
+    reintento403Ms: enteroDeEnv("CMF_REINTENTO_403_MS", env.CMF_REINTENTO_403_MS, configDefault.reintento403Ms, 0, MAX_PAUSA_MS),
+    rateLimitMs: enteroDeEnv("CMF_RATE_LIMIT_MS", env.CMF_RATE_LIMIT_MS, configDefault.rateLimitMs, 0, MAX_PAUSA_MS),
     cacheTtlS: enteroDeEnv("CMF_CACHE_TTL_S", env.CMF_CACHE_TTL_S, configDefault.cacheTtlS),
     maxRows: enteroDeEnv("CMF_MAX_ROWS", env.CMF_MAX_ROWS, configDefault.maxRows),
     esperaCupoMs: enteroDeEnv("CMF_ESPERA_CUPO_MS", env.CMF_ESPERA_CUPO_MS, configDefault.esperaCupoMs, 1),
@@ -221,7 +237,8 @@ async function fetchConTimeout(
  * Hay además un plazo TOTAL, de PLAZOS_POR_CUERPO veces el de silencio. Sin
  * él, un cuerpo que gotea un tramo antes de cada plazo no vence nunca. Al
  * vencer no se reintenta, porque cada intento ocuparía el cupo otro plazo
- * total.
+ * total. Este sí corre aunque nadie lea. parte con la primera lectura y no
+ * se detiene, así que quien recibe una respuesta la lee de corrido.
  */
 const PLAZOS_POR_CUERPO = 10;
 function conPlazoDeCuerpo(res: Response, url: string, ctrl: AbortController, timeoutMs: number): Response {
@@ -369,7 +386,18 @@ export async function fetchCmf(
   for (let intento = 0; intento < 3; intento++) {
     if (intento > 0 && !trasEspera403) await new Promise((r) => setTimeout(r, 500 * 2 ** (intento - 1)));
     trasEspera403 = false;
-    await limitador.esperar(u.hostname, cfg.rateLimitMs, cfg.esperaCupoMs);
+    try {
+      await limitador.esperar(u.hostname, cfg.rateLimitMs, cfg.esperaCupoMs);
+    } catch (sinCupo) {
+      // Un reintento que no alcanza cupo no borra lo que ya se sabía de la
+      // CMF. El bloqueo directo se entrega, y el error anterior viaja en el
+      // mensaje.
+      if (bloqueoDirecto) return bloqueoDirecto;
+      if (sinCupo instanceof Error && ultimoError instanceof Error) {
+        throw new Error(`${sinCupo.message} Antes de eso, ${ultimoError.message}.`);
+      }
+      throw sinCupo;
+    }
     // El try cubre SOLO la consulta, para que el cupo se libere exactamente
     // una vez por cada esperar(). Lo que lanza después (una redirección a un
     // destino no permitido) no vuelve a pasar por el catch.
@@ -378,6 +406,10 @@ export async function fetchCmf(
       res = await resolverChallenge(porProxy && salida ? salida.fetchFn : fetchConCfg, url, { ...init, headers }, jar);
     } catch (e) {
       limitador.liberar();
+      // El plazo total del cuerpo. Quien no terminó es la CMF, venga directa o
+      // por el proxy, que seguía entregando tramos. No se reintenta y el proxy
+      // no se da por caído.
+      if (e instanceof DOMException && e.name === "TimeoutError") throw e;
       if (porProxy && salida) {
         // Un proxy colgado o sin red es un proxy caído. No se le insiste.
         registrarSalida("proxy_fallo", 0, u);

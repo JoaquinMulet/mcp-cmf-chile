@@ -48,6 +48,19 @@ async function conRedLenta(especial: Respuesta, fn: (avisos: string[]) => Promis
   }
 }
 
+/**
+ * Corre `fn` y espera a las consultas de fondo aunque `fn` falle. Sin esa
+ * espera, una prueba en rojo deja consultas vivas con los cupos tomados, y
+ * la prueba siguiente parte sin cupo y falla por contagio.
+ */
+async function yEsperar(deFondo: Promise<unknown>, fn: () => Promise<unknown>): Promise<void> {
+  try {
+    await fn();
+  } finally {
+    await deFondo.catch(() => {});
+  }
+}
+
 const redireccionA = (destino: string): Respuesta => (url) =>
   url.includes("/redirige") ? new Response(null, { status: 302, headers: { location: destino } }) : undefined;
 
@@ -115,14 +128,15 @@ test("una consulta que no alcanza cupo dentro del plazo falla con un error que l
       const ocupadas = lanzarLentas(TOPE, env);
       // A OTRO host, para que lo único que la frene sea el cupo. Las 4 de
       // arriba tardan 120 ms, así que con 30 ms de plazo no lo alcanza.
-      await assert.rejects(
-        fetchCmf("https://api.sbif.cl/sin-cupo", {}, { ...env, CMF_ESPERA_CUPO_MS: "30" }),
-        /4 consultas a la CMF ocupadas.*30 ms/,
-      );
-      const aviso = avisos.find((a) => a.includes("cmf_cupo"));
-      assert.ok(aviso, `sin aviso en el log. ${avisos.join(" | ")}`);
-      assert.deepEqual(JSON.parse(aviso), { cmf_cupo: { en_vuelo: TOPE, en_cola: 0, espera_ms: 30, host: "api.sbif.cl" } });
-      await ocupadas;
+      await yEsperar(ocupadas, async () => {
+        await assert.rejects(
+          fetchCmf("https://api.sbif.cl/sin-cupo", {}, { ...env, CMF_ESPERA_CUPO_MS: "30" }),
+          /4 consultas a la CMF ocupadas.*30 ms/,
+        );
+        const aviso = avisos.find((a) => a.includes("cmf_cupo"));
+        assert.ok(aviso, `sin aviso en el log. ${avisos.join(" | ")}`);
+        assert.deepEqual(JSON.parse(aviso), { cmf_cupo: { en_vuelo: TOPE, en_cola: 0, espera_ms: 30, host: "api.sbif.cl" } });
+      });
     },
   );
   // El máximo se mide en una red aparte, después. En la misma red ya llegó a
@@ -153,9 +167,76 @@ test("la cola de cupo respeta el orden de llegada, aunque otras consultas encade
       await new Promise((r) => setTimeout(r, 20));
       // Llegó después de las 4 primeras y antes que todas las demás. En orden,
       // toma el primer cupo que se libera, a los 120 ms.
-      const res = await fetchCmf("https://api.sbif.cl/en-orden", {}, { ...env, CMF_ESPERA_CUPO_MS: "400" });
-      assert.equal(res.status, 200);
-      await Promise.all(cadenas);
+      await yEsperar(Promise.all(cadenas), async () => {
+        const res = await fetchCmf("https://api.sbif.cl/en-orden", {}, { ...env, CMF_ESPERA_CUPO_MS: "400" });
+        assert.equal(res.status, 200);
+      });
+    },
+  );
+});
+
+/** Una respuesta que ocupa su cupo `ms`, porque el cliente lee el cuerpo con el cupo tomado. */
+const pegada = (ms: number) =>
+  new Response(
+    new ReadableStream<Uint8Array>({
+      start(c) {
+        setTimeout(() => c.close(), ms);
+      },
+    }),
+  );
+
+const ocuparCupos = (ms: number, env: Record<string, string>) =>
+  Promise.all(
+    Array.from({ length: TOPE }, (_, i) =>
+      fetchCmf(`https://tasas.cmfchile.cl/pegada${i}?ms=${ms}`, {}, { CMF_ESPERA_CUPO_MS: "15000", ...env }).then((r) => r.text()),
+    ),
+  );
+
+const redConPegadas =
+  (otra: Respuesta): Respuesta =>
+  (url) => {
+    const m = /\/pegada\d\?ms=(\d+)/.exec(url);
+    return m ? pegada(Number(m[1])) : otra(url);
+  };
+
+// Si un reintento no alcanza cupo, lo que ya se sabía de la CMF no se pierde.
+test("tras un 500, un reintento sin cupo conserva el 500 en el error", async () => {
+  const env = { CMF_RATE_LIMIT_MS: "0" };
+  await conRedLenta(
+    redConPegadas((url) => (url.includes("/cae") ? new Response("caída", { status: 500 }) : undefined)),
+    async () => {
+      // El primer intento responde 500 al instante y el reintento parte 500 ms
+      // después. Para entonces los 4 cupos están ocupados por 900 ms.
+      const caida = fetchCmf("https://www.cmfchile.cl/cae", {}, { ...env, CMF_ESPERA_CUPO_MS: "100" });
+      await new Promise((r) => setTimeout(r, 50));
+      const ocupadas = ocuparCupos(900, env);
+      await yEsperar(ocupadas, () => assert.rejects(caida, /no alcanzó cupo en 100 ms.*HTTP 500/));
+    },
+  );
+});
+
+test("tras un bloqueo directo, un reintento por el proxy sin cupo entrega el bloqueo original", async () => {
+  const env = {
+    CMF_RATE_LIMIT_MS: "0",
+    CMF_REINTENTO_403_MS: "0",
+    CMF_ESPERA_CUPO_MS: "100",
+    CMF_PROXY_URL: "https://salida-sin-cupo.example.cl/",
+    CMF_PROXY_TOKEN: "token-de-prueba",
+  };
+  await conRedLenta(
+    redConPegadas((url) =>
+      new URL(url).hostname.endsWith(".example.cl")
+        ? // El proxy pide esperar 1500 ms. Durante esa espera se ocupan los cupos.
+          new Response("cola llena", { status: 429, headers: { "x-cmf-salida-cola": "1" } })
+        : url.includes("/bloqueada")
+          ? new Response("<html><title>403 Forbidden</title></html>", { status: 403 })
+          : undefined,
+    ),
+    async () => {
+      const bloqueada = fetchCmf("https://www.cmfchile.cl/bloqueada", {}, env);
+      await new Promise((r) => setTimeout(r, 300));
+      const ocupadas = ocuparCupos(1800, { CMF_RATE_LIMIT_MS: "0" });
+      await yEsperar(ocupadas, async () => assert.equal((await bloqueada).status, 403));
     },
   );
 });
