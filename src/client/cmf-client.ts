@@ -124,11 +124,65 @@ async function fetchConTimeout(
 ): Promise<Response> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  let res: Response;
   try {
-    return await fetch(url, { ...init, signal: ctrl.signal, redirect: "manual" });
+    res = await fetch(url, { ...init, signal: ctrl.signal, redirect: "manual" });
   } finally {
     clearTimeout(timer);
   }
+  return conPlazoDeCuerpo(res, url, ctrl, timeoutMs);
+}
+
+/**
+ * El plazo sigue corriendo mientras se lee el cuerpo. Es un plazo de SILENCIO
+ * (tiempo sin que llegue un tramo), no del total, para que un documento grande
+ * que avanza por un enlace lento termine. Sin esto, una respuesta que mandaba
+ * las cabeceras y dejaba el cuerpo abierto retenía su cupo del limitador para
+ * siempre, porque resolverChallenge lee el cuerpo con el cupo tomado (medido
+ * el 9 de octubre de 2026. 4 respuestas así dejaban la instancia sin cupos).
+ *
+ * El reloj corre solo mientras alguien lee. Una respuesta que nadie lee no
+ * vence.
+ */
+function conPlazoDeCuerpo(res: Response, url: string, ctrl: AbortController, timeoutMs: number): Response {
+  if (!res.body) return res;
+  const lector = res.body.getReader();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cuerpo = new ReadableStream<Uint8Array>(
+    {
+      async pull(salida) {
+        const silencio = new Promise<never>((_, rechazar) => {
+          timer = setTimeout(() => {
+            // Sin la query, que puede llevar una clave.
+            const u = new URL(url);
+            rechazar(
+              new DOMException(
+                `La CMF dejó de enviar el cuerpo de la respuesta por más de ${timeoutMs} ms (${u.origin}${u.pathname})`,
+                "AbortError",
+              ),
+            );
+          }, timeoutMs);
+        });
+        try {
+          const { done, value } = await Promise.race([lector.read(), silencio]);
+          if (done) salida.close();
+          else salida.enqueue(value);
+        } catch (e) {
+          ctrl.abort();
+          void lector.cancel(e).catch(() => {});
+          throw e;
+        } finally {
+          clearTimeout(timer);
+        }
+      },
+      cancel(razon) {
+        clearTimeout(timer);
+        return lector.cancel(razon);
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  return new Response(cuerpo, { status: res.status, statusText: res.statusText, headers: res.headers });
 }
 
 /**
