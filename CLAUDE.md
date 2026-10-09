@@ -713,11 +713,12 @@ funcionó.
 
 **37. Un contador que se suma en un lugar y se resta en 2 se descuadra en silencio (9 de
 octubre de 2026).** Qué falló, por 2 caminos. `fetchCmf` liberaba su cupo dentro del `try` y
-otra vez en el `catch`, así que una redirección a un host fuera de `HOSTS_ALLOWLIST` o a http
-(que lanza después de la primera liberación) dejaba `inflight` en -1 y el tope de 4 pasaba a 5
-para toda la instancia. Y `RateLimiter.esperar` revisaba el cupo antes de esperar el turno y lo
-anotaba después, así que 10 consultas lanzadas juntas pasaban todas la revisión con el contador
-en 0 y quedaban las 10 en vuelo. El segundo camino apareció al escribir la prueba del primero.
+otra vez en el `catch`, así que una redirección a un host fuera de `HOSTS_ALLOWLIST`, a http o
+con un `location` ilegible (las 3 lanzan después de la primera liberación) dejaba `inflight` en
+-1 y el tope de 4 pasaba a 5 para toda la instancia. Y `RateLimiter.esperar` revisaba el cupo
+antes de esperar el turno y lo anotaba después, así que con un ritmo mayor que 0, que es el de
+producción, 10 consultas lanzadas juntas pasaban todas la revisión con el contador en 0 y
+quedaban las 10 en vuelo. El segundo camino apareció al escribir la prueba del primero.
 Causa raíz. La revisión y la anotación de un cupo estaban separadas por un `await`, y la
 liberación vivía en 2 ramas que no se excluían. Prescripción. En `fetchCmf` el `try` cubre SOLO
 la consulta, con un `liberar()` en el `catch` y otro justo después del `try`. En `esperar`, el
@@ -727,7 +728,14 @@ que conocer. una consulta que espera su turno ya ocupa cupo, así que 4 consulta
 `www.cmfchile.cl` hacen esperar a una quinta hacia otro host. La misma lectura encontró que una
 redirección rechazada que llegaba por la salida chilena se anotaba como `proxy_fallo` y
 entregaba el 403 original; ahora sube como «Host no permitido». Lo vigila
-`test/tope-en-vuelo.test.ts`, que cuenta las consultas en vuelo dentro del `fetch` simulado.
+`test/tope-en-vuelo.test.ts`, que cuenta las consultas en vuelo dentro del `fetch` simulado y
+exige el máximo EXACTO. un máximo de 5 delata una liberación de más, y uno de 2 delata un cupo
+que no se devolvió. La revisión adversarial mostró que la primera versión de esa prueba solo
+miraba una dirección: pasaba verde con el `liberar()` del `catch` borrado. Regla. una prueba de
+un contador se corre contra los 2 mutantes, el que resta de más y el que resta de menos. Lo que
+la misma revisión encontró y sigue abierto, porque ya existía y es otro arreglo. un cuerpo de
+respuesta que nunca termina retiene su cupo sin plazo (el plazo de `fetchConTimeout` se apaga al
+llegar las cabeceras), y una redirección en círculo no tiene tope de saltos.
 
 ## Gotchas
 

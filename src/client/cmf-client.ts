@@ -62,7 +62,7 @@ function config(env: CmfEnv) {
   };
 }
 
-/** Rate limiter por host: cola con timeout y max in-flight (singleton de módulo). */
+/** Rate limiter por host: cola sin plazo y max in-flight (singleton de módulo). */
 class RateLimiter {
   private ultimo = new Map<string, number>();
   private inflight = 0;

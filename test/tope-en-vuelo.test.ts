@@ -102,9 +102,46 @@ test("una redirección no permitida que llega por la salida chilena es un error 
   const maximo = await conRedLenta(red, async (avisos) => {
     await assert.rejects(fetchCmf("https://www.cmfchile.cl/bloqueada", {}, env), /Host no permitido/);
     assert.ok(!avisos.some((a) => a.includes("proxy_fallo")), `no debe anotar un proxy caído. ${avisos.join(" | ")}`);
-    // El proxy quedó recordado para esta instancia: estas van al host de
-    // prueba de la CMF directa solo si el cliente lo olvidó por error.
     await lanzarLentas(10, { CMF_RATE_LIMIT_MS: "0" });
+  });
+  assert.equal(maximo, TOPE, `máximo en vuelo. ${maximo}`);
+});
+
+// La otra mitad de «exactamente una vez». Si la consulta lanza, el cupo se
+// devuelve en el catch. Sin esa devolución el máximo queda bajo el tope.
+test("una consulta que falla en la red devuelve su cupo", async () => {
+  const env = { CMF_RATE_LIMIT_MS: "0" };
+  const red: Respuesta = (url) => {
+    if (url.includes("/sin-red")) throw new TypeError("fetch failed");
+    return undefined;
+  };
+  const maximo = await conRedLenta(red, async () => {
+    for (const i of [1, 2]) {
+      await assert.rejects(fetchCmf(`https://www.cmfchile.cl/sin-red${i}`, {}, env), /fetch failed/);
+    }
+    await lanzarLentas(10, env);
+  });
+  assert.equal(maximo, TOPE, `máximo en vuelo. ${maximo}`);
+});
+
+test("un proxy que falla en la red devuelve su cupo", async () => {
+  const env = {
+    // Otro ritmo, para estrenar limitador y no heredar el contador de la prueba anterior.
+    CMF_RATE_LIMIT_MS: "1",
+    CMF_REINTENTO_403_MS: "0",
+    CMF_PROXY_URL: "https://salida-sin-red.example.cl/",
+    CMF_PROXY_TOKEN: "token-de-prueba",
+  };
+  const red: Respuesta = (url) => {
+    if (new URL(url).hostname.endsWith(".example.cl")) throw new TypeError("fetch failed");
+    return url.includes("/bloqueada") ? new Response("<html><title>403 Forbidden</title></html>", { status: 403 }) : undefined;
+  };
+  const maximo = await conRedLenta(red, async () => {
+    for (const i of [1, 2]) {
+      const res = await fetchCmf(`https://www.cmfchile.cl/bloqueada${i}`, {}, env);
+      assert.equal(res.status, 403);
+    }
+    await lanzarLentas(10, { CMF_RATE_LIMIT_MS: "1" });
   });
   assert.equal(maximo, TOPE, `máximo en vuelo. ${maximo}`);
 });
