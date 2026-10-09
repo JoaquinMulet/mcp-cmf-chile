@@ -776,9 +776,12 @@ cuerpo colgado se reintenta 3 veces, igual que una consulta sin respuesta, así 
 envía 3 veces y el error tarda 3 plazos. Los 3 puntos que esta lección dejó abiertos en su
 primera versión se cerraron el mismo día, en este orden, porque cada uno habilita al siguiente.
 La espera de cupo vence a los `CMF_ESPERA_CUPO_MS` (120000 de fábrica), con un error que dice
-que las 4 consultas están ocupadas y una línea `cmf_cupo` en el log. **Esa línea es la señal de
-un cupo perdido en producción.** Si aparece sin tráfico alto, hay una ruta que toma cupo y no lo
-devuelve. Con ese plazo, una prueba que pierde cupos sale roja en vez de colgar la suite, y eso
+que las 4 consultas están ocupadas y una línea `cmf_cupo` en el log, con cuántas hay en vuelo y
+en cola. **Esa línea dice «servidor ocupado», y no prueba por sí sola un cupo perdido.** Un cupo
+puede estar ocupado de forma legítima más que el plazo de espera: un documento lento lo ocupa
+hasta 132 segundos por intento, así que 4 documentos lentos a la vez hacen fallar a las demás
+consultas a los 120 segundos. Un cupo perdido se reconoce porque `cmf_cupo` sigue saliendo con
+`en_vuelo` en 4 cuando ya no hay tráfico. Con ese plazo, una prueba que pierde cupos sale roja en vez de colgar la suite, y eso
 permitió dejar UN solo limitador por proceso, con el ritmo como parámetro de `esperar()`. Antes
 había uno por valor de ritmo y 2 ritmos conviviendo dejaban 8 consultas en vuelo. Y el cuerpo
 tiene además un plazo TOTAL de 10 veces el de silencio (`PLAZOS_POR_CUERPO`), para el cuerpo que
@@ -787,7 +790,22 @@ que hay que conocer. Un documento que tarde más de 120 segundos en bajar, con e
 fábrica, ya no llega. El limitador recuerda el último turno de cada host para todo el proceso,
 así que 2 pruebas del mismo archivo que usan el mismo host con ritmos distintos se estorban; cada
 prueba de `test/configuracion.test.ts` usa hosts que las demás no usan. Y las pruebas que
-pueden perder cupos pasan `CMF_ESPERA_CUPO_MS` corto, para dar rojo en segundos.
+pueden perder cupos pasan `CMF_ESPERA_CUPO_MS` corto, para dar rojo en segundos. Lo que encontró
+la segunda revisión adversarial, sobre estos 3 cierres, antes de integrar. La espera de cupo era
+un sondeo cada 100 ms, sin orden, y una cadena de consultas seguidas devuelve su cupo y lo
+vuelve a tomar en el mismo paso, así que quien sondeaba podía no entrar nunca. Con el plazo
+nuevo, esa consulta pasaba de entrar tarde a fallar. Ahora la cola va en orden de llegada y
+`liberar()` entrega el cupo directo al primero, sin mover el contador. Regla. **agregarle un
+plazo a una espera obliga a revisar si esa espera es justa**, porque el plazo convierte en error
+lo que antes solo era demora. Medido con el cliente real y un reloj simulado, con los valores de
+fábrica. unas 110 consultas juntas al mismo host caben en los 120 segundos si la CMF responde
+en 200 ms, unas 45 si responde en 9 segundos, y 15 si está colgada. El plazo total del cuerpo
+por la salida chilena salía como 403 y daba el proxy por caído; ahora el `TimeoutError` sube tal
+cual. Un reintento sin cupo borraba el 500 o el bloqueo directo anterior; ahora se conservan. Y
+un ritmo de 2147483647 dejaba el turno del host a 24,8 días; el ritmo y la espera del 403 tienen
+un máximo de 60000. La misma revisión mostró que la prueba del plazo de cupo miraba una sola
+dirección del contador, la falta que la lección 37 ya había nombrado. El máximo en vuelo se mide
+en una red aparte, después del caso, porque dentro del caso ya llegó al tope.
 
 **39. El portón de alertas medía `src/` y el código nuevo corría en `infra/` (9 de octubre de
 2026).** Qué falló. CodeQL abrió una alerta crítica (`js/request-forgery`) en
@@ -815,6 +833,12 @@ nunca lo que se incluye.
   `test/salida-proxy.test.ts` tenía la misma vara y botó un pre-commit ese mismo día, porque
   arreglé la primera sin buscar a su hermana. Al corregir una prueba de tiempos, busca las demás
   con `grep -rn "Date.now()" test/*.test.ts`.
+- **Una prueba que simula la red importa primero `./sin-red-real.js`.** Al terminar, la prueba
+  devuelve `globalThis.fetch` a su valor original, y una consulta que siga viva sale con ese
+  original. Sin el guardia es la red real. El 9 de octubre de 2026 una prueba falló antes de
+  esperar a sus consultas en cola y hasta 4 GET salieron a `tasas.cmfchile.cl`. Lo vigila
+  `test/sin-red-real.test.ts`. Y una prueba con consultas de fondo las espera aunque falle,
+  con `yEsperar` de `test/tope-en-vuelo.test.ts`, o la prueba siguiente parte sin cupo.
 - **Con la máquina cargada, `npx` tarda minutos y parece colgado.** El mismo comando con
   `node node_modules/tsx/dist/cli.mjs --test test/<archivo>.test.ts` responde en segundos. Antes
   de declarar colgada una prueba, mira la CPU por proceso.
