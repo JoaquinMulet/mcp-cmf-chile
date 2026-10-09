@@ -773,13 +773,21 @@ dígitos, con mínimo y máximo. Y 4 mutantes pasaban las pruebas en verde. La p
 miraba que el aviso existiera y no que el valor malo dejara de usarse. Regla. una prueba de una
 protección mira el EFECTO protegido, no la señal que la acompaña. Lo que conviene saber. Un
 cuerpo colgado se reintenta 3 veces, igual que una consulta sin respuesta, así que un POST se
-envía 3 veces y el error tarda 3 plazos. Lo que sigue abierto. Un
-cuerpo que gotea un tramo antes de cada plazo, sin terminar nunca, retiene su cupo. La espera de
-cupo sigue sin plazo, así que un cupo perdido por un defecto futuro deja la instancia esperando
-en silencio. Y `getLimiter` estrena limitador cuando el ritmo cambia entre llamadas (8 en vuelo
-con 2 ritmos conviviendo). Esto último se deja a propósito y la razón está escrita sobre
-`getLimiter`: en producción el ritmo es fijo, y con un limitador único una prueba que pierde
-cupos deja la suite colgada en vez de roja.
+envía 3 veces y el error tarda 3 plazos. Los 3 puntos que esta lección dejó abiertos en su
+primera versión se cerraron el mismo día, en este orden, porque cada uno habilita al siguiente.
+La espera de cupo vence a los `CMF_ESPERA_CUPO_MS` (120000 de fábrica), con un error que dice
+que las 4 consultas están ocupadas y una línea `cmf_cupo` en el log. **Esa línea es la señal de
+un cupo perdido en producción.** Si aparece sin tráfico alto, hay una ruta que toma cupo y no lo
+devuelve. Con ese plazo, una prueba que pierde cupos sale roja en vez de colgar la suite, y eso
+permitió dejar UN solo limitador por proceso, con el ritmo como parámetro de `esperar()`. Antes
+había uno por valor de ritmo y 2 ritmos conviviendo dejaban 8 consultas en vuelo. Y el cuerpo
+tiene además un plazo TOTAL de 10 veces el de silencio (`PLAZOS_POR_CUERPO`), para el cuerpo que
+gotea un tramo antes de cada plazo. Al vencer lanza `TimeoutError` y no se reintenta. Los costos
+que hay que conocer. Un documento que tarde más de 120 segundos en bajar, con el plazo de
+fábrica, ya no llega. El limitador recuerda el último turno de cada host para todo el proceso,
+así que 2 pruebas del mismo archivo que usan el mismo host con ritmos distintos se estorban; cada
+prueba de `test/configuracion.test.ts` usa hosts que las demás no usan. Y las pruebas que
+pueden perder cupos pasan `CMF_ESPERA_CUPO_MS` corto, para dar rojo en segundos.
 
 **39. El portón de alertas medía `src/` y el código nuevo corría en `infra/` (9 de octubre de
 2026).** Qué falló. CodeQL abrió una alerta crítica (`js/request-forgery`) en
