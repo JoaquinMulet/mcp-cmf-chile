@@ -147,6 +147,8 @@ async function fetchConTimeout(
   url: string,
   init: RequestInit,
   timeoutMs: number = configDefault.upstreamTimeoutMs,
+  /** La página de la CMF que se consulta, cuando `url` es la del proxy. Es la que nombra el error. */
+  destino: string = url,
 ): Promise<Response> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -156,7 +158,7 @@ async function fetchConTimeout(
   } finally {
     clearTimeout(timer);
   }
-  return conPlazoDeCuerpo(res, url, ctrl, timeoutMs);
+  return conPlazoDeCuerpo(res, destino, ctrl, timeoutMs);
 }
 
 /**
@@ -168,10 +170,13 @@ async function fetchConTimeout(
  * el 9 de octubre de 2026. 4 respuestas así dejaban la instancia sin cupos).
  *
  * El reloj corre solo mientras alguien lee. Una respuesta que nadie lee no
- * vence.
+ * vence, y tampoco la suelta el recolector de basura, así que quien no va a
+ * leer una respuesta cancela su cuerpo (lo hace resolverChallenge).
  */
 function conPlazoDeCuerpo(res: Response, url: string, ctrl: AbortController, timeoutMs: number): Response {
-  if (!res.body) return res;
+  // La red entrega estados que `new Response` rechaza con RangeError. Esas
+  // respuestas pasan sin envolver.
+  if (!res.body || res.status < 200 || res.status > 599) return res;
   const lector = res.body.getReader();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const cuerpo = new ReadableStream<Uint8Array>(
@@ -252,7 +257,7 @@ function salidaChilena(env: CmfEnv, destino: URL, timeoutMs: number): { clave: s
       // Normalizada: una cabecera no admite caracteres fuera de latin1.
       headers.set(CABECERA_DESTINO, new URL(url).toString());
       headers.set(CABECERA_TOKEN, token);
-      return fetchConTimeout(proxy.toString(), { ...init, headers }, timeoutMs);
+      return fetchConTimeout(proxy.toString(), { ...init, headers }, timeoutMs, url);
     },
   };
 }

@@ -12,20 +12,30 @@ import assert from "node:assert/strict";
 import { fetchCmf } from "../src/client/cmf-client.js";
 
 const TOPE = 4;
+const INTENTOS = 3;
 
-type Red = (url: string) => Response;
+type Red = (url: string, init: RequestInit) => Response;
+/** Abre un cuerpo que no termina. Puede traer un primer tramo, y avisa si el cliente lo cancela. */
+type Abrir = (opciones?: { primerTramo?: string; alCancelar?: () => void }) => ReadableStream<Uint8Array>;
 
 /**
  * Simula la red y entrega los cuerpos abiertos para cerrarlos al final. Sin
  * ese cierre, una prueba en rojo dejaría el proceso vivo y la suite colgada
  * en vez de roja.
  */
-async function conRed(red: (abrir: () => ReadableStream<Uint8Array>) => Red, fn: () => Promise<void>): Promise<void> {
+async function conRed(red: (abrir: Abrir) => Red, fn: () => Promise<void>): Promise<void> {
   const original = globalThis.fetch;
   const abiertos: ReadableStreamDefaultController<Uint8Array>[] = [];
-  const abrir = () => new ReadableStream<Uint8Array>({ start: (c) => void abiertos.push(c) });
+  const abrir: Abrir = ({ primerTramo, alCancelar } = {}) =>
+    new ReadableStream<Uint8Array>({
+      start(c) {
+        abiertos.push(c);
+        if (primerTramo) c.enqueue(new TextEncoder().encode(primerTramo));
+      },
+      cancel: alCancelar,
+    });
   const responder = red(abrir);
-  globalThis.fetch = (async (url: string | URL | Request) => responder(String(url))) as typeof fetch;
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => responder(String(url), init ?? {})) as typeof fetch;
   try {
     await fn();
   } finally {
@@ -42,13 +52,37 @@ async function conRed(red: (abrir: () => ReadableStream<Uint8Array>) => Red, fn:
 
 const tras = <T>(ms: number, valor: T) => new Promise<T>((r) => setTimeout(() => r(valor), ms));
 
+/** La página del desafío anti-bot F5, con la forma que reconoce resolverChallenge. */
+const DESAFIO = '<script>var fwb_dat="QUJD";location="?cookiesession8341=0123456789abcdef0123456789abcdef"</script>';
+
+/**
+ * Una red que responde el desafío F5. `post` es la respuesta al envío del
+ * desafío, que el cliente no lee, y `final` es la de la consulta repetida,
+ * que el cliente entrega sin leer. Son las 2 respuestas que no pasan por la
+ * lectura completa de resolverChallenge.
+ */
+const redConDesafio =
+  (post: () => Response, final: () => Response, cabeceras: Record<string, string> = {}): Red =>
+  (_url, init) => {
+    if (init.method === "POST") return post();
+    const resuelto = new Headers(init.headers).get("cookie")?.includes("cookiesession1");
+    return resuelto ? final() : new Response(DESAFIO, { headers: cabeceras });
+  };
+
+const conCookie = () => new Response("ok", { headers: { "set-cookie": "cookiesession1=AAAA; Path=/" } });
+
 test(`${TOPE} cuerpos que nunca terminan devuelven su cupo al vencer el plazo, con un error que lo dice`, async () => {
   const env = { CMF_RATE_LIMIT_MS: "0", CMF_UPSTREAM_TIMEOUT_MS: "200" };
   let enVuelo = 0;
   let maximo = 0;
+  let cancelados = 0;
+  const senales: AbortSignal[] = [];
   await conRed(
-    (abrir) => (url) => {
-      if (url.includes("/colgada")) return new Response(abrir(), { status: 200 });
+    (abrir) => (url, init) => {
+      if (url.includes("/colgada")) {
+        if (init.signal) senales.push(init.signal);
+        return new Response(abrir({ alCancelar: () => void cancelados++ }), { status: 200 });
+      }
       enVuelo++;
       maximo = Math.max(maximo, enVuelo);
       return new Response(
@@ -76,6 +110,11 @@ test(`${TOPE} cuerpos que nunca terminan devuelven su cupo al vencer el plazo, c
       for (const fin of await Promise.race([Promise.all(colgadas), tras(5000, ["siguen colgadas"])])) {
         assert.match(fin, /^lanzó\. .*cuerpo.*200 ms.*www\.cmfchile\.cl\/colgada\d/);
       }
+      // Un cuerpo colgado se reintenta igual que una consulta sin respuesta. 3 intentos, ni más ni menos.
+      assert.equal(senales.length, TOPE * INTENTOS, "consultas a las páginas colgadas");
+      // Cada intento vencido corta su consulta y suelta su cuerpo. Sin eso la conexión queda abierta.
+      assert.ok(senales.every((s) => s.aborted), "cada consulta vencida queda abortada");
+      assert.equal(cancelados, TOPE * INTENTOS, "cuerpos cancelados");
       // El cupo se devuelve exactamente una vez. De más, el máximo pasa del tope. De menos, no llega.
       await Promise.all(
         Array.from({ length: 10 }, (_, i) => fetchCmf(`https://www.cmfchile.cl/lenta${i}`, {}, env).then((r) => r.text())),
@@ -131,6 +170,89 @@ test("la respuesta conserva estado, cabeceras y cada cookie por separado", async
       assert.equal(res.headers.get("content-type"), "text/html; charset=iso-8859-1");
       assert.deepEqual(res.headers.getSetCookie(), ["cookiesession1=AAAA; Path=/", "PHPSESSID=BBBB; Path=/"]);
       assert.equal(await res.text(), "no encontrado");
+    },
+  );
+});
+
+// Lo que sigue lo encontró la revisión adversarial del propio arreglo, el 9 de
+// octubre de 2026, con un servidor HTTP real.
+
+test("un estado HTTP que Response no sabe construir se entrega tal como llegó", async () => {
+  // La red entrega estados fuera de 200 a 599 y `new Response` los rechaza
+  // con RangeError. Envolver esa respuesta la cambiaba por un error ilegible.
+  const env = { CMF_RATE_LIMIT_MS: "0" };
+  await conRed(
+    () => () => Object.defineProperty(new Response("cuerpo de 600"), "status", { value: 600 }),
+    async () => {
+      const res = await fetchCmf("https://www.cmfchile.cl/estado-raro", {}, env);
+      assert.equal(res.status, 600);
+      assert.equal(await res.text(), "cuerpo de 600");
+    },
+  );
+});
+
+test("la respuesta al desafío anti-bot, que nadie lee, se suelta", async () => {
+  // Con el cuerpo envuelto, una respuesta sin leer ya no la suelta el
+  // recolector de basura. Medido con un servidor real. 6 conexiones abiertas
+  // tras 6 desafíos, y seguían ahí 18 segundos después.
+  const env = { CMF_RATE_LIMIT_MS: "0" };
+  let soltada = false;
+  await conRed(
+    (abrir) =>
+      redConDesafio(
+        () => new Response(abrir({ alCancelar: () => void (soltada = true) }), { headers: { "set-cookie": "cookiesession1=AAAA; Path=/" } }),
+        () => new Response("datos"),
+      ),
+    async () => {
+      const res = await fetchCmf("https://www.cmfchile.cl/con-desafio", {}, env);
+      assert.equal(await res.text(), "datos");
+      assert.ok(soltada, "el cuerpo de la respuesta al desafío quedó abierto");
+    },
+  );
+});
+
+test("quien deja de leer una respuesta corta su descarga", async () => {
+  const env = { CMF_RATE_LIMIT_MS: "0" };
+  let razon: unknown;
+  await conRed(
+    (abrir) => redConDesafio(conCookie, () => new Response(abrir({ primerTramo: "empieza", alCancelar: (r) => void (razon = r) }))),
+    async () => {
+      const res = await fetchCmf("https://www.cmfchile.cl/a-medias", {}, env);
+      await res.body?.cancel("me voy");
+      assert.equal(razon, "me voy");
+    },
+  );
+});
+
+test("un cuerpo que se cuelga por la salida chilena nombra la página de la CMF, no el proxy", async () => {
+  const env = {
+    CMF_RATE_LIMIT_MS: "0",
+    CMF_REINTENTO_403_MS: "0",
+    CMF_UPSTREAM_TIMEOUT_MS: "150",
+    CMF_PROXY_URL: "https://salida-cuerpo.example.cl/ruta-interna/",
+    CMF_PROXY_TOKEN: "token-de-prueba",
+  };
+  const marca = { "x-cmf-salida": "1" };
+  await conRed(
+    (abrir) => {
+      const porProxy = redConDesafio(
+        () => new Response("ok", { headers: { ...marca, "set-cookie": "cookiesession1=AAAA; Path=/" } }),
+        () => new Response(abrir({ primerTramo: "empieza" }), { headers: marca }),
+        marca,
+      );
+      return (url, init) =>
+        new URL(url).hostname.endsWith(".example.cl")
+          ? porProxy(url, init)
+          : new Response("<html><title>403 Forbidden</title></html>", { status: 403 });
+    },
+    async () => {
+      const res = await fetchCmf("https://www.cmfchile.cl/por-proxy.php?token=secreto", {}, env);
+      const fin = await res.text().then(
+        (t) => `leyó ${t}`,
+        (e) => `lanzó. ${(e as Error).message}`,
+      );
+      assert.match(fin, /^lanzó\. .*150 ms.*https:\/\/www\.cmfchile\.cl\/por-proxy\.php\)$/);
+      assert.ok(!fin.includes("example.cl") && !fin.includes("secreto"), fin);
     },
   );
 });

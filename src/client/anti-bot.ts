@@ -97,6 +97,9 @@ export async function resolverChallenge(
   });
 
   jar.setFromHeaders(res.headers);
+  // De esta respuesta solo sirven las cookies. Su cuerpo se suelta, porque
+  // una respuesta sin leer deja su conexión abierta.
+  void res.body?.cancel().catch(() => {});
 
   // Reintento del request original con la cookie resuelta
   const retryHeaders = new Headers(headers);
