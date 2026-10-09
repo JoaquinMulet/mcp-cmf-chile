@@ -711,6 +711,24 @@ leer Workers Logs sin el panel. `cf observability telemetry query --body '{...}'
 milisegundos. El log solo guarda fallas, así que no sirve para saber cuándo una consulta
 funcionó.
 
+**37. Un contador que se suma en un lugar y se resta en 2 se descuadra en silencio (9 de
+octubre de 2026).** Qué falló, por 2 caminos. `fetchCmf` liberaba su cupo dentro del `try` y
+otra vez en el `catch`, así que una redirección a un host fuera de `HOSTS_ALLOWLIST` o a http
+(que lanza después de la primera liberación) dejaba `inflight` en -1 y el tope de 4 pasaba a 5
+para toda la instancia. Y `RateLimiter.esperar` revisaba el cupo antes de esperar el turno y lo
+anotaba después, así que 10 consultas lanzadas juntas pasaban todas la revisión con el contador
+en 0 y quedaban las 10 en vuelo. El segundo camino apareció al escribir la prueba del primero.
+Causa raíz. La revisión y la anotación de un cupo estaban separadas por un `await`, y la
+liberación vivía en 2 ramas que no se excluían. Prescripción. En `fetchCmf` el `try` cubre SOLO
+la consulta, con un `liberar()` en el `catch` y otro justo después del `try`. En `esperar`, el
+cupo se toma en el mismo paso síncrono en que se revisa. Código nuevo que lance entre la
+respuesta y el `return` no necesita cuidar el cupo, porque ya está liberado. El costo que hay
+que conocer. una consulta que espera su turno ya ocupa cupo, así que 4 consultas en cola hacia
+`www.cmfchile.cl` hacen esperar a una quinta hacia otro host. La misma lectura encontró que una
+redirección rechazada que llegaba por la salida chilena se anotaba como `proxy_fallo` y
+entregaba el 403 original; ahora sube como «Host no permitido». Lo vigila
+`test/tope-en-vuelo.test.ts`, que cuenta las consultas en vuelo dentro del `fetch` simulado.
+
 ## Gotchas
 
 - **La fuente se cae, y eso no es un defecto tuyo.** El servlet BaseDato devuelve a veces el

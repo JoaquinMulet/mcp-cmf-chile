@@ -72,6 +72,11 @@ class RateLimiter {
     while (this.inflight >= this.maxInflight) {
       await new Promise((r) => setTimeout(r, 100));
     }
+    // El cupo se toma en el mismo paso en que se revisa, antes de esperar el
+    // turno. Anotarlo después de la espera dejaba pasar la revisión a todas
+    // las llamadas lanzadas juntas, con el contador todavía en 0 (10 en vuelo
+    // con tope de 4, medido el 9 de octubre de 2026).
+    this.inflight++;
     // El turno se RESERVA antes de esperar. Si se calculara la espera y
     // recién después se anotara la hora, 5 llamadas lanzadas juntas
     // leerían la misma hora vieja, esperarían lo mismo y saldrían en
@@ -83,7 +88,6 @@ class RateLimiter {
     this.ultimo.set(host, turno);
     const falta = turno - Date.now();
     if (falta > 0) await new Promise((r) => setTimeout(r, falta));
-    this.inflight++;
   }
   liberar(): void {
     this.inflight--;

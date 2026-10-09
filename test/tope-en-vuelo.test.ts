@@ -74,6 +74,18 @@ for (const [nombre, destino] of [
   });
 }
 
+// El segundo camino al mismo daño, que apareció al escribir esta prueba. El
+// cupo se revisaba antes de esperar el turno y se anotaba después, así que
+// las consultas lanzadas juntas pasaban todas la revisión con el contador en 0.
+test(`10 consultas lanzadas juntas, con espera entre turnos, nunca pasan de ${TOPE} en vuelo`, async () => {
+  const env = { CMF_RATE_LIMIT_MS: "5" };
+  const maximo = await conRedLenta(
+    () => undefined,
+    () => lanzarLentas(10, env).then(() => {}),
+  );
+  assert.equal(maximo, TOPE, `máximo en vuelo. ${maximo}`);
+});
+
 test("una redirección no permitida que llega por la salida chilena es un error de destino, no un proxy caído", async () => {
   const env = {
     CMF_RATE_LIMIT_MS: "0",
