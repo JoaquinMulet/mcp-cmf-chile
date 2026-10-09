@@ -192,27 +192,43 @@ async function fetchConTimeout(
  * El reloj corre solo mientras alguien lee. Una respuesta que nadie lee no
  * vence, y tampoco la suelta el recolector de basura, así que quien no va a
  * leer una respuesta cancela su cuerpo (lo hace resolverChallenge).
+ *
+ * Hay además un plazo TOTAL, de PLAZOS_POR_CUERPO veces el de silencio. Sin
+ * él, un cuerpo que gotea un tramo antes de cada plazo no vence nunca. Al
+ * vencer no se reintenta, porque cada intento ocuparía el cupo otro plazo
+ * total.
  */
+const PLAZOS_POR_CUERPO = 10;
 function conPlazoDeCuerpo(res: Response, url: string, ctrl: AbortController, timeoutMs: number): Response {
   // La red entrega estados que `new Response` rechaza con RangeError. Esas
   // respuestas pasan sin envolver.
   if (!res.body || res.status < 200 || res.status > 599) return res;
   const lector = res.body.getReader();
+  const totalMs = timeoutMs * PLAZOS_POR_CUERPO;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let finTotal: number | undefined;
   const cuerpo = new ReadableStream<Uint8Array>(
     {
       async pull(salida) {
+        // El plazo total parte con la primera lectura.
+        finTotal ??= Date.now() + totalMs;
+        const restoTotal = Math.max(0, finTotal - Date.now());
+        const venceElTotal = restoTotal <= timeoutMs;
         const silencio = new Promise<never>((_, rechazar) => {
-          timer = setTimeout(() => {
-            // Sin la query, que puede llevar una clave.
-            const u = new URL(url);
-            rechazar(
-              new DOMException(
-                `La CMF dejó de enviar el cuerpo de la respuesta por más de ${timeoutMs} ms (${u.origin}${u.pathname})`,
-                "AbortError",
-              ),
-            );
-          }, timeoutMs);
+          timer = setTimeout(
+            () => {
+              // Sin la query, que puede llevar una clave.
+              const u = new URL(url);
+              const pagina = `${u.origin}${u.pathname}`;
+              rechazar(
+                venceElTotal
+                  ? // No es AbortError a propósito, para que fetchCmf no lo reintente.
+                    new DOMException(`La CMF no terminó de enviar el cuerpo de la respuesta en ${totalMs} ms (${pagina})`, "TimeoutError")
+                  : new DOMException(`La CMF dejó de enviar el cuerpo de la respuesta por más de ${timeoutMs} ms (${pagina})`, "AbortError"),
+              );
+            },
+            venceElTotal ? restoTotal : timeoutMs,
+          );
         });
         try {
           const { done, value } = await Promise.race([lector.read(), silencio]);

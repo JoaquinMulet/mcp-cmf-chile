@@ -152,6 +152,48 @@ test("un cuerpo que tarda más que el plazo pero sigue llegando se entrega compl
   );
 });
 
+test("un cuerpo que gotea sin terminar nunca se corta al plazo total, sin reintento", async () => {
+  // El plazo de silencio no lo ve, porque siempre llega un tramo a tiempo.
+  // El plazo total es 10 veces el de silencio. Acá, 1500 ms.
+  const env = { CMF_RATE_LIMIT_MS: "0", CMF_UPSTREAM_TIMEOUT_MS: "150" };
+  let consultas = 0;
+  let cancelado = false;
+  let gotea = true;
+  try {
+    await conRed(
+      () => () => {
+        consultas++;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            async pull(c) {
+              await tras(40, null);
+              if (gotea) c.enqueue(new TextEncoder().encode("gota;"));
+              else c.close();
+            },
+            cancel: () => void (cancelado = true),
+          }),
+        );
+      },
+      async () => {
+        const inicio = Date.now();
+        const fin = await Promise.race([
+          fetchCmf("https://www.cmfchile.cl/gotea.php?token=secreto", {}, env).then(
+            (r) => `devolvió ${r.status}`,
+            (e) => `lanzó. ${(e as Error).message}`,
+          ),
+          tras(6000, "sigue goteando"),
+        ]);
+        assert.match(fin, /^lanzó\. .*no terminó.*1500 ms.*https:\/\/www\.cmfchile\.cl\/gotea\.php\)$/);
+        assert.ok(Date.now() - inicio >= 1495, `cortó antes del plazo total, a los ${Date.now() - inicio} ms`);
+        assert.equal(consultas, 1, "un goteo no se reintenta. cada intento ocuparía el cupo otro plazo total");
+        assert.ok(cancelado, "el cuerpo que goteaba quedó abierto");
+      },
+    );
+  } finally {
+    gotea = false;
+  }
+});
+
 test("la respuesta conserva estado, cabeceras y cada cookie por separado", async () => {
   // El anti-bot lee las cookies de set-cookie. Si el plazo del cuerpo las
   // fundiera en una sola línea, el desafío F5 dejaría de resolverse.
