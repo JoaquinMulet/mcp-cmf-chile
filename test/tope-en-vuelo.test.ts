@@ -52,12 +52,13 @@ const redireccionA = (destino: string): Respuesta => (url) =>
 
 // Con un plazo corto de cupo. El limitador es uno solo para todo el archivo,
 // así que una prueba que pierde cupos deja sin cupo a las que siguen. Con este
-// plazo esas pruebas salen rojas a los 3 segundos, en vez de esperar los 120
-// de fábrica.
+// plazo esas pruebas salen rojas a los 15 segundos, en vez de esperar los 120
+// de fábrica. Con 3 segundos la prueba de los 2 ritmos dio rojo con la máquina
+// cargada, porque sus 20 consultas tardaron 3,3 segundos.
 const lanzarLentas = (cuantas: number, env: Record<string, string>) =>
   Promise.all(
     Array.from({ length: cuantas }, (_, i) =>
-      fetchCmf(`https://www.cmfchile.cl/institucional/lenta${i}.php`, {}, { CMF_ESPERA_CUPO_MS: "3000", ...env }),
+      fetchCmf(`https://www.cmfchile.cl/institucional/lenta${i}.php`, {}, { CMF_ESPERA_CUPO_MS: "15000", ...env }),
     ),
   );
 
@@ -107,7 +108,7 @@ test(`2 ritmos distintos conviviendo comparten el tope de ${TOPE} en vuelo`, asy
 // dejaba a toda consulta posterior esperando para siempre y en silencio.
 test("una consulta que no alcanza cupo dentro del plazo falla con un error que lo dice, y no toca el contador", async () => {
   const env = { CMF_RATE_LIMIT_MS: "0" };
-  const maximo = await conRedLenta(
+  await conRedLenta(
     () => undefined,
     async (avisos) => {
       const ocupadas = lanzarLentas(TOPE, env);
@@ -117,13 +118,64 @@ test("una consulta que no alcanza cupo dentro del plazo falla con un error que l
         fetchCmf("https://api.sbif.cl/sin-cupo", {}, { ...env, CMF_ESPERA_CUPO_MS: "30" }),
         /4 consultas a la CMF ocupadas.*30 ms/,
       );
-      assert.ok(avisos.some((a) => a.includes("cmf_cupo")), `sin aviso en el log. ${avisos.join(" | ")}`);
+      const aviso = avisos.find((a) => a.includes("cmf_cupo"));
+      assert.ok(aviso, `sin aviso en el log. ${avisos.join(" | ")}`);
+      assert.deepEqual(JSON.parse(aviso), { cmf_cupo: { en_vuelo: TOPE, en_cola: 0, espera_ms: 30, host: "api.sbif.cl" } });
       await ocupadas;
-      // La que no alcanzó cupo tampoco lo devuelve. Si lo devolviera, el máximo pasaría del tope.
-      await lanzarLentas(10, env);
     },
   );
+  // El máximo se mide en una red aparte, después. En la misma red ya llegó a
+  // 4 con las ocupadas, y un cupo que quedara tomado no lo bajaría. Así se
+  // ven las 2 direcciones. 5 es un cupo devuelto de más, y 3 es uno perdido.
+  const maximo = await conRedLenta(
+    () => undefined,
+    () => lanzarLentas(10, env).then(() => {}),
+  );
   assert.equal(maximo, TOPE, `máximo en vuelo. ${maximo}`);
+});
+
+// La cola de cupo era un sondeo cada 100 ms, sin orden. Una cadena que pide
+// una consulta tras otra devuelve su cupo y lo vuelve a tomar en el mismo
+// paso, así que quien sondeaba nunca lo veía libre. Medido por la revisión
+// adversarial del 9 de octubre de 2026. en 3 segundos se liberaron cupos 12
+// veces y la consulta que esperaba no tomó ninguno.
+test("la cola de cupo respeta el orden de llegada, aunque otras consultas encadenen las suyas", async () => {
+  const env = { CMF_RATE_LIMIT_MS: "0" };
+  await conRedLenta(
+    () => undefined,
+    async () => {
+      const cadenas = Array.from({ length: TOPE }, async (_, c) => {
+        for (let i = 0; i < 6; i++) {
+          await fetchCmf(`https://www.cmfchile.cl/cadena${c}-${i}.php`, {}, { ...env, CMF_ESPERA_CUPO_MS: "15000" });
+        }
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      // Llegó después de las 4 primeras y antes que todas las demás. En orden,
+      // toma el primer cupo que se libera, a los 120 ms.
+      const res = await fetchCmf("https://api.sbif.cl/en-orden", {}, { ...env, CMF_ESPERA_CUPO_MS: "400" });
+      assert.equal(res.status, 200);
+      await Promise.all(cadenas);
+    },
+  );
+});
+
+test("las consultas que esperan cupo salen en el orden en que llegaron", async () => {
+  const env = { CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "15000" };
+  const salidas: string[] = [];
+  const anotar: Respuesta = (url) => {
+    const m = /\/orden-(\w)/.exec(url);
+    if (m) salidas.push(m[1]);
+    return undefined;
+  };
+  await conRedLenta(anotar, async () => {
+    const ocupadas = lanzarLentas(TOPE, env);
+    // A hosts distintos, para que el turno por host no las ordene.
+    const enCola = ["api.sbif.cl", "tasas.cmfchile.cl", "datosbanco.cmfchile.cl", "acreencias.cmfchile.cl"].map((host, i) =>
+      fetchCmf(`https://${host}/orden-${"abcd"[i]}`, {}, env),
+    );
+    await Promise.all([ocupadas, ...enCola]);
+  });
+  assert.deepEqual(salidas, ["a", "b", "c", "d"]);
 });
 
 test("una redirección no permitida que llega por la salida chilena es un error de destino, no un proxy caído", async () => {

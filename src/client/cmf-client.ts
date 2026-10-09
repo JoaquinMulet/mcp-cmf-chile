@@ -106,6 +106,8 @@ function config(env: CmfEnv) {
 class RateLimiter {
   private ultimo = new Map<string, number>();
   private inflight = 0;
+  /** Quienes esperan cupo, en orden de llegada. Cada uno es la función que se lo entrega. */
+  private cola: Array<() => void> = [];
   constructor(private maxInflight = 4) {}
 
   /**
@@ -113,24 +115,12 @@ class RateLimiter {
    * ese error no tomó cupo, así que no llama a liberar().
    */
   async esperar(host: string, minMs: number, esperaCupoMs: number): Promise<void> {
-    const limite = Date.now() + esperaCupoMs;
-    while (this.inflight >= this.maxInflight) {
-      // Sin este plazo, un cupo perdido por un defecto dejaba a toda consulta
-      // posterior esperando para siempre y sin rastro.
-      const falta = limite - Date.now();
-      if (falta <= 0) {
-        console.warn(JSON.stringify({ cmf_cupo: { en_vuelo: this.inflight, espera_ms: esperaCupoMs, host } }));
-        throw new Error(
-          `El servidor tiene sus ${this.maxInflight} consultas a la CMF ocupadas y esta no alcanzó cupo en ${esperaCupoMs} ms. Reintente en unos minutos.`,
-        );
-      }
-      await new Promise((r) => setTimeout(r, Math.min(100, falta)));
-    }
     // El cupo se toma en el mismo paso en que se revisa, antes de esperar el
     // turno. Anotarlo después de la espera dejaba pasar la revisión a todas
     // las llamadas lanzadas juntas, con el contador todavía en 0 (10 en vuelo
     // con tope de 4, medido el 9 de octubre de 2026).
-    this.inflight++;
+    if (this.inflight < this.maxInflight) this.inflight++;
+    else await this.hacerCola(host, esperaCupoMs);
     // El turno se RESERVA antes de esperar. Si se calculara la espera y
     // recién después se anotara la hora, 5 llamadas lanzadas juntas
     // leerían la misma hora vieja, esperarían lo mismo y saldrían en
@@ -143,8 +133,43 @@ class RateLimiter {
     const falta = turno - Date.now();
     if (falta > 0) await new Promise((r) => setTimeout(r, falta));
   }
+
+  /**
+   * Espera en la cola hasta que liberar() le entregue un cupo. La cola va en
+   * orden de llegada. Antes era un sondeo cada 100 ms, y una cadena de
+   * consultas seguidas devolvía su cupo y lo volvía a tomar en el mismo paso,
+   * así que quien sondeaba podía no entrar nunca.
+   *
+   * El plazo existe porque un cupo perdido por un defecto dejaba a toda
+   * consulta posterior esperando para siempre y sin rastro.
+   */
+  private hacerCola(host: string, esperaCupoMs: number): Promise<void> {
+    return new Promise<void>((resolver, rechazar) => {
+      const recibir = () => {
+        clearTimeout(plazo);
+        resolver();
+      };
+      const plazo = setTimeout(() => {
+        this.cola.splice(this.cola.indexOf(recibir), 1);
+        console.warn(
+          JSON.stringify({ cmf_cupo: { en_vuelo: this.inflight, en_cola: this.cola.length, espera_ms: esperaCupoMs, host } }),
+        );
+        rechazar(
+          new Error(
+            `El servidor tiene sus ${this.maxInflight} consultas a la CMF ocupadas y esta no alcanzó cupo en ${esperaCupoMs} ms. Reintente en unos minutos.`,
+          ),
+        );
+      }, esperaCupoMs);
+      this.cola.push(recibir);
+    });
+  }
+
   liberar(): void {
-    this.inflight--;
+    // Si alguien espera, el cupo pasa directo a sus manos y el contador no se
+    // mueve. Así nadie que llegue después se lo lleva antes.
+    const siguiente = this.cola.shift();
+    if (siguiente) siguiente();
+    else this.inflight--;
   }
 }
 
