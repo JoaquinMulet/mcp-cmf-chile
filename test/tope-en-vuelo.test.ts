@@ -50,9 +50,15 @@ async function conRedLenta(especial: Respuesta, fn: (avisos: string[]) => Promis
 const redireccionA = (destino: string): Respuesta => (url) =>
   url.includes("/redirige") ? new Response(null, { status: 302, headers: { location: destino } }) : undefined;
 
+// Con un plazo corto de cupo. El limitador es uno solo para todo el archivo,
+// así que una prueba que pierde cupos deja sin cupo a las que siguen. Con este
+// plazo esas pruebas salen rojas a los 3 segundos, en vez de esperar los 120
+// de fábrica.
 const lanzarLentas = (cuantas: number, env: Record<string, string>) =>
   Promise.all(
-    Array.from({ length: cuantas }, (_, i) => fetchCmf(`https://www.cmfchile.cl/institucional/lenta${i}.php`, {}, env)),
+    Array.from({ length: cuantas }, (_, i) =>
+      fetchCmf(`https://www.cmfchile.cl/institucional/lenta${i}.php`, {}, { CMF_ESPERA_CUPO_MS: "3000", ...env }),
+    ),
   );
 
 for (const [nombre, destino] of [
@@ -82,6 +88,17 @@ test(`10 consultas lanzadas juntas, con espera entre turnos, nunca pasan de ${TO
   const maximo = await conRedLenta(
     () => undefined,
     () => lanzarLentas(10, env).then(() => {}),
+  );
+  assert.equal(maximo, TOPE, `máximo en vuelo. ${maximo}`);
+});
+
+// El tercer camino, de la revisión adversarial del 9 de octubre de 2026. Había
+// un limitador por ritmo, y cada cambio de CMF_RATE_LIMIT_MS estrenaba uno con
+// el contador en 0. Con 2 ritmos conviviendo quedaban 8 consultas en vuelo.
+test(`2 ritmos distintos conviviendo comparten el tope de ${TOPE} en vuelo`, async () => {
+  const maximo = await conRedLenta(
+    () => undefined,
+    () => Promise.all([lanzarLentas(10, { CMF_RATE_LIMIT_MS: "0" }), lanzarLentas(10, { CMF_RATE_LIMIT_MS: "1" })]).then(() => {}),
   );
   assert.equal(maximo, TOPE, `máximo en vuelo. ${maximo}`);
 });
@@ -149,8 +166,7 @@ test("una consulta que falla en la red devuelve su cupo", async () => {
 
 test("un proxy que falla en la red devuelve su cupo", async () => {
   const env = {
-    // Otro ritmo, para estrenar limitador y no heredar el contador de la prueba anterior.
-    CMF_RATE_LIMIT_MS: "1",
+    CMF_RATE_LIMIT_MS: "0",
     CMF_REINTENTO_403_MS: "0",
     CMF_PROXY_URL: "https://salida-sin-red.example.cl/",
     CMF_PROXY_TOKEN: "token-de-prueba",
@@ -164,7 +180,7 @@ test("un proxy que falla en la red devuelve su cupo", async () => {
       const res = await fetchCmf(`https://www.cmfchile.cl/bloqueada${i}`, {}, env);
       assert.equal(res.status, 403);
     }
-    await lanzarLentas(10, { CMF_RATE_LIMIT_MS: "1" });
+    await lanzarLentas(10, { CMF_RATE_LIMIT_MS: "0" });
   });
   assert.equal(maximo, TOPE, `máximo en vuelo. ${maximo}`);
 });

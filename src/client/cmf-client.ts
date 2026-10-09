@@ -96,17 +96,23 @@ function config(env: CmfEnv) {
   };
 }
 
-/** Rate limiter por host: cola sin plazo y max in-flight (singleton de módulo). */
+/**
+ * Rate limiter por host: cola con plazo y max in-flight. Hay UNO por proceso.
+ * El ritmo llega en cada espera, porque el tope en vuelo es de la instancia y
+ * no de un valor de configuración. Con un limitador por ritmo, 2 valores de
+ * CMF_RATE_LIMIT_MS conviviendo dejaban 8 consultas en vuelo (medido el 9 de
+ * octubre de 2026).
+ */
 class RateLimiter {
   private ultimo = new Map<string, number>();
   private inflight = 0;
-  constructor(private minMs: number, private maxInflight = 4) {}
+  constructor(private maxInflight = 4) {}
 
   /**
    * Espera cupo y turno. Si pasan `esperaCupoMs` sin cupo, lanza. Quien recibe
    * ese error no tomó cupo, así que no llama a liberar().
    */
-  async esperar(host: string, esperaCupoMs: number): Promise<void> {
+  async esperar(host: string, minMs: number, esperaCupoMs: number): Promise<void> {
     const limite = Date.now() + esperaCupoMs;
     while (this.inflight >= this.maxInflight) {
       // Sin este plazo, un cupo perdido por un defecto dejaba a toda consulta
@@ -132,7 +138,7 @@ class RateLimiter {
     // 3 de septiembre de 2026 por la revisión adversarial. 4 peticiones en
     // 7 ms con un mínimo de 400 ms.
     const ultimo = this.ultimo.get(host) ?? 0;
-    const turno = Math.max(Date.now(), ultimo + this.minMs);
+    const turno = Math.max(Date.now(), ultimo + minMs);
     this.ultimo.set(host, turno);
     const falta = turno - Date.now();
     if (falta > 0) await new Promise((r) => setTimeout(r, falta));
@@ -142,21 +148,7 @@ class RateLimiter {
   }
 }
 
-// Un limitador por valor de ritmo. En producción el ritmo es fijo, así que hay
-// uno solo. Si 2 ritmos conviven, cada cambio estrena limitador con el contador
-// en 0 y el tope se suma (8 en vuelo, medido el 9 de octubre de 2026). Se deja
-// así a propósito. Las pruebas cambian el ritmo para partir con el contador en
-// 0, y con un limitador único una prueba que pierde cupos deja la suite colgada
-// en vez de roja.
-let limiter: RateLimiter | null = null;
-let limiterMs = 0;
-function getLimiter(minMs: number): RateLimiter {
-  if (!limiter || limiterMs !== minMs) {
-    limiter = new RateLimiter(minMs);
-    limiterMs = minMs;
-  }
-  return limiter;
-}
+const limitador = new RateLimiter();
 
 /** Pone las cabeceras de navegador que el llamador no trajo. Sin Referer, a propósito. */
 function cabecerasDeNavegador(headers: Headers): void {
@@ -317,7 +309,6 @@ export async function fetchCmf(
   const cookie = jar.header(u);
   if (cookie) headers.set("Cookie", cookie);
 
-  const rl = getLimiter(cfg.rateLimitMs);
   // El timeout configurado (env) debe aplicar también a los intentos del anti-bot
   const fetchConCfg = (u: string, i: RequestInit) => fetchConTimeout(u, i, cfg.upstreamTimeoutMs);
 
@@ -337,7 +328,7 @@ export async function fetchCmf(
   for (let intento = 0; intento < 3; intento++) {
     if (intento > 0 && !trasEspera403) await new Promise((r) => setTimeout(r, 500 * 2 ** (intento - 1)));
     trasEspera403 = false;
-    await rl.esperar(u.hostname, cfg.esperaCupoMs);
+    await limitador.esperar(u.hostname, cfg.rateLimitMs, cfg.esperaCupoMs);
     // El try cubre SOLO la consulta, para que el cupo se libere exactamente
     // una vez por cada esperar(). Lo que lanza después (una redirección a un
     // destino no permitido) no vuelve a pasar por el catch.
@@ -345,7 +336,7 @@ export async function fetchCmf(
     try {
       res = await resolverChallenge(porProxy && salida ? salida.fetchFn : fetchConCfg, url, { ...init, headers }, jar);
     } catch (e) {
-      rl.liberar();
+      limitador.liberar();
       if (porProxy && salida) {
         // Un proxy colgado o sin red es un proxy caído. No se le insiste.
         registrarSalida("proxy_fallo", 0, u);
@@ -361,7 +352,7 @@ export async function fetchCmf(
       if (intento < 2 && e instanceof DOMException && e.name === "AbortError") continue;
       throw e;
     }
-    rl.liberar();
+    limitador.liberar();
     if (porProxy && salida && res.headers.has(MARCA_COLA) && intento < 2) {
       // El proxy está sano y pide esperar. Mandar esto a la CMF directa
       // sería sumar consultas justo cuando hay que bajar el ritmo.

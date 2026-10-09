@@ -17,6 +17,7 @@ const env = {
   CMF_CACHE_TTL_S: process.env.CMF_CACHE_TTL_S,
   CMF_MAX_ROWS: process.env.CMF_MAX_ROWS,
   CMF_UPSTREAM_TIMEOUT_MS: process.env.CMF_UPSTREAM_TIMEOUT_MS,
+  CMF_ESPERA_CUPO_MS: process.env.CMF_ESPERA_CUPO_MS,
   CMF_REINTENTO_403_MS: process.env.CMF_REINTENTO_403_MS,
   CMF_KV: undefined,
   __pdfModule: pdfModule,

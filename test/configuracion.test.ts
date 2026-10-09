@@ -55,8 +55,10 @@ test("un plazo ilegible vale el de fábrica, no un plazo que vence al instante",
 test(`un ritmo ilegible no afloja el tope de ${TOPE} en vuelo`, async () => {
   const env = { CMF_RATE_LIMIT_MS: "rapido" };
   // A 6 hosts distintos, para que la espera entre consultas al mismo host no
-  // las separe y lo único que las contenga sea el tope.
-  const hosts = ["www.cmfchile.cl", "api.sbif.cl", "tasas.cmfchile.cl", "datosbanco.cmfchile.cl", "acreencias.cmfchile.cl", "conocetuseguro.cl"];
+  // las separe y lo único que las contenga sea el tope. Ninguno se repite en
+  // otra prueba de este archivo, porque el limitador recuerda el último turno
+  // de cada host y el ritmo de fábrica haría esperar a la consulta repetida.
+  const hosts = ["best-cmf.cl", "api.sbif.cl", "tasas.cmfchile.cl", "datosbanco.cmfchile.cl", "acreencias.cmfchile.cl", "conocetuseguro.cl"];
   const { maximo } = await conRedLenta(120, async () => {
     await Promise.all(hosts.map((h) => fetchCmf(`https://${h}/ritmo-ilegible`, {}, env)));
   });
