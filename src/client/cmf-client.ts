@@ -16,6 +16,10 @@ export interface CmfEnv {
   CMF_UPSTREAM_TIMEOUT_MS?: string;
   /** Espera antes del único reintento tras un 403 de la CMF. 0 en pruebas. */
   CMF_REINTENTO_403_MS?: string;
+  /** Salida chilena: URL https del proxy propio que consulta a www.cmfchile.cl desde Chile. */
+  CMF_PROXY_URL?: string;
+  /** Secreto compartido con ese proxy. Sin los 2 valores, la salida chilena no existe. */
+  CMF_PROXY_TOKEN?: string;
 }
 
 /** Cabeceras de un navegador real. Solo se ponen si el llamador no trae las suyas. */
@@ -124,6 +128,54 @@ async function fetchConTimeout(
 }
 
 /**
+ * Salida chilena. www.cmfchile.cl rechaza las IP de salida de Cloudflare con
+ * 403 o 520, corra el Worker en Río o en Santiago (medido el 9 de octubre de
+ * 2026 con placement azure:chilecentral). El respaldo es un proxy propio en
+ * Chile, que recibe el destino en una cabecera y marca lo que reenvía con
+ * x-cmf-salida. Una respuesta sin esa marca es del túnel, no de la CMF.
+ */
+const HOST_CON_SALIDA = "www.cmfchile.cl";
+const CABECERA_DESTINO = "X-Cmf-Destino";
+const CABECERA_TOKEN = "X-Cmf-Token";
+const MARCA_SALIDA = "x-cmf-salida";
+/** El 429 del propio proxy, cuando su cola está llena. No viene de la CMF. */
+const MARCA_COLA = "x-cmf-salida-cola";
+const ESPERA_COLA_MS = 1500;
+const MEMORIA_BLOQUEO_MS = 10 * 60 * 1000;
+
+/** Hasta cuándo se da por bloqueado el camino directo, por URL de proxy. */
+const directoBloqueadoHasta = new Map<string, number>();
+
+const esBloqueoDeOrigen = (status: number) => status === 403 || status === 520;
+
+type FetchFn = (url: string, init: RequestInit) => Promise<Response>;
+
+/** El fetch que sale por el proxy, o null si no aplica a este host o no está configurado. */
+function salidaChilena(env: CmfEnv, destino: URL, timeoutMs: number): { clave: string; fetchFn: FetchFn } | null {
+  if (destino.hostname !== HOST_CON_SALIDA || !env.CMF_PROXY_URL || !env.CMF_PROXY_TOKEN) return null;
+  // Una URL mal escrita apaga la salida, no el camino directo.
+  if (!URL.canParse(env.CMF_PROXY_URL)) return null;
+  const proxy = new URL(env.CMF_PROXY_URL);
+  if (proxy.protocol !== "https:") return null;
+  const token = env.CMF_PROXY_TOKEN;
+  return {
+    clave: proxy.toString(),
+    fetchFn: (url, init) => {
+      const headers = new Headers(init.headers ?? {});
+      // Normalizada: una cabecera no admite caracteres fuera de latin1.
+      headers.set(CABECERA_DESTINO, new URL(url).toString());
+      headers.set(CABECERA_TOKEN, token);
+      return fetchConTimeout(proxy.toString(), { ...init, headers }, timeoutMs);
+    },
+  };
+}
+
+/** Deja rastro de cada cambio de camino. Nunca lleva el token ni la query. */
+function registrarSalida(motivo: "directo_bloqueado" | "proxy_fallo", status: number, destino: URL): void {
+  console.warn(JSON.stringify({ cmf_salida: { motivo, status, ruta: destino.pathname } }));
+}
+
+/**
  * Núcleo: request HTTP hacia la CMF con allowlist, UA, cookie jar, anti-bot,
  * rate limit, retry con backoff y manejo de redirects validados.
  */
@@ -153,13 +205,48 @@ export async function fetchCmf(
   // siguiente se vuelve a reservar con esperar().
   let reintentado403 = false;
   let trasEspera403 = false;
+  // La salida chilena. Si el camino directo ya dio bloqueo hace poco, se parte
+  // por el proxy y la CMF directa no recibe otra consulta que va a rechazar.
+  let salida = salidaChilena(env, u, cfg.upstreamTimeoutMs);
+  let porProxy = salida !== null && (directoBloqueadoHasta.get(salida.clave) ?? 0) > Date.now();
+  // El rechazo directo de esta misma consulta. Si después el proxy falla, es
+  // lo que se entrega: la verdad sigue siendo «la CMF rechazó al servidor».
+  let bloqueoDirecto: Response | null = null;
   for (let intento = 0; intento < 3; intento++) {
     if (intento > 0 && !trasEspera403) await new Promise((r) => setTimeout(r, 500 * 2 ** (intento - 1)));
     trasEspera403 = false;
     await rl.esperar(u.hostname);
     try {
-      const res = await resolverChallenge(fetchConCfg, url, { ...init, headers }, jar);
+      const res = await resolverChallenge(porProxy && salida ? salida.fetchFn : fetchConCfg, url, { ...init, headers }, jar);
       rl.liberar();
+      if (porProxy && salida && res.headers.has(MARCA_COLA) && intento < 2) {
+        // El proxy está sano y pide esperar. Mandar esto a la CMF directa
+        // sería sumar consultas justo cuando hay que bajar el ritmo.
+        trasEspera403 = true;
+        await new Promise((r) => setTimeout(r, ESPERA_COLA_MS));
+        continue;
+      }
+      if (porProxy && salida && !res.headers.has(MARCA_SALIDA) && !res.headers.has(MARCA_COLA)) {
+        // El proxy no contestó como proxy: se olvida y se vuelve al directo.
+        registrarSalida("proxy_fallo", res.status, u);
+        directoBloqueadoHasta.delete(salida.clave);
+        salida = null;
+        porProxy = false;
+        if (bloqueoDirecto) return bloqueoDirecto;
+        trasEspera403 = true;
+        intento--;
+        continue;
+      }
+      if (!porProxy && salida && esBloqueoDeOrigen(res.status)) {
+        // El cambio de camino no gasta un intento: pasa a lo más 1 vez por consulta.
+        registrarSalida("directo_bloqueado", res.status, u);
+        directoBloqueadoHasta.set(salida.clave, Date.now() + MEMORIA_BLOQUEO_MS);
+        porProxy = true;
+        bloqueoDirecto = res;
+        trasEspera403 = true;
+        intento--;
+        continue;
+      }
       if (res.status >= 300 && res.status < 400 && res.headers.get("location")) {
         // Redirect manual validado (allowlist)
         const next = new URL(res.headers.get("location")!, url).toString();
@@ -180,6 +267,17 @@ export async function fetchCmf(
       return res;
     } catch (e) {
       rl.liberar();
+      if (porProxy && salida) {
+        // Un proxy colgado o sin red es un proxy caído. No se le insiste.
+        registrarSalida("proxy_fallo", 0, u);
+        directoBloqueadoHasta.delete(salida.clave);
+        salida = null;
+        porProxy = false;
+        if (bloqueoDirecto) return bloqueoDirecto;
+        trasEspera403 = true;
+        intento--;
+        continue;
+      }
       ultimoError = e;
       if (intento < 2 && e instanceof DOMException && e.name === "AbortError") continue;
       throw e;

@@ -1,0 +1,15 @@
+[Unit]
+Description=Salida chilena del MCP de la CMF (proxy hacia www.cmfchile.cl)
+After=network-online.target
+
+[Service]
+Environment=CMF_SALIDA_TOKEN_FILE=%h/cmf-salida/token
+Environment=CMF_SALIDA_PUERTO=8791
+ExecStart=/usr/bin/env node %h/cmf-salida/proxy.mjs
+Restart=on-failure
+RestartSec=5
+MemoryMax=256M
+Nice=5
+
+[Install]
+WantedBy=default.target

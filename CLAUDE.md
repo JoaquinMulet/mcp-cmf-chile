@@ -95,6 +95,8 @@ del dueño. Si molesta, se hace más rápido, no más corto.
   financieros que salen partidas del PDF.
 - `src/client/cmf-client.ts` — todas las llamadas salen por acá. Rate limit, timeout y caché.
 - `src/client/anti-bot.ts` — resuelve el desafío anti-bot F5 de los sistemas legacy.
+- `infra/salida-chilena/` — el proxy que consulta a `www.cmfchile.cl` desde una IP chilena, con
+  sus 2 unidades de systemd. Corre en el servidor Floki, no en Cloudflare. Ver la lección 36.
 - `src/client/cache.ts` — caché LRU con TTL por clave.
 - `src/client/parsers.ts` — **el corazón frágil.** HTML, XLS y CSV a filas. Un cambio acá es
   un cambio en decenas de tools a la vez. Cuenta cuántas antes de tocarlo, con
@@ -660,11 +662,63 @@ mensual en R2 es posible, pero exige el plan pagado y una clave de la CMF con cu
 
 **35. Un 403 de www.cmfchile.cl desde el Worker se lee en Workers Logs, no se adivina (9 de octubre de 2026).** Qué falló. `cmf_seguros_deposito_polizas` y `cmf_documento_markdown` respondieron 403 seis veces, y el log no traía cabeceras ni cuerpo, así que no se podía saber si la CMF bloqueaba el origen de Cloudflare o el ritmo. Causa raíz. El log solo guardaba el estado HTTP, y las descargas binarias ni siquiera leían el cuerpo. Prescripción. Cada respuesta que no es datos deja en `cmf_upstream` el estado, `reintento_403`, un subconjunto fijo de cabeceras (`server`, `content-type`, `content-length`, `retry-after`, `cf-ray`, `x-cache`, `via`), solo los NOMBRES de las cookies de `set-cookie` y los primeros 160 caracteres del cuerpo, también en las rutas binarias. La query de la URL no se registra porque lleva tokens. Un 403 se reintenta una vez tras `CMF_REINTENTO_403_MS` (6000 por defecto). Para leerlo en Workers Logs se filtra por `cmf_upstream` y se compara `cf-ray` con el de la petición fallida: si el cuerpo trae la marca «Attack ID» es el cortafuegos F5; si no la trae, el log solo dice que el origen fue rechazado, y eso no separa bloqueo de ritmo por sí mismo. Lo vigilan `test/diagnostico-403.test.ts` y `test/bloqueo-upstream.test.ts`.
 
+**36. La CMF bloquea las IP de salida de Cloudflare, y correr el Worker en Chile no lo arregla
+(9 de octubre de 2026).** Qué falló. `www.cmfchile.cl` respondió 403 o 520 a toda consulta que
+salía del Worker. Las tools de `api.sbif.cl` y de BEST no se vieron afectadas. Evidencia, toda
+medida ese día. La CMF NO está detrás de Cloudflare: resuelve a `152.230.198.86` y responde
+`Server: XXXXXX`. Las cabeceras `server: cloudflare` y `cf-ray` del log `cmf_upstream` las pone
+Cloudflare en toda respuesta que recibe un Worker, y el código al final del `cf-ray` dice dónde
+corrió el Worker, no quién respondió. El 403 es la página de Apache de la CMF (362 bytes) y el
+520 es Cloudflare avisando que el origen cortó la conexión («error code: 520», 16 bytes). Los
+usuarios chilenos (Telefónica, Entel) entran al Worker por Río de Janeiro, `colo=GIG`, aunque
+`cloudflare.com/cdn-cgi/trace` les diga `SCL`. Un Worker de prueba con
+`"placement": { "region": "azure:chilecentral" }` corrió en Santiago (`Cf-Placement:
+remote-SCL`, `cf-ray` terminado en `-SCL`) y recibió 520, 520 y 403 en 3 consultas. En el mismo
+minuto, la misma URL con las mismas cabeceras dio 200 desde una IP doméstica chilena. Causa
+raíz. El bloqueo es por la IP de salida de Cloudflare, no por el país, el ritmo ni las
+cabeceras. Prescripción. `fetchCmf` de `src/client/cmf-client.ts` tiene una salida chilena.
+Cuando `www.cmfchile.cl` responde 403 o 520 y existen `CMF_PROXY_URL` (variable) y
+`CMF_PROXY_TOKEN` (secreto), repite la consulta por el proxy de `infra/salida-chilena`, que
+corre en Floki detrás de un túnel de Cloudflare propio. El bloqueo se recuerda 10 minutos por
+instancia, para no golpear a la CMF directa con consultas que va a rechazar. Lo que el proxy
+reenvía lleva la cabecera `x-cmf-salida`. Una respuesta sin esa marca es del túnel o del proxy,
+y ahí el cliente vuelve al camino directo y entrega el bloqueo original. Cada cambio de camino
+deja una línea `cmf_salida` en Workers Logs, con `directo_bloqueado` o `proxy_fallo`. Lo vigilan
+`test/salida-chilena.test.ts` y `test/salida-proxy.test.ts`. Lo que NO sirve, para no volver a
+probarlo. `placement` (fija dónde corre, no con qué IP sale) y Smart Placement. La página de
+`placement` de la documentación de Cloudflare no ofrece ninguna forma de elegir la IP de
+salida. Y el costo que hay que conocer. toda consulta a
+`www.cmfchile.cl` del servidor público sale ahora por la IP de la casa del dueño, así que el
+proxy tiene su propio ritmo máximo (1 consulta cada 600 ms, 12 en curso) y solo acepta ese host.
+Si Floki se apaga, se cuelga o pierde la red, las tools de `www.cmfchile.cl` vuelven a responder
+el 403 de siempre. Un 403 que la CMF da por la consulta misma, y no por la IP, también se repite
+por el proxy, porque el estado no los distingue. Lo que encontró la revisión adversarial antes
+de integrar, 6 defectos con prueba. El proxy juntaba el documento entero en memoria antes de
+responder, así que el plazo del Worker cubría la descarga completa y un PDF grande nunca
+llegaba; ahora reenvía en tramos, el cupo dura hasta el último byte y la consulta a la CMF se
+corta si el Worker corta. Un proxy colgado dejaba al cliente pegado 10 minutos sin rastro;
+ahora cualquier falla por el proxy lo descarta y entrega el bloqueo original. Una URL con un
+carácter fuera de latin1 reventaba al ponerla en la cabecera; ahora viaja normalizada. El 429
+de cola llena del proxy se leía como proxy caído y mandaba más consultas a la CMF directa;
+ahora lleva la marca `x-cmf-salida-cola` y el cliente espera y reintenta por el proxy. Y
+medido, no supuesto. Cloudflare reescribía el HTML al pasar por el túnel: la misma ficha
+pesaba 149.895 bytes por el túnel y 136.299 en la CMF. Con `cache-control: no-store,
+no-transform` en la respuesta del proxy llega idéntica, 136.299 bytes. Regla. un proxy propio
+detrás de Cloudflare responde siempre `no-transform`, y la prueba es comparar los bytes por el
+túnel contra los bytes en el origen. Para
+leer Workers Logs sin el panel. `cf observability telemetry query --body '{...}'` con
+`view: "events"`, un filtro `$metadata.service` igual a `mcp-cmf-chile` y la ventana en
+milisegundos. El log solo guarda fallas, así que no sirve para saber cuándo una consulta
+funcionó.
+
 ## Gotchas
 
 - **La fuente se cae, y eso no es un defecto tuyo.** El servlet BaseDato devuelve a veces el
   desafío anti-bot en vez de la tabla. Un plazo agotado es evidencia sobre la CMF, no sobre el
   código. Reintenta antes de declarar un hallazgo.
+- **Las tools de `www.cmfchile.cl` dependen de Floki.** Si todas responden 403 a la vez, mira
+  primero si la salida chilena está viva, con los comandos de `infra/salida-chilena/README.md`,
+  y busca `cmf_salida` con `proxy_fallo` en Workers Logs. Ver la lección 36.
 - **2 tools piden captcha.** `cmf_hechos_globales` y `cmf_fondos_mutuos_cartola`. La imagen se
   sirve como recurso `cmf://captcha/{id}`, es de un solo uso y dura 10 minutos. Nunca hay OCR
   automático, el código lo lee la persona.

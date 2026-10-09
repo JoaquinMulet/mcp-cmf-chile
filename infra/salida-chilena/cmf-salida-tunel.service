@@ -1,0 +1,12 @@
+[Unit]
+Description=Tunel de Cloudflare de la salida chilena del MCP de la CMF
+After=network-online.target cmf-salida-proxy.service
+
+[Service]
+ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate --config %h/cmf-salida/tunel.yml run
+Restart=on-failure
+RestartSec=5
+MemoryMax=256M
+
+[Install]
+WantedBy=default.target
