@@ -13,14 +13,23 @@
 # Lo que sigue excluido es lo que se genera o se descarga, y por eso no
 # es codigo nuestro que revisar.
 #
+# test/fixtures entro a la lista el 9 de octubre de 2026. Son paginas
+# reales de la CMF que las pruebas leen como datos, asi que no se pueden
+# borrar como se borro test/investigacion. El JavaScript que traen lo
+# escribio la CMF y no corre en ninguna prueba. Eran 26 de las 27 alertas
+# abiertas, 6 de ellas altas, y la unica que importaba estaba en infra/.
+# La exclusion vale mientras ahi solo haya datos, y eso lo exige una
+# prueba. un archivo de codigo en test/fixtures la pone roja.
+#
 # test/exclusiones-vivas.test.ts vigila esta lista. una exclusion que
 # apunta a una carpeta que ya no existe deja la puerta abierta para que
 # alguien cree otra con ese nombre y nadie la revise.
-name: "CodeQL para el codigo que se despliega"
+name: "CodeQL para el codigo que corre"
 
 paths-ignore:
   - dist
   - node_modules
+  - test/fixtures
 
 # security-and-quality trae ademas las reglas de calidad, y valen la
 # pena. Encontraron 6 declaraciones sin usar que ni el linter local ni el

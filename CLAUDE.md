@@ -781,6 +781,20 @@ con 2 ritmos conviviendo). Esto último se deja a propósito y la razón está e
 `getLimiter`: en producción el ritmo es fijo, y con un limitador único una prueba que pierde
 cupos deja la suite colgada en vez de roja.
 
+**39. El portón de alertas medía `src/` y el código nuevo corría en `infra/` (9 de octubre de
+2026).** Qué falló. CodeQL abrió una alerta crítica (`js/request-forgery`) en
+`infra/salida-chilena/proxy.mjs` el mismo día que el proxy nació, y `herramientas/alertas.mjs`
+la contó como «en pruebas», porque su lista de código vigilado era solo `src/`. Causa raíz. La
+lista nombraba lo que SÍ se vigila, así que toda carpeta nueva nacía fuera. Cura. La lista se
+dio vuelta. Todo lo que no está en `test/` cuenta como código que corre y bloquea con una
+alerta alta o crítica (`herramientas/alertas-clasificar.mjs`, con `test/porton-alertas.test.ts`).
+La alerta resultó un falso positivo y quedó descartada en GitHub con su razón: el destino
+exige `https` y el host exacto, el `fetch` usa la URL ya analizada, y 27 direcciones tramposas
+no lograron salir de `www.cmfchile.cl`. Las otras 26 alertas abiertas eran del JavaScript de la
+CMF guardado en `test/fixtures`, que ahora está fuera del análisis con una prueba que exige que
+ahí solo haya datos. Regla. una lista de vigilancia nombra lo que se EXCLUYE, con su razón,
+nunca lo que se incluye.
+
 ## Gotchas
 
 - **La fuente se cae, y eso no es un defecto tuyo.** El servlet BaseDato devuelve a veces el

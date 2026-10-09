@@ -20,8 +20,8 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { extname, join } from "node:path";
 
 const RAIZ = join(import.meta.dirname, "..");
 
@@ -62,4 +62,38 @@ test("ninguna exclusión tapa el código que se despliega", () => {
   // Worker entero sin análisis, y la config seguiría viéndose razonable.
   const prohibidas = exclusiones().filter((p) => p === "src" || p.startsWith("src/"));
   assert.deepEqual(prohibidas, [], `el código del Worker no puede quedar fuera del análisis: ${prohibidas.join(", ")}`);
+});
+
+test("tampoco tapa el resto del código que corre ni las pruebas enteras", () => {
+  // infra/ corre en una máquina del dueño y herramientas/ corre en la CI con
+  // credenciales. De test/ solo se salta test/fixtures, que son datos.
+  const CORRE = ["infra", "herramientas", ".github"];
+  const prohibidas = exclusiones().filter((p) => p === "test" || CORRE.some((c) => p === c || p.startsWith(`${c}/`)));
+  assert.deepEqual(prohibidas, [], `esto no puede quedar fuera del análisis: ${prohibidas.join(", ")}`);
+});
+
+/** Extensiones de datos capturados de la CMF. Todo lo demás es código nuestro. */
+const SOLO_DATOS = new Set([".html", ".json", ".xls", ".xlsx", ".pdf", ".txt", ".csv", ".xml"]);
+
+/** Los archivos de una lista que NO son datos capturados. */
+function noSonDatos(nombres: string[]): string[] {
+  return nombres.filter((n) => !SOLO_DATOS.has(extname(n).toLowerCase()));
+}
+
+test("test/fixtures está excluida del análisis y solo guarda datos capturados", () => {
+  // La exclusión se sostiene mientras ahí no viva código nuestro. Son páginas
+  // reales de la CMF, y el JavaScript que traen lo escribió la CMF y no corre
+  // en ninguna prueba. El 9 de octubre de 2026 eran 26 de las 27 alertas
+  // abiertas, y la única que importaba estaba en otra carpeta.
+  assert.ok(exclusiones().includes("test/fixtures"), "se esperaba test/fixtures entre las exclusiones");
+  const intrusos = noSonDatos(readdirSync(join(RAIZ, "test", "fixtures"), { recursive: true }).map(String));
+  assert.deepEqual(intrusos, [], `test/fixtures no se analiza, así que no puede guardar código:\n${intrusos.join("\n")}`);
+});
+
+test("la comprobación anterior SÍ puede fallar", () => {
+  assert.deepEqual(noSonDatos(["pagina.html", "ayuda.mjs", "tabla.XLS", "sub/carga.ts", "sinextension"]), [
+    "ayuda.mjs",
+    "sub/carga.ts",
+    "sinextension",
+  ]);
 });
