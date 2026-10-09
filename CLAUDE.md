@@ -658,6 +658,8 @@ sus notas con la hora de Chile en que se guardó, porque un dato viejo sin fecha
 engañoso. Si cambia la FORMA de lo guardado, sube la versión de la clave. Una copia completa
 mensual en R2 es posible, pero exige el plan pagado y una clave de la CMF con cuota mayor.
 
+**35. Un 403 de www.cmfchile.cl desde el Worker se lee en Workers Logs, no se adivina (9 de octubre de 2026).** Qué falló. `cmf_seguros_deposito_polizas` y `cmf_documento_markdown` respondieron 403 seis veces, y el log no traía cabeceras ni cuerpo, así que no se podía saber si la CMF bloqueaba el origen de Cloudflare o el ritmo. Causa raíz. El log solo guardaba el estado HTTP, y las descargas binarias ni siquiera leían el cuerpo. Prescripción. Cada respuesta que no es datos deja en `cmf_upstream` el estado, `reintento_403`, un subconjunto fijo de cabeceras (`server`, `content-type`, `content-length`, `retry-after`, `cf-ray`, `x-cache`, `via`), solo los NOMBRES de las cookies de `set-cookie` y los primeros 160 caracteres del cuerpo, también en las rutas binarias. La query de la URL no se registra porque lleva tokens. Un 403 se reintenta una vez tras `CMF_REINTENTO_403_MS` (6000 por defecto). Para leerlo en Workers Logs se filtra por `cmf_upstream` y se compara `cf-ray` con el de la petición fallida: si el cuerpo trae la marca «Attack ID» es el cortafuegos F5; si no la trae, el log solo dice que el origen fue rechazado, y eso no separa bloqueo de ritmo por sí mismo. Lo vigilan `test/diagnostico-403.test.ts` y `test/bloqueo-upstream.test.ts`.
+
 ## Gotchas
 
 - **La fuente se cae, y eso no es un defecto tuyo.** El servlet BaseDato devuelve a veces el
