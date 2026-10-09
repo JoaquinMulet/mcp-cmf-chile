@@ -79,11 +79,28 @@ test("un ritmo ilegible vale el de fábrica, y el aviso sale una sola vez con la
   });
 });
 
-test("un número negativo o con decimales tampoco se usa", async () => {
-  for (const valor of ["-5", "0.5"]) {
-    const { avisos } = await conRedLenta(1, async () => {
-      await fetchCmf("https://www.cmfchile.cl/otro-valor", {}, { CMF_RATE_LIMIT_MS: "0", CMF_REINTENTO_403_MS: valor });
+// Los valores que la revisión adversarial del arreglo mostró que seguían
+// pasando. Un plazo de 0, negativo, de solo espacios o mayor que lo que
+// admite un temporizador (2147483647) vence al milisegundo, y ninguna
+// consulta llega. La prueba mira el EFECTO, que la consulta llegue, y no solo
+// que exista el aviso.
+for (const valor of ["-5", "0.5", " ", "0", "3000000000", "1e2", "0x40", "12000ms"]) {
+  test(`un plazo «${valor}» no se usa. la consulta llega y queda el aviso`, async () => {
+    const env = { CMF_RATE_LIMIT_MS: "0", CMF_UPSTREAM_TIMEOUT_MS: valor };
+    const { avisos } = await conRedLenta(150, async () => {
+      const res = await fetchCmf("https://www.cmfchile.cl/otro-plazo", {}, env);
+      assert.equal(await res.text(), "ok");
     });
-    assert.ok(avisos.some((a) => a.includes("CMF_REINTENTO_403_MS")), `sin aviso para ${valor}`);
-  }
+    assert.equal(avisos.filter((a) => a.includes("CMF_UPSTREAM_TIMEOUT_MS")).length, 1, `avisos. ${avisos.join(" | ")}`);
+  });
+}
+
+test("un valor que llega como número y no como texto no revienta la consulta", async () => {
+  // En wrangler.jsonc basta escribir el valor sin comillas.
+  const env = { CMF_RATE_LIMIT_MS: 0, CMF_REINTENTO_403_MS: 1.5 } as unknown as Record<string, string>;
+  const { avisos } = await conRedLenta(1, async () => {
+    const res = await fetchCmf("https://www.cmfchile.cl/valor-numerico", {}, env);
+    assert.equal(await res.text(), "ok");
+  });
+  assert.equal(avisos.filter((a) => a.includes("cmf_config")).length, 1, `avisos. ${avisos.join(" | ")}`);
 });

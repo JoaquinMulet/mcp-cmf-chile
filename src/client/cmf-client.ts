@@ -53,21 +53,28 @@ const configDefault = {
 /** Valores ilegibles ya avisados, para no repetir el aviso en cada consulta. */
 const ilegiblesAvisados = new Set<string>();
 
+/** Lo más que admite un temporizador. Un valor mayor se baja solo a 1 ms. */
+const MAX_ENTERO_DE_ENV = 2147483647;
+
 /**
- * Un entero de configuración. Un valor que no es un entero desde 0 no se usa.
+ * Un entero de configuración. Solo vale si es puros dígitos y cae entre
+ * `minimo` y lo que admite un temporizador. Cualquier otro valor no se usa.
  * vale el de fábrica, y queda un aviso en el log. Con parseInt, un texto daba
  * NaN y apagaba la protección en silencio. un ritmo NaN estrenaba limitador en
  * cada llamada, sin tope ni espera, y un plazo NaN vencía al milisegundo
  * (medido el 9 de octubre de 2026).
+ *
+ * El valor puede llegar como número, si en wrangler.jsonc va sin comillas.
  */
-function enteroDeEnv(variable: keyof CmfEnv, crudo: string | undefined, deFabrica: number): number {
-  if (!crudo) return deFabrica;
-  const n = Number(crudo);
-  if (Number.isInteger(n) && n >= 0) return n;
-  const clave = `${variable}=${crudo}`;
+function enteroDeEnv(variable: keyof CmfEnv, crudo: string | number | undefined, deFabrica: number, minimo = 0): number {
+  if (crudo === undefined || crudo === "") return deFabrica;
+  const texto = String(crudo).trim();
+  const n = /^[0-9]+$/.test(texto) ? Number(texto) : Number.NaN;
+  if (n >= minimo && n <= MAX_ENTERO_DE_ENV) return n;
+  const clave = `${variable}=${texto}`;
   if (!ilegiblesAvisados.has(clave)) {
     ilegiblesAvisados.add(clave);
-    console.warn(JSON.stringify({ cmf_config: { variable, valor: crudo.slice(0, 40), usado: deFabrica } }));
+    console.warn(JSON.stringify({ cmf_config: { variable, valor: texto.slice(0, 40), usado: deFabrica } }));
   }
   return deFabrica;
 }
@@ -78,7 +85,8 @@ function config(env: CmfEnv) {
     rateLimitMs: enteroDeEnv("CMF_RATE_LIMIT_MS", env.CMF_RATE_LIMIT_MS, configDefault.rateLimitMs),
     cacheTtlS: enteroDeEnv("CMF_CACHE_TTL_S", env.CMF_CACHE_TTL_S, configDefault.cacheTtlS),
     maxRows: enteroDeEnv("CMF_MAX_ROWS", env.CMF_MAX_ROWS, configDefault.maxRows),
-    upstreamTimeoutMs: enteroDeEnv("CMF_UPSTREAM_TIMEOUT_MS", env.CMF_UPSTREAM_TIMEOUT_MS, configDefault.upstreamTimeoutMs),
+    // Un plazo de 0 vence antes de que nada responda, así que parte en 1.
+    upstreamTimeoutMs: enteroDeEnv("CMF_UPSTREAM_TIMEOUT_MS", env.CMF_UPSTREAM_TIMEOUT_MS, configDefault.upstreamTimeoutMs, 1),
   };
 }
 
