@@ -121,10 +121,16 @@ test("respeta la separación mínima entre consultas a la CMF", () =>
       horas.push(Date.now());
       return originalPush(...p);
     };
+    const lanzamiento = Date.now();
     await Promise.all([1, 2, 3].map(() => fetch(base, { headers: cabeceras() }).then((r) => r.text())));
     assert.equal(horas.length, 3);
-    assert.ok(horas[1] - horas[0] >= 120, `brecha 1 de ${horas[1] - horas[0]} ms`);
-    assert.ok(horas[2] - horas[1] >= 120, `brecha 2 de ${horas[2] - horas[1]} ms`);
+    // Desde el lanzamiento, no entre vecinas. Con la máquina cargada una
+    // consulta sale tarde y la siguiente a su hora, y la brecha entre las 2
+    // queda corta con el proxy sano (115 ms con mínimo de 150, en el
+    // pre-commit del 9 de octubre de 2026). Es la misma vara de
+    // test/rate-limit.test.ts. la carga solo puede atrasar una consulta.
+    const desde = horas.map((h) => h - lanzamiento);
+    assert.ok(desde.every((d, i) => d >= i * 150 - 5), `desde el lanzamiento, en ms. ${desde.join(", ")}`);
   }));
 
 test("con la cola llena responde 429 sin la marca de la CMF", () =>
