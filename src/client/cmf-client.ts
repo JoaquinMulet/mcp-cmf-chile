@@ -206,6 +206,9 @@ const directoBloqueadoHasta = new Map<string, number>();
 
 const esBloqueoDeOrigen = (status: number) => status === 403 || status === 520;
 
+/** Saltos que se siguen por consulta. La CMF encadena 1 o 2, y un círculo no termina nunca. */
+const MAX_REDIRECCIONES = 5;
+
 type FetchFn = (url: string, init: RequestInit) => Promise<Response>;
 
 /** El fetch que sale por el proxy, o null si no aplica a este host o no está configurado. */
@@ -242,6 +245,8 @@ export async function fetchCmf(
   init: RequestInit = {},
   env: CmfEnv = {},
   jar = crearCookieJar(),
+  /** Interno. Redirecciones ya seguidas para llegar a esta URL. */
+  saltos = 0,
 ): Promise<Response> {
   const u = validarUrl(url);
   const cfg = config(env);
@@ -329,8 +334,14 @@ export async function fetchCmf(
     if (res.status >= 300 && res.status < 400 && res.headers.get("location")) {
       // Redirect manual validado (allowlist)
       const next = new URL(res.headers.get("location")!, url).toString();
-      validarUrl(next);
-      return fetchCmf(next, { ...init, headers }, env, jar);
+      const destino = validarUrl(next);
+      if (saltos >= MAX_REDIRECCIONES) {
+        // Sin la query, que puede llevar una clave.
+        throw new Error(
+          `La CMF respondió más de ${MAX_REDIRECCIONES} redirecciones seguidas y la consulta se cortó. La última apunta a ${destino.origin}${destino.pathname}`,
+        );
+      }
+      return fetchCmf(next, { ...init, headers }, env, jar, saltos + 1);
     }
     if (res.status >= 500 && intento < 2) {
       ultimoError = new Error(`HTTP ${res.status} de la CMF (intento ${intento + 1})`);
