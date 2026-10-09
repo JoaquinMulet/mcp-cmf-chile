@@ -21,6 +21,13 @@ test("5 llamadas simultáneas al mismo host salen separadas por el mínimo", asy
   }) as typeof fetch;
   try {
     const env = { CMF_RATE_LIMIT_MS: "120" };
+    // Llamada de calentamiento a OTRO host. La primera llamada del proceso
+    // carga módulos entre que reserva su turno y que hace el fetch, y con la
+    // suite completa esa carga llegó a 8 ms: la primera salía tarde, la
+    // segunda a su hora, y la brecha medida daba 112 ms con el limitador sano
+    // (9 de octubre de 2026). Con otro host no se toca el turno del medido.
+    await fetchCmf("https://api.sbif.cl/calentamiento", {}, env);
+    tiempos.length = 0;
     await Promise.all(
       [1, 2, 3, 4, 5].map((i) => fetchCmf(`https://www.cmfchile.cl/institucional/estadisticas/x${i}.php`, {}, env)),
     );
