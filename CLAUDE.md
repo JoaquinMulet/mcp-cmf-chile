@@ -166,9 +166,11 @@ Los 6 pasos del estándar, con los comandos de acá.
    tool contra la CMF. **Nunca despliegues sin haber confrontado la fuente real.** Un servidor
    que traduce una fuente ajena no se puede validar solo con fixtures.
 
-Para medir un antes y un después con el MISMO instrumento, `git stash push <archivo>` deja
-correr la medición vieja en un minuto. Si tocas el instrumento entre las 2 tomas, la
-comparación no vale.
+Para medir un antes y un después con el MISMO instrumento, copia el archivo arreglado fuera del
+repo, escribe el viejo con `git show HEAD:<archivo> > <archivo>`, mide, y devuelve la copia
+comprobándola con `cmp`. **Nunca `git stash`.** Este repo se trabaja con árboles hermanos en
+`C:\dev`, y la lista de stash es una sola para todos. Si tocas el instrumento entre las 2 tomas,
+la comparación no vale.
 
 ## Testing
 
@@ -732,16 +734,71 @@ entregaba el 403 original; ahora sube como «Host no permitido». Lo vigila
 exige el máximo EXACTO. un máximo de 5 delata una liberación de más, y uno de 2 delata un cupo
 que no se devolvió. La revisión adversarial mostró que la primera versión de esa prueba solo
 miraba una dirección: pasaba verde con el `liberar()` del `catch` borrado. Regla. una prueba de
-un contador se corre contra los 2 mutantes, el que resta de más y el que resta de menos. Lo que
-la misma revisión encontró y sigue abierto, porque ya existía y es otro arreglo. un cuerpo de
-respuesta que nunca termina retiene su cupo sin plazo (el plazo de `fetchConTimeout` se apaga al
-llegar las cabeceras), y una redirección en círculo no tiene tope de saltos.
+un contador se corre contra los 2 mutantes, el que resta de más y el que resta de menos. Los 2
+defectos que esa revisión dejó abiertos están en la lección 38.
+
+**38. Un plazo que se apaga al llegar las cabeceras no cubre la respuesta (9 de octubre de
+2026).** Qué falló, por 3 caminos que demostró la revisión adversarial de la lección 37.
+`fetchConTimeout` apagaba su temporizador al llegar las cabeceras, y `resolverChallenge` lee el
+cuerpo entero con el cupo tomado, así que 4 respuestas con el cuerpo abierto dejaban a toda la
+instancia esperando cupo para siempre. `fetchCmf` seguía cada 3xx sin contar, y un 302 hacia la
+misma URL dio 201 saltos. Y `config()` leía sus 5 enteros con `parseInt` sin revisar: un texto
+daba NaN, un ritmo NaN estrenaba limitador en cada llamada (sin tope ni espera) y un plazo NaN
+vencía al milisegundo. Causa raíz. Las 3 protecciones existían y tenían una entrada que las
+apagaba sin aviso. Prescripción. `conPlazoDeCuerpo` envuelve el cuerpo con un plazo de SILENCIO,
+que vence si pasan `CMF_UPSTREAM_TIMEOUT_MS` sin que llegue un tramo. No es un plazo del total a
+propósito: un documento grande por la salida chilena tarda más que el plazo y tiene que llegar
+(lección 36). Al vencer lanza un `AbortError`, así que pasa por el `catch` y los reintentos de
+siempre. `fetchCmf` corta a los 5 saltos (`MAX_REDIRECCIONES`). Y `enteroDeEnv` cambia un valor
+ilegible por el de fábrica y deja una línea `cmf_config` en el log. Los 2 errores nombran la URL
+SIN su query, porque la de `api.sbif.cl` lleva la clave y ese texto llega al modelo. Lo vigilan
+`test/cuerpo-sin-fin.test.ts`, `test/redirecciones.test.ts` y `test/configuracion.test.ts`.
+Verificado en los 2 motores, porque el envoltorio arma un `Response` nuevo y eso podía perder
+cookies. Con un servidor HTTP local que deja el cuerpo abierto, en Node y en workerd
+(`wrangler dev`), las conexiones colgadas se cierran, 2 `set-cookie` llegan separadas, el gzip
+se lee bien, 204 y 304 pasan y 3 MB en 960 ms llegan enteros con plazo de 400. Para probar el
+cliente contra un servidor local sin tocar `HOSTS_ALLOWLIST`, se reemplaza `globalThis.fetch`
+por uno que reescribe el host y llama al `fetch` real. Regla. un plazo se prueba con la
+respuesta que empieza y no termina, no solo con la que no empieza. Lo que encontró la revisión
+adversarial del propio arreglo antes de integrar, 6 puntos con prueba. La red entrega estados
+fuera de 200 a 599 y `new Response` los rechaza con RangeError, así que esas respuestas pasan sin
+envolver. Una respuesta envuelta que nadie lee ya no la suelta el recolector de basura (6
+conexiones abiertas tras 6 desafíos F5, medidas con un servidor real), así que
+`resolverChallenge` cancela el cuerpo de la respuesta al desafío. Regla. **quien no va a leer
+una respuesta cancela su cuerpo.** El error de un cuerpo colgado por la salida chilena nombraba
+la URL del proxy, y ahora nombra la página de la CMF. `enteroDeEnv` dejaba pasar un valor de
+solo espacios, un plazo de 0 y un valor mayor que 2147483647, que un temporizador baja a 1 ms, y
+reventaba con un valor escrito sin comillas en `wrangler.jsonc`. Ahora solo acepta puros
+dígitos, con mínimo y máximo. Y 4 mutantes pasaban las pruebas en verde. La prueba del aviso
+miraba que el aviso existiera y no que el valor malo dejara de usarse. Regla. una prueba de una
+protección mira el EFECTO protegido, no la señal que la acompaña. Lo que conviene saber. Un
+cuerpo colgado se reintenta 3 veces, igual que una consulta sin respuesta, así que un POST se
+envía 3 veces y el error tarda 3 plazos. Lo que sigue abierto. Un
+cuerpo que gotea un tramo antes de cada plazo, sin terminar nunca, retiene su cupo. La espera de
+cupo sigue sin plazo, así que un cupo perdido por un defecto futuro deja la instancia esperando
+en silencio. Y `getLimiter` estrena limitador cuando el ritmo cambia entre llamadas (8 en vuelo
+con 2 ritmos conviviendo). Esto último se deja a propósito y la razón está escrita sobre
+`getLimiter`: en producción el ritmo es fijo, y con un limitador único una prueba que pierde
+cupos deja la suite colgada en vez de roja.
 
 ## Gotchas
 
 - **La fuente se cae, y eso no es un defecto tuyo.** El servlet BaseDato devuelve a veces el
   desafío anti-bot en vez de la tabla. Un plazo agotado es evidencia sobre la CMF, no sobre el
   código. Reintenta antes de declarar un hallazgo.
+- **Una prueba de tiempos se mide desde el lanzamiento.** `test/rate-limit.test.ts` medía desde
+  la primera llamada que veía salir, y con la máquina cargada esa primera sale hasta 26 ms tarde
+  con el limitador sano (2 rojos en 48 corridas, 9 de octubre de 2026). La carga solo puede
+  ATRASAR una llamada, así que la vara es un instante anterior a todo, nunca un evento medido.
+  `test/salida-proxy.test.ts` tenía la misma vara y botó un pre-commit ese mismo día, porque
+  arreglé la primera sin buscar a su hermana. Al corregir una prueba de tiempos, busca las demás
+  con `grep -rn "Date.now()" test/*.test.ts`.
+- **Con la máquina cargada, `npx` tarda minutos y parece colgado.** El mismo comando con
+  `node node_modules/tsx/dist/cli.mjs --test test/<archivo>.test.ts` responde en segundos. Antes
+  de declarar colgada una prueba, mira la CPU por proceso.
+- **Un proceso colgado se detiene por la RUTA de tu árbol de trabajo, no por el nombre de la
+  prueba.** Los árboles hermanos corren pruebas con el mismo nombre. El 9 de octubre de 2026 un
+  filtro por `tope-en-vuelo` detuvo también 4 procesos de `C:\dev\cmf-mcp-liberar`.
 - **Las tools de `www.cmfchile.cl` dependen de Floki.** Si todas responden 403 a la vez, mira
   primero si la salida chilena está viva, con los comandos de `infra/salida-chilena/README.md`,
   y busca `cmf_salida` con `proxy_fallo` en Workers Logs. Ver la lección 36.
