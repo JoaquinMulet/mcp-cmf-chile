@@ -137,7 +137,9 @@ export async function fetchCmf(
   const cfg = config(env);
   const headers = new Headers(init.headers ?? {});
   if (!headers.has("User-Agent")) headers.set("User-Agent", UA_DEFAULT);
-  cabecerasDeNavegador(headers);
+  // Solo el sitio web: la API (api.sbif.cl) y los demás hosts no reciben un
+  // Accept de página que nadie verificó contra ellos.
+  if (u.hostname === "www.cmfchile.cl") cabecerasDeNavegador(headers);
   const cookie = jar.header(u);
   if (cookie) headers.set("Cookie", cookie);
 

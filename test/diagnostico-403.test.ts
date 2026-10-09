@@ -249,6 +249,17 @@ test("una cabecera Accept que pone el llamador no se pisa", async () => {
   });
 });
 
+test("las cabeceras de navegador van solo a www.cmfchile.cl: la API de api.sbif.cl sigue sin Accept de página", async () => {
+  // La API responde JSON o XML. Un Accept de página HTML ahí no se verificó
+  // contra la API real, así que no se le manda lo que no pidió.
+  await conRespuestas([() => new Response("{}", { status: 200 })], async (llamadas) => {
+    await fetchCmf("https://api.sbif.cl/api-sbifv3/recursos_api/uf", {}, env);
+    const h = llamadas[0].headers;
+    assert.equal(h.get("accept"), null);
+    assert.equal(h.get("accept-language"), null);
+  });
+});
+
 test("el 403 dice que el MCP fue rechazado, que el dato puede existir y que el navegador suele abrirlo", async () => {
   const r = await conRespuestas(
     [() => new Response("bloqueado", { status: 403 })],
