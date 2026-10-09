@@ -18,7 +18,8 @@ import {
   postLegacy,
 } from "../src/client/cmf-client.js";
 
-const env = { CMF_RATE_LIMIT_MS: "1" };
+// Sin esto, el 403 de la primera prueba esperaría el reintento de 6 s reales.
+const env = { CMF_RATE_LIMIT_MS: "1", CMF_REINTENTO_403_MS: "0" };
 
 function conFetch(respuesta: () => Response, fn: () => Promise<void>): Promise<void> {
   const original = globalThis.fetch;

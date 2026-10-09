@@ -14,7 +14,13 @@ export interface CmfEnv {
   CMF_CACHE_TTL_S?: string;
   CMF_MAX_ROWS?: string;
   CMF_UPSTREAM_TIMEOUT_MS?: string;
+  /** Espera antes del único reintento tras un 403 de la CMF. 0 en pruebas. */
+  CMF_REINTENTO_403_MS?: string;
 }
+
+/** Cabeceras de un navegador real. Solo se ponen si el llamador no trae las suyas. */
+const ACCEPT_NAVEGADOR = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
+const IDIOMA_NAVEGADOR = "es-CL,es;q=0.9";
 
 const HOSTS_ALLOWLIST = new Set([
   "www.cmfchile.cl",
@@ -37,10 +43,12 @@ const configDefault = {
   cacheTtlS: 900,
   maxRows: 500,
   upstreamTimeoutMs: 12000,
+  reintento403Ms: 6000,
 };
 
 function config(env: CmfEnv) {
   return {
+    reintento403Ms: env.CMF_REINTENTO_403_MS ? parseInt(env.CMF_REINTENTO_403_MS, 10) : configDefault.reintento403Ms,
     rateLimitMs: env.CMF_RATE_LIMIT_MS ? parseInt(env.CMF_RATE_LIMIT_MS, 10) : configDefault.rateLimitMs,
     cacheTtlS: env.CMF_CACHE_TTL_S ? parseInt(env.CMF_CACHE_TTL_S, 10) : configDefault.cacheTtlS,
     maxRows: env.CMF_MAX_ROWS ? parseInt(env.CMF_MAX_ROWS, 10) : configDefault.maxRows,
@@ -88,6 +96,12 @@ function getLimiter(minMs: number): RateLimiter {
   return limiter;
 }
 
+/** Pone las cabeceras de navegador que el llamador no trajo. Sin Referer, a propósito. */
+function cabecerasDeNavegador(headers: Headers): void {
+  if (!headers.has("Accept")) headers.set("Accept", ACCEPT_NAVEGADOR);
+  if (!headers.has("Accept-Language")) headers.set("Accept-Language", IDIOMA_NAVEGADOR);
+}
+
 function validarUrl(url: string): URL {
   const u = new URL(url);
   if (u.protocol !== "https:") throw new Error("Solo se permiten URLs HTTPS hacia la CMF");
@@ -123,6 +137,7 @@ export async function fetchCmf(
   const cfg = config(env);
   const headers = new Headers(init.headers ?? {});
   if (!headers.has("User-Agent")) headers.set("User-Agent", UA_DEFAULT);
+  cabecerasDeNavegador(headers);
   const cookie = jar.header(u);
   if (cookie) headers.set("Cookie", cookie);
 
@@ -131,8 +146,14 @@ export async function fetchCmf(
   const fetchConCfg = (u: string, i: RequestInit) => fetchConTimeout(u, i, cfg.upstreamTimeoutMs);
 
   let ultimoError: unknown = null;
+  // Un 403 de la CMF puede ser de ritmo: se reintenta UNA vez tras una espera.
+  // La espera va fuera del turno del limitador (ya se liberó), y el turno
+  // siguiente se vuelve a reservar con esperar().
+  let reintentado403 = false;
+  let trasEspera403 = false;
   for (let intento = 0; intento < 3; intento++) {
-    if (intento > 0) await new Promise((r) => setTimeout(r, 500 * 2 ** (intento - 1)));
+    if (intento > 0 && !trasEspera403) await new Promise((r) => setTimeout(r, 500 * 2 ** (intento - 1)));
+    trasEspera403 = false;
     await rl.esperar(u.hostname);
     try {
       const res = await resolverChallenge(fetchConCfg, url, { ...init, headers }, jar);
@@ -147,6 +168,13 @@ export async function fetchCmf(
         ultimoError = new Error(`HTTP ${res.status} de la CMF (intento ${intento + 1})`);
         continue;
       }
+      if (res.status === 403 && !reintentado403 && intento < 2) {
+        reintentado403 = true;
+        trasEspera403 = true;
+        await new Promise((r) => setTimeout(r, cfg.reintento403Ms));
+        continue;
+      }
+      if (reintentado403) trasReintento403.add(res);
       return res;
     } catch (e) {
       rl.liberar();
@@ -178,7 +206,9 @@ export class CmfUpstreamError extends Error {
         ? `La CMF (${host}) devolvió la página del cortafuegos (HTTP ${status}, «Attack ID»): bloqueo, no ausencia de datos`
         : motivo === "no_binario"
           ? `La CMF (${host}) devolvió una página HTML donde iba un documento (HTTP ${status}): bloqueo o error, no ausencia de datos`
-          : `La CMF (${host}) respondió HTTP ${status} en vez de datos: bloqueo o caída, no ausencia de datos`,
+          : status === 403
+            ? `La CMF (${host}) rechazó la consulta desde el servidor del MCP (HTTP 403). El dato puede existir, y la misma URL suele abrir desde un navegador. Es bloqueo o caída, no ausencia de datos.`
+            : `La CMF (${host}) respondió HTTP ${status} en vez de datos: bloqueo o caída, no ausencia de datos`,
     );
     this.name = "CmfUpstreamError";
   }
@@ -186,16 +216,66 @@ export class CmfUpstreamError extends Error {
 
 const MARCA_CORTAFUEGOS = /Attack ID|The requested URL was rejected/i;
 
-/** Lanza CmfUpstreamError si la respuesta no es datos; deja una línea en los logs del Worker. */
-function exigirRespuestaUtil(res: Response, url: string, texto?: string): void {
-  const host = new URL(url).hostname;
-  const cortafuegos = texto !== undefined && MARCA_CORTAFUEGOS.test(texto.slice(0, 4000));
-  if (res.ok && !cortafuegos) return;
+/** Respuestas que llegaron tras el reintento de 403, para dejarlo escrito en el log. */
+const trasReintento403 = new WeakSet<Response>();
+
+/** Subconjunto fijo de cabeceras que sirve para leer un bloqueo en Workers Logs. */
+const CABECERAS_DIAGNOSTICO = ["server", "content-type", "content-length", "retry-after", "cf-ray", "x-cache", "via"];
+
+function cabecerasDeDiagnostico(res: Response): Record<string, string> {
+  const salida: Record<string, string> = {};
+  for (const nombre of CABECERAS_DIAGNOSTICO) {
+    const valor = res.headers.get(nombre);
+    if (valor !== null) salida[nombre] = valor;
+  }
+  return salida;
+}
+
+/** Solo los NOMBRES de las cookies de set-cookie. Un valor de sesión no va al log. */
+function nombresDeCookies(res: Response): string[] {
+  const lineas = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
+  return lineas.map((linea) => linea.split(";")[0].split("=")[0].trim()).filter(Boolean);
+}
+
+/**
+ * Deja en el log la respuesta que no fue datos. La query de la URL no se
+ * registra (lleva tokens); solo el host y la ruta. El cuerpo se corta a 160.
+ */
+function registrarRespuestaInutil(
+  res: Response,
+  url: string,
+  cuerpo: string,
+  marcas: { cortafuegos?: boolean; no_binario?: boolean },
+): void {
+  const u = new URL(url);
   console.warn(
     JSON.stringify({
-      cmf_upstream: { host, status: res.status, cortafuegos, ruta: new URL(url).pathname, inicio: (texto ?? "").slice(0, 160) },
+      cmf_upstream: {
+        host: u.hostname,
+        status: res.status,
+        ...marcas,
+        reintento_403: trasReintento403.has(res),
+        ruta: u.pathname,
+        cabeceras: cabecerasDeDiagnostico(res),
+        cookies: nombresDeCookies(res),
+        inicio: cuerpo.slice(0, 160),
+      },
     }),
   );
+}
+
+/**
+ * Lanza CmfUpstreamError si la respuesta no es datos. El cuerpo solo se lee
+ * en el camino de error (o cuando ya viene como texto), así que una descarga
+ * sana no pasa por aquí y sus bytes quedan intactos.
+ */
+async function exigirRespuestaUtil(res: Response, url: string, texto?: string): Promise<void> {
+  if (res.ok && texto === undefined) return;
+  const host = new URL(url).hostname;
+  const cuerpo = texto ?? decodificarBody(await res.arrayBuffer());
+  const cortafuegos = MARCA_CORTAFUEGOS.test(cuerpo.slice(0, 4000));
+  if (res.ok && !cortafuegos) return;
+  registrarRespuestaInutil(res, url, cuerpo, { cortafuegos });
   throw new CmfUpstreamError(res.status, host, cortafuegos ? "cortafuegos" : "http");
 }
 
@@ -227,7 +307,7 @@ export async function getLegacy(
   const res = await fetchCmf(url, {}, env);
   const bytes = await res.arrayBuffer();
   const texto = decodificarBody(bytes);
-  exigirRespuestaUtil(res, url, texto);
+  await exigirRespuestaUtil(res, url, texto);
   if (cacheClave) cacheHttp.set(cacheClave, texto, config(env).cacheTtlS * 1000);
   return texto;
 }
@@ -298,7 +378,7 @@ export async function postLegacy(
   );
   const bytes = await res.arrayBuffer();
   const texto = decodificarBody(bytes);
-  exigirRespuestaUtil(res, url, texto);
+  await exigirRespuestaUtil(res, url, texto);
   return texto;
 }
 
@@ -369,7 +449,7 @@ export async function getLegacyBinario(
   }
   const url = `https://www.cmfchile.cl${path}${qs.size ? `?${qs}` : ""}`;
   const res = await fetchCmf(url, {}, env);
-  exigirRespuestaUtil(res, url);
+  await exigirRespuestaUtil(res, url);
   return new Uint8Array(await res.arrayBuffer());
 }
 
@@ -400,7 +480,7 @@ export async function postLegacyBinario(
     },
     env,
   );
-  exigirRespuestaUtil(res, url);
+  await exigirRespuestaUtil(res, url);
   return new Uint8Array(await res.arrayBuffer());
 }
 export async function apiV3<T = unknown>(
@@ -437,7 +517,7 @@ export async function apiV3<T = unknown>(
 /** Lee un resource cmf:// (imagen/documento) con validación de host. */
 export async function fetchCmfBinario(url: string, env: CmfEnv = {}): Promise<{ bytes: Uint8Array; contentType: string }> {
   const res = await fetchCmf(url, {}, env);
-  exigirRespuestaUtil(res, url);
+  await exigirRespuestaUtil(res, url);
   const buf = await res.arrayBuffer();
   return { bytes: new Uint8Array(buf), contentType: res.headers.get("Content-Type") ?? "application/octet-stream" };
 }
@@ -448,7 +528,7 @@ function exigirBinario(res: Response, url: string, bytes: Uint8Array): void {
   const inicio = new TextDecoder("utf-8", { fatal: false }).decode(bytes.slice(0, 512));
   if (!/text\/html/i.test(contentType) && !/^\s*<(!doctype|html)/i.test(inicio)) return;
   const host = new URL(url).hostname;
-  console.warn(JSON.stringify({ cmf_upstream: { host, status: res.status, no_binario: true, ruta: new URL(url).pathname, inicio: inicio.slice(0, 160) } }));
+  registrarRespuestaInutil(res, url, inicio, { no_binario: true });
   throw new CmfUpstreamError(res.status, host, MARCA_CORTAFUEGOS.test(inicio) ? "cortafuegos" : "no_binario");
 }
 
@@ -461,7 +541,7 @@ export async function fetchCmfBinarioCached(
   const cacheado = cacheBinario.get(cacheClave);
   if (cacheado) return { bytes: cacheado.bytes, contentType: cacheado.contentType };
   const res = await fetchCmf(url, {}, env);
-  exigirRespuestaUtil(res, url);
+  await exigirRespuestaUtil(res, url);
   const buf = await res.arrayBuffer();
   const bytes = new Uint8Array(buf);
   // Antes se cacheaba sin mirar el estado: una página de error quedaba 15

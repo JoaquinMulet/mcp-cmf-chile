@@ -20,7 +20,8 @@
     "CMF_RATE_LIMIT_MS": "1100",
     "CMF_CACHE_TTL_S": "900",
     "CMF_MAX_ROWS": "500",
-    "CMF_UPSTREAM_TIMEOUT_MS": "12000"
+    "CMF_UPSTREAM_TIMEOUT_MS": "12000",
+    "CMF_REINTENTO_403_MS": "6000"
   },
   // Caja aislada donde corre el código que escribe el modelo, en la ruta
   // /codigo. Se carga un Worker nuevo por programa, con globalOutbound
