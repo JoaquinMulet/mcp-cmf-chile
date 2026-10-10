@@ -794,8 +794,8 @@ pueden perder cupos pasan `CMF_ESPERA_CUPO_MS` corto, para dar rojo en segundos.
 la segunda revisión adversarial, sobre estos 3 cierres, antes de integrar. La espera de cupo era
 un sondeo cada 100 ms, sin orden, y una cadena de consultas seguidas devuelve su cupo y lo
 vuelve a tomar en el mismo paso, así que quien sondeaba podía no entrar nunca. Con el plazo
-nuevo, esa consulta pasaba de entrar tarde a fallar. Ahora la cola va en orden de llegada y
-`liberar()` entrega el cupo directo al primero, sin mover el contador. Regla. **agregarle un
+nuevo, esa consulta pasaba de entrar tarde a fallar. Ahora la cola va en orden de llegada (la
+forma de entregar el cupo cambió después, y está en la lección 42). Regla. **agregarle un
 plazo a una espera obliga a revisar si esa espera es justa**, porque el plazo convierte en error
 lo que antes solo era demora. Medido con el cliente real y un reloj simulado, con los valores de
 fábrica. unas 110 consultas juntas al mismo host caben en los 120 segundos si la CMF responde
@@ -858,6 +858,49 @@ agosto, en una función hermana que decodificaba entidades por su cuenta. Ahora 
 vive en `parsers.ts` y usa `decodificarEntidades`, y `test/hallazgos-codeql.test.ts` falla si
 otro archivo de `src` decodifica `&amp;` junto con otra entidad.
 
+**42. En Workers una petición muere sin avisar, y lo que tenía tomado no vuelve (9 de octubre de
+2026).** Qué falló. El limitador es un objeto de módulo, compartido por todas las peticiones de
+la instancia. Cuando una petición termina, workerd abandona sus promesas y sus temporizadores
+pendientes. Una consulta abandonada no llega nunca a `liberar()`. Con el contador simple de
+siempre, una consulta abandonada con un cupo tomado lo perdía, y eso existía desde antes de la
+lección 37. La cola en orden de la lección 38 agregó un segundo camino: `liberar()` le
+entregaba el cupo al primero de la cola, y si esa consulta ya estaba muerta, el cupo quedaba en
+sus manos para siempre. Con 4 cupos perdidos la instancia no podía consultar a la CMF hasta que
+Cloudflare la reciclara. El disparador demostrado es una tool que responde su error mientras
+otras consultas suyas siguen pendientes, que es lo que hace un `Promise.all` cuando falla una
+(`companiasDeSeguros` de `src/catalogos.ts`). Lo encontró la tercera revisión adversarial, en
+workerd de verdad, con el código ya desplegado. La suite no lo podía ver, porque en Node una
+promesa pendiente siempre termina corriendo. Causa raíz. El código suponía que todo `esperar()`
+llega a su `liberar()`, y que resolver la promesa de otro es entregarle algo. En Workers ninguna
+de las 2 cosas es cierta. Prescripción. **Nadie le entrega nada a otra petición, y todo lo que
+se toma lleva una señal de vida.** Cada cupo y cada puesto en la cola tienen un `visto` que
+renueva su propio dueño con sus propios temporizadores (`LATIDO_MS` de 1 segundo para el cupo,
+`SONDEO_COLA_MS` de 50 ms para la cola). Si el dueño muere, sus temporizadores mueren con él, la
+señal envejece, y cualquier consulta que pase barre el cupo a los 10 segundos
+(`GRACIA_CUPO_MS`) o el puesto a los 2 (`GRACIA_COLA_MS`). Cada consulta toma su cupo ella
+misma, en su propio contexto, cuando es la primera de la cola y hay uno libre. `esperar()`
+entrega el cupo y `liberar(cupo)` lo recibe, así que devolver 2 veces el mismo no hace nada. Un
+cupo barrido deja una línea `cmf_cupo_recuperado` en el log. **Esa línea es la señal de una
+consulta abandonada**, y si sale seguido hay una tool que deja consultas sin esperar. El costo
+que hay que conocer. Si el hilo de la instancia se queda detenido más de 10 segundos, por
+ejemplo convirtiendo un PDF enorme, las consultas vivas pierden su señal, se dan por muertas y
+por un momento puede haber más de 4 en vuelo. Verificado en workerd con el arnés de la revisión
+(`C:\dev\cmf-mcp-plazos-revision3\workerd\abandono.mjs`, que usa miniflare y atiende la
+salida del Worker con una función local). Los 3 escenarios, cupo tomado, puesto en cola y
+`Promise.all`, dejaban la instancia sin cupos, y ahora los recupera. En la suite, «morir» se
+simula creando los temporizadores de la consulta con el reloj de `node:test` y descartándolos
+(`lanzarMuertas` de `test/tope-en-vuelo.test.ts`). Regla. **lo que corre en Workers se prueba
+también contra la muerte de la petición**, y eso solo se ve en workerd. Y la regla de proceso
+que deja esta lección. La segunda revisión leyó la cola nueva en Node y la dio por buena en ese
+punto. Un cambio en una pieza compartida entre peticiones lleva en su encargo de revisión el
+escenario «la petición termina a medio camino», con el motor real. Lo que la misma revisión
+encontró además. La comprobación de clase del guardia de red buscaba el texto
+`globalThis.fetch` y se burlaba de 5 formas; ahora mira lo que la prueba importa, y toda prueba
+que carga algo de `../src/` lleva el guardia. El `TimeoutError` del plazo total se reconocía por
+nombre y uno ajeno que viniera del proxy se saltaba el manejo de proxy caído; ahora se reconoce
+por una marca propia. Y 6 mutantes pasaban en verde, entre ellos el del plazo total que no
+devolvía su cupo.
+
 ## Gotchas
 
 - **La fuente se cae, y eso no es un defecto tuyo.** El servlet BaseDato devuelve a veces el
@@ -870,7 +913,7 @@ otro archivo de `src` decodifica `&amp;` junto con otra entidad.
   `test/salida-proxy.test.ts` tenía la misma vara y botó un pre-commit ese mismo día, porque
   arreglé la primera sin buscar a su hermana. Al corregir una prueba de tiempos, busca las demás
   con `grep -rn "Date.now()" test/*.test.ts`.
-- **Una prueba que simula la red importa primero `./sin-red-real.js`.** Al terminar, la prueba
+- **Toda prueba que carga código de `../src/` importa primero `./sin-red-real.js`.** Al terminar, una prueba que simula la red
   devuelve `globalThis.fetch` a su valor original, y una consulta que siga viva sale con ese
   original. Sin el guardia es la red real. El 9 de octubre de 2026 una prueba falló antes de
   esperar a sus consultas en cola y hasta 4 GET salieron a `tasas.cmfchile.cl`. Lo vigila
