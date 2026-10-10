@@ -898,22 +898,41 @@ también es lo que hay cuando no quedó nadie vivo. Con 4 cupos y 200 puestos de
 muertas, cada consulta nueva veía el silencio, no barría, encontraba la cola llena y fallaba
 al instante. Como no se quedaba a esperar, la siguiente repetía lo mismo, sin fin. Bastaban 4
 programas de `/codigo` desde una IP. Y con 1 a 3 cupos muertos y tráfico espaciado, los
-muertos no volvían nunca. El diseño que quedó. **solo barre un temporizador que corrió a
-tiempo.** Quien puede distinguir un dueño muerto de un hilo detenido es un temporizador,
-porque sabe a qué hora le tocaba correr (`corrioATiempo`, con `ATRASO_MAXIMO_MS` de 1000). Si
-corrió a tiempo, el hilo no estuvo detenido, y todo temporizador de un vivo que vencía antes
-ya corrió, porque los temporizadores vencidos corren en el orden en que vencían. Una consulta
-que recién llega no sabe nada de eso, así que no barre: si entra directo deja un barrido para
-50 ms después (`barrerDespues`), y si hace cola barre en cada sondeo que corre a tiempo. Un
-temporizador que corre atrasado deja una línea `cmf_hilo_detenido` y no barre. La cola tiene
+muertos no volvían nunca. El tercer intento dejó barrer a cualquier temporizador que corriera a
+tiempo UNA vez, con el argumento de que entonces todo temporizador de un vivo que vencía antes
+ya había corrido, porque los vencidos corren en el orden en que vencían. **Ese argumento es
+falso en los 2 motores, y lo mostró la sexta revisión con el tercer intento ya desplegado.** En
+Node los temporizadores corren por listas, una por duración, y la de 50 ms va antes que la de
+1000. En workerd los atrasados se despachan de a uno por petición, unos 15 ms entre uno y otro.
+En los 2 casos un temporizador recién creado corre «a tiempo» antes que las señales de vida
+atrasadas de otro. Con una petición de 10 consultas, otra esperando cupo y una detención de 6
+segundos, workerd dio por muertos a 4 vivos (8 en vuelo). En Node bastó una consulta que nacía
+al terminar la detención (7 en vuelo). El diseño que quedó. **solo barre quien lleva una racha
+corriendo a tiempo.** Para dar a alguien por muerto hay que saber que tuvo la oportunidad de
+renovar su señal y no lo hizo. Esa oportunidad la prueba un temporizador periódico que corrió a
+tiempo, corrida tras corrida, durante `RACHA_PARA_BARRER_MS` (2500, el latido de 1000 más 1500
+para que el motor se ponga al día). La clase `Racha` lleva esa cuenta y cada corrida atrasada
+(`ATRASO_MAXIMO_MS`, 1000) la corta y deja una línea `cmf_hilo_detenido`. Barren el latido de
+un cupo, el sondeo de quien hace cola, y un vigía (`vigilar`) que deja quien entra directo
+cuando ve cupos con la señal vieja. El costo. Una consulta que encuentra los 4 cupos muertos
+espera 2 segundos y medio, no 50 ms. Y en Workers el vigía muere con su petición, así que con
+1 a 3 cupos muertos y consultas cortas que llegan de a una, los muertos no vuelven hasta que
+alguna consulta espera cupo 2 segundos y medio, o dura 3. Mientras tanto la instancia trabaja
+con menos cupos. Se cura sola cuando sube la carga. La cola tiene
 un tope de 1000 (`MAX_COLA`). Cada puesto sondea cada 50 ms, y con 10000 en cola el hilo
 quedaba ocupado más de 5 segundos seguidos y nadie entraba. El primer tope fue 200 y rompía un
 uso legítimo, 240 consultas juntas repartidas en 12 hosts, que antes pasaban todas. La que no
-cabe no falla al instante: espera 2 segundos y medio, porque la cola puede estar llena de
-muertos y eso recién se sabe cuando pasa la gracia de sus puestos. Reglas. **una señal de
+cabe no falla al instante: espera afuera hasta que su propia racha le deja barrer, porque la
+cola puede estar llena de muertos. Reglas. **una señal de
 vida mide 2 cosas a la vez, si el dueño vive y si el reloj corrió**, y hay que separar la
-segunda antes de creerle a la primera. Y **una ausencia se prueba con quien tenía que estar,
-no con el silencio**: el silencio no distingue «todos callaron» de «no queda nadie». La misma
+segunda antes de creerle a la primera. **Una ausencia se prueba con quien tenía que estar,
+no con el silencio**: el silencio no distingue «todos callaron» de «no queda nadie». Y la que
+costó 4 intentos. **una sola observación no prueba una ausencia; la prueba una ventana
+entera**, y la ventana tiene que ser más larga que lo que el observado tarda en dar señal. Las
+3 primeras formas fallaron en lo mismo, creerle a un instante. La regla de proceso. cuando un
+arreglo se apoya en una frase sobre el motor («los temporizadores corren en orden»), esa frase
+se mide en los 2 motores ANTES de construir encima, con una sonda de 20 líneas. Yo la escribí
+como comentario y la di por cierta. La misma
 quinta revisión encontró 3 defectos antiguos del desafío anti-bot, que quedaron cerrados. Si
 la consulta repetida volvía a ser el desafío, la tool recibía esa página como dato; ahora es
 un error que lo dice. Las cookies del jar REEMPLAZABAN a las de quien llama, así que el envío
@@ -921,7 +940,20 @@ del código del captcha perdía su cookie de sesión si le tocaba un desafío; a
 (`conCookiesDelJar`, también en `fetchCmf`). Y cada respuesta se convertía entera a texto solo
 para mirar si era un desafío, que mide menos de 4000 caracteres; ahora se lee como bytes y se
 convierte solo si es chica. Un documento de 40 MB ocupaba 124 MB y ahora ocupa 84, medido en
-Node. El Worker tiene 128. La revisión anterior había encontrado otro defecto anterior a todo
+Node. El Worker tiene 128. **Medido después en workerd, y sigue abierto.** La memoria del
+proceso workerd subió 56 MB con un documento de 10 MB, y 175 MB con uno de 40 (224 antes de este
+arreglo). O sea, un documento cuesta más de 4 veces su tamaño. workerd local no aplica el tope
+de 128 MB, así que la prueba pasa, pero en producción un documento de 40 MB muy probablemente
+falla. El tamaño seguro anda por los 15 a 20 MB. La causa es que `resolverChallenge` lee el
+cuerpo sobre un `clone()`, que guarda todo el cuerpo una segunda vez para quien llama. Leerlo
+una sola vez y entregar una respuesta armada con esos bytes ahorraría una copia. La sexta
+revisión cerró además 3 detalles de estos arreglos. El desafío repetido por la salida chilena
+contaba como proxy caído y mandaba consultas a la CMF directa; ahora es su propio error
+(`DesafioRepetido`) y sube tal cual. Una página chica y legítima con un script empaquetado, si
+llegaba tras un desafío, se tomaba por otro desafío; ahora se exige también el dato `fwb_dat`,
+igual que en la primera respuesta. Y `conCookiesDelJar` rearmaba la cabecera de quien llama
+par por par y la cambiaba; ahora sus cookies viajan tal como venían y las del jar van al
+final. La revisión anterior había encontrado otro defecto anterior a todo
 esto, que se cerró ese día. Cuando la CMF respondía el desafío anti-bot, `resolverChallenge`
 entregaba la respuesta de la consulta repetida sin leer. `fetchCmf` devolvía el cupo ahí y el
 cuerpo se bajaba después, fuera del tope (12 cuerpos a la vez con tope de 4, medido). Y las
