@@ -11,7 +11,7 @@ import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fetchCmf } from "../src/client/cmf-client.js";
-import { crearCookieJar } from "../src/client/anti-bot.js";
+import { conCookiesDelJar, crearCookieJar } from "../src/client/anti-bot.js";
 
 const TOPE = 4;
 const INTENTOS = 3;
@@ -501,4 +501,106 @@ test("tras el desafío, la consulta repetida conserva las cookies que traía qui
     "POST SVS_HE=sesion123",
     "GET SVS_HE=sesion123; cookiesession1=AAAA",
   ]);
+});
+
+// Los 4 que siguen los encontró la sexta revisión adversarial, el 10 de
+// octubre de 2026, sobre los arreglos de la quinta.
+test("las cookies de quien llama viajan tal como venían, y las del jar se agregan al final", async () => {
+  // Unirlas rearmando la cabecera par por par cambiaba lo que mandó quien
+  // llama. un nombre repetido perdía su primer valor, una cookie sin valor
+  // desaparecía, y un valor entre comillas con un punto y coma salía cortado.
+  const env = { CMF_RATE_LIMIT_MS: "0" };
+  const deQuienLlama = 'a=1; a=2; sinvalor; q="x;y"; cookiesession1=VIEJA; b=2';
+  const cookiesQueLlegan: string[] = [];
+  await conRed(
+    () => (url, init) => {
+      cookiesQueLlegan.push(new Headers(init.headers).get("cookie") ?? "");
+      return redConDesafio(conCookie, () => new Response("datos"))(url, init);
+    },
+    async () => {
+      // Con una cookie del desafío vieja, la CMF responde otra vez el desafío. Acá la red simulada mira solo que exista.
+      const res = await fetchCmf("https://www.cmfchile.cl/tal-cual.php", { headers: { Cookie: 'a=1; a=2; sinvalor; q="x;y"; b=2' } }, env);
+      assert.equal(await res.text(), "datos");
+    },
+  );
+  assert.equal(cookiesQueLlegan[0], 'a=1; a=2; sinvalor; q="x;y"; b=2');
+  assert.equal(cookiesQueLlegan[2], 'a=1; a=2; sinvalor; q="x;y"; b=2; cookiesession1=AAAA');
+  // La del jar reemplaza a la del mismo nombre que traía quien llama, y nada más.
+  const jar = crearCookieJar();
+  jar.setFromHeaders(new Headers({ "set-cookie": "cookiesession1=NUEVA; Path=/" }));
+  const headers = new Headers({ Cookie: deQuienLlama });
+  conCookiesDelJar(headers, jar, new URL("https://www.cmfchile.cl/"));
+  assert.equal(headers.get("Cookie"), 'a=1; a=2; sinvalor; q="x;y"; b=2; cookiesession1=NUEVA');
+});
+
+test("una página chica y legítima que llega tras el desafío no se toma por otro desafío", async () => {
+  // La primera respuesta es un desafío solo si además trae su dato fwb_dat.
+  // La repetida se miraba con menos exigencia, y una página chica con un
+  // script empaquetado se volvía un error.
+  const env = { CMF_RATE_LIMIT_MS: "0" };
+  const paginaChica = "<html><script>eval(function(p,a,c,k,e,d){return p}('menu',1,1,''))</script>Sin resultados</html>";
+  await conRed(
+    () => redConDesafio(conCookie, () => new Response(paginaChica)),
+    async () => {
+      const res = await fetchCmf("https://www.cmfchile.cl/chica.php", {}, env);
+      assert.equal(await res.text(), paginaChica);
+    },
+  );
+});
+
+test("un desafío de 3000 caracteres se reconoce igual", async () => {
+  // El desafío mide menos de 4000 caracteres. El corte por tamaño que evita
+  // convertir a texto los documentos grandes no puede dejarlo pasar como dato.
+  const env = { CMF_RATE_LIMIT_MS: "0" };
+  const relleno = " ".repeat(3000 - DESAFIO.length);
+  await conRed(
+    () => (_url, init) => {
+      if (init.method === "POST") return conCookie();
+      const resuelto = new Headers(init.headers).get("cookie")?.includes("cookiesession1");
+      return new Response(resuelto ? "datos" : DESAFIO + relleno);
+    },
+    async () => {
+      const res = await fetchCmf("https://www.cmfchile.cl/desafio-largo.php", {}, env);
+      assert.equal(await res.text(), "datos");
+    },
+  );
+});
+
+test("el desafío repetido por la salida chilena es un error de la CMF, y el proxy no se da por caído", async () => {
+  const env = {
+    CMF_RATE_LIMIT_MS: "0",
+    CMF_REINTENTO_403_MS: "0",
+    CMF_PROXY_URL: "https://salida-insiste.example.cl/",
+    CMF_PROXY_TOKEN: "token-de-prueba",
+  };
+  const marca = { "x-cmf-salida": "1" };
+  const avisos: string[] = [];
+  const avisoOriginal = console.warn;
+  console.warn = (linea: unknown) => void avisos.push(String(linea));
+  const idas: string[] = [];
+  try {
+    await conRed(
+      () => {
+        const porProxy = redConDesafio(
+          () => new Response("ok", { headers: { ...marca, "set-cookie": "cookiesession1=AAAA; Path=/" } }),
+          () => new Response(DESAFIO, { headers: marca }),
+          marca,
+        );
+        return (url, init) => {
+          idas.push(new URL(url).hostname);
+          return new URL(url).hostname.endsWith(".example.cl")
+            ? porProxy(url, init)
+            : new Response("<html><title>403 Forbidden</title></html>", { status: 403 });
+        };
+      },
+      async () => {
+        await assert.rejects(fetchCmf("https://www.cmfchile.cl/insiste-por-proxy.php", {}, env), /desafío anti-bot 2 veces/);
+        assert.ok(!avisos.some((a) => a.includes("proxy_fallo")), `anotó un proxy caído. ${avisos.join(" | ")}`);
+        // 1 directa que da el bloqueo, y después solo el proxy. Ninguna consulta más a la CMF directa.
+        assert.equal(idas.filter((h) => h === "www.cmfchile.cl").length, 1, idas.join(", "));
+      },
+    );
+  } finally {
+    console.warn = avisoOriginal;
+  }
 });

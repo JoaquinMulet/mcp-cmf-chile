@@ -113,16 +113,31 @@ export async function resolverChallenge(
   // octubre de 2026), y perdía la cookie de sesión que el flujo del captcha
   // necesita.
   const cuerpoFinal = textoSiEsChico(await final.clone().arrayBuffer());
-  if (esChallenge(cuerpoFinal)) {
+  // Con la misma exigencia que la primera respuesta. es el desafío solo si
+  // además trae su dato. Una página chica y legítima con un script empaquetado
+  // no lo es.
+  if (esChallenge(cuerpoFinal) && extraerChallenge(cuerpoFinal)) {
     // La CMF no aceptó la cookie del desafío. Entregar esta página como si
     // fuera la respuesta dejaba al parser leyendo un desafío como una página
     // sin datos. La URL va sin su query, que puede llevar una clave.
-    throw new Error(
+    throw new DesafioRepetido(
       `La CMF respondió con su desafío anti-bot 2 veces seguidas y no entregó la página (${urlObj.origin}${urlObj.pathname}). Es un bloqueo, no ausencia de datos.`,
     );
   }
   jar.setFromHeaders(final.headers);
   return final;
+}
+
+/**
+ * La CMF respondió el desafío otra vez, con la cookie ya puesta. Tiene clase
+ * propia para que quien llama lo distinga de una falla de la red. cuando la
+ * consulta va por la salida chilena, esto no es un proxy caído.
+ */
+export class DesafioRepetido extends Error {
+  constructor(mensaje: string) {
+    super(mensaje);
+    this.name = "DesafioRepetido";
+  }
 }
 
 /** Sobre este tamaño una respuesta no es el desafío, que mide menos de 4000 caracteres. */
@@ -138,20 +153,44 @@ function textoSiEsChico(bytes: ArrayBuffer): string {
 }
 
 /**
- * Suma las cookies del jar a las que ya trae la consulta. Las del jar mandan
- * si se repite el nombre. Antes las del jar REEMPLAZABAN la cabecera entera,
- * y una consulta que traía su cookie de sesión la perdía apenas el jar tenía
- * la del desafío. Así fallaba el envío del código del captcha.
+ * Suma las cookies del jar a las que ya trae la consulta. Antes las del jar
+ * REEMPLAZABAN la cabecera entera, y una consulta que traía su cookie de
+ * sesión la perdía apenas el jar tenía la del desafío. Así fallaba el envío
+ * del código del captcha.
+ *
+ * Las cookies de quien llama viajan tal como venían, en su orden. Solo se
+ * quita la que tiene el mismo nombre que una del jar, y las del jar van al
+ * final. Rearmar la cabecera par por par la cambiaba. un nombre repetido
+ * perdía su primer valor, una cookie sin valor desaparecía, y un valor entre
+ * comillas con un punto y coma salía cortado.
  */
 export function conCookiesDelJar(headers: Headers, jar: CookieJar, url: URL): void {
   const delJar = jar.header(url);
   if (!delJar) return;
-  const pares = new Map<string, string>();
-  for (const trozo of `${headers.get("Cookie") ?? ""}; ${delJar}`.split(";")) {
+  const nombresDelJar = new Set(delJar.split("; ").map((par) => par.slice(0, par.indexOf("="))));
+  const deQuienLlama = trozosDeCookie(headers.get("Cookie") ?? "").filter((trozo) => {
     const igual = trozo.indexOf("=");
-    if (igual > 0) pares.set(trozo.slice(0, igual).trim(), trozo.slice(igual + 1).trim());
+    return !nombresDelJar.has(igual > 0 ? trozo.slice(0, igual).trim() : trozo);
+  });
+  headers.set("Cookie", [...deQuienLlama, delJar].join("; "));
+}
+
+/** Parte una cabecera Cookie por sus punto y coma, sin cortar los que van entre comillas. */
+function trozosDeCookie(cabecera: string): string[] {
+  const trozos: string[] = [];
+  let actual = "";
+  let entreComillas = false;
+  for (const letra of cabecera) {
+    if (letra === '"') entreComillas = !entreComillas;
+    if (letra === ";" && !entreComillas) {
+      trozos.push(actual.trim());
+      actual = "";
+    } else {
+      actual += letra;
+    }
   }
-  headers.set("Cookie", [...pares].map(([nombre, valor]) => `${nombre}=${valor}`).join("; "));
+  trozos.push(actual.trim());
+  return trozos.filter((trozo) => trozo !== "");
 }
 
 export const UA_DEFAULT =

@@ -1,4 +1,4 @@
-﻿import { resolverChallenge, crearCookieJar, conCookiesDelJar, UA_DEFAULT } from "./anti-bot.js";
+﻿import { resolverChallenge, crearCookieJar, conCookiesDelJar, DesafioRepetido, UA_DEFAULT } from "./anti-bot.js";
 import { cacheHttp, cacheBinario } from "./cache.js";
 
 /** Entorno del servidor (Workers env o vacío en STDIO). */
@@ -645,8 +645,9 @@ export async function fetchCmf(
       // por el proxy, que seguía entregando tramos. No se reintenta y el proxy
       // no se da por caído. Se reconoce por su marca y no por su nombre, para
       // que un TimeoutError ajeno que venga del proxy siga contando como proxy
-      // caído.
-      if (plazosTotalesVencidos.has(e as object)) throw e;
+      // caído. Lo mismo el desafío repetido. el proxy hizo su trabajo y es la
+      // CMF la que no aceptó la consulta.
+      if (plazosTotalesVencidos.has(e as object) || e instanceof DesafioRepetido) throw e;
       if (porProxy && salida) {
         // Un proxy colgado o sin red es un proxy caído. No se le insiste.
         registrarSalida("proxy_fallo", 0, u);
