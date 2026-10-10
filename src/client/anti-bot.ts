@@ -64,13 +64,16 @@ export async function resolverChallenge(
   url: string,
   init: RequestInit,
   jar: CookieJar,
+  /** Lo más que puede pesar el cuerpo de la respuesta. Sobre eso se corta con RespuestaDemasiadoGrande. */
+  topeBytes = Number.POSITIVE_INFINITY,
 ): Promise<Response> {
   const urlObj = new URL(url);
   const headers = new Headers(init.headers ?? {});
   conCookiesDelJar(headers, jar, urlObj);
+  const leerUnaVez = (res: Response) => leerCuerpoUnaVez(res, topeBytes, `${urlObj.origin}${urlObj.pathname}`);
 
-  const primera = await fetchFn(url, { ...init, headers });
-  const cuerpo = textoSiEsChico(await primera.clone().arrayBuffer());
+  const { respuesta: primera, bytes } = await leerUnaVez(await fetchFn(url, { ...init, headers }));
+  const cuerpo = textoSiEsChico(bytes);
 
   if (!esChallenge(cuerpo)) {
     jar.setFromHeaders(primera.headers);
@@ -104,7 +107,6 @@ export async function resolverChallenge(
   // Reintento del request original con la cookie resuelta
   const retryHeaders = new Headers(headers);
   conCookiesDelJar(retryHeaders, jar, urlObj);
-  const final = await fetchFn(url, { ...init, headers: retryHeaders });
   // La respuesta repetida se trata igual que una primera respuesta que no fue
   // desafío. Su cuerpo se lee entero acá, y sus cookies quedan en el jar.
   // Quien llama tiene tomado un cupo del limitador hasta que esta función
@@ -112,7 +114,8 @@ export async function resolverChallenge(
   // el cupo ya devuelto (12 cuerpos a la vez con tope de 4, medido el 10 de
   // octubre de 2026), y perdía la cookie de sesión que el flujo del captcha
   // necesita.
-  const cuerpoFinal = textoSiEsChico(await final.clone().arrayBuffer());
+  const { respuesta: final, bytes: bytesFinal } = await leerUnaVez(await fetchFn(url, { ...init, headers: retryHeaders }));
+  const cuerpoFinal = textoSiEsChico(bytesFinal);
   // Con la misma exigencia que la primera respuesta. es el desafío solo si
   // además trae su dato. Una página chica y legítima con un script empaquetado
   // no lo es.
@@ -148,8 +151,105 @@ const MAX_BYTES_DE_UN_DESAFIO = 16000;
  * Convertir a texto cada respuesta, también un PDF de 40 MB, dejaba en memoria
  * una copia más del documento solo para mirar si era un desafío.
  */
-function textoSiEsChico(bytes: ArrayBuffer): string {
+function textoSiEsChico(bytes: Uint8Array): string {
   return bytes.byteLength < MAX_BYTES_DE_UN_DESAFIO ? new TextDecoder().decode(bytes) : "";
+}
+
+/**
+ * Una respuesta pesa más de lo que el servidor puede tener en memoria. Tiene
+ * clase propia para que quien llama no la reintente ni la tome por una falla
+ * de la red. repetir la consulta trae el mismo documento.
+ */
+export class RespuestaDemasiadoGrande extends Error {
+  constructor(bytes: number, topeBytes: number, pagina: string, pesoExacto: boolean) {
+    const enMb = (n: number) => (n / 1048576).toFixed(1).replace(".", ",");
+    super(
+      `El documento de la CMF pesa ${pesoExacto ? "" : "más de "}${enMb(bytes)} MB, y este servidor no baja documentos de más de ${enMb(topeBytes)} MB porque no caben en su memoria (${pagina}). Ábralo directo desde la CMF con su enlace.`,
+    );
+    this.name = "RespuestaDemasiadoGrande";
+  }
+}
+
+/**
+ * Lee el cuerpo de una respuesta UNA sola vez, y entrega los bytes junto con
+ * una respuesta igual, armada con esos mismos bytes.
+ *
+ * Antes el cuerpo se leía sobre un clone(), para mirar si era el desafío, y
+ * quien llamaba lo leía otra vez. En workerd un documento ocupaba así más de
+ * 4 veces su tamaño (174 MB para uno de 40, medido el 10 de octubre de 2026).
+ */
+async function leerCuerpoUnaVez(res: Response, topeBytes: number, pagina: string): Promise<{ respuesta: Response; bytes: Uint8Array }> {
+  // Sin cuerpo no hay nada que copiar. Y una respuesta con un estado que
+  // `new Response` rechaza no se puede rearmar, así que conserva su copia.
+  if (!res.body || res.status < 200 || res.status > 599) {
+    return { respuesta: res, bytes: new Uint8Array(await res.clone().arrayBuffer()) };
+  }
+  const declarado = Number(res.headers.get("content-length") ?? "");
+  if (declarado > topeBytes) {
+    // Se sabe antes de bajar un solo byte.
+    void res.body.cancel().catch(() => {});
+    throw new RespuestaDemasiadoGrande(declarado, topeBytes, pagina, true);
+  }
+  // Con el largo declarado, los tramos se copian a un solo bloque a medida que
+  // llegan, y el documento está en memoria una sola vez. Con arrayBuffer() el
+  // motor junta primero todos los tramos y después los copia a un bloque
+  // nuevo. Lo que no cabe en el bloque se guarda aparte. pasa cuando no hay
+  // largo declarado, o cuando el declarado es el del cuerpo comprimido.
+  const lector = res.body.getReader();
+  const bloque = new Uint8Array(declarado > 0 ? declarado : 0);
+  const sobrantes: Uint8Array[] = [];
+  let enBloque = 0;
+  let largo = 0;
+  for (;;) {
+    const { done, value } = await lector.read();
+    if (done) break;
+    largo += value.byteLength;
+    if (largo > topeBytes) {
+      // Sin largo declarado, o con uno que mentía, se sabe recién acá.
+      void lector.cancel().catch(() => {});
+      throw new RespuestaDemasiadoGrande(largo, topeBytes, pagina, false);
+    }
+    if (sobrantes.length === 0 && enBloque + value.byteLength <= bloque.byteLength) {
+      bloque.set(value, enBloque);
+      enBloque += value.byteLength;
+    } else {
+      sobrantes.push(value);
+    }
+  }
+  // Un bloque del largo justo, para que `bytes.buffer` sea el cuerpo y nada
+  // más. Si el largo declarado era el real, es el mismo bloque, sin copia.
+  let bytes = bloque;
+  if (largo !== bloque.byteLength) {
+    bytes = new Uint8Array(largo);
+    bytes.set(bloque.subarray(0, enBloque));
+    let desde = enBloque;
+    for (const tramo of sobrantes) {
+      bytes.set(tramo, desde);
+      desde += tramo.byteLength;
+    }
+  }
+  // El cuerpo de la respuesta nueva entrega ese mismo bloque, sin copiarlo,
+  // recién cuando alguien lo lee.
+  const cuerpo = new ReadableStream<Uint8Array>({
+    pull(salida) {
+      salida.enqueue(bytes);
+      salida.close();
+    },
+  });
+  const respuesta = new Response(cuerpo, { status: res.status, statusText: res.statusText, headers: res.headers });
+  cuerposLeidos.set(respuesta, bytes);
+  return { respuesta, bytes };
+}
+
+/** Los cuerpos que este cliente ya leyó enteros, por respuesta. */
+const cuerposLeidos = new WeakMap<Response, Uint8Array>();
+
+/**
+ * Los bytes del cuerpo de una respuesta. Si la respuesta salió de este
+ * cliente, son los que ya se leyeron, sin otra copia.
+ */
+export async function bytesDe(res: Response): Promise<Uint8Array> {
+  return cuerposLeidos.get(res) ?? new Uint8Array(await res.arrayBuffer());
 }
 
 /**

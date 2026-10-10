@@ -1,5 +1,8 @@
-import { resolverChallenge, crearCookieJar, conCookiesDelJar, DesafioRepetido, UA_DEFAULT } from "./anti-bot.js";
+import { resolverChallenge, crearCookieJar, conCookiesDelJar, bytesDe, DesafioRepetido, RespuestaDemasiadoGrande, UA_DEFAULT } from "./anti-bot.js";
 import { cacheHttp, cacheBinario } from "./cache.js";
+
+// Para quien llama a fetchCmf directo y quiere los bytes sin otra copia.
+export { bytesDe };
 
 /** Entorno del servidor (Workers env o vacío en STDIO). */
 export interface CmfEnv {
@@ -547,6 +550,14 @@ const directoBloqueadoHasta = new Map<string, number>();
 
 const esBloqueoDeOrigen = (status: number) => status === 403 || status === 520;
 
+/**
+ * Lo más que puede pesar una respuesta. Un Worker tiene 128 MB de memoria en
+ * total, y sobre este tamaño el documento no cabe. Medido el 10 de octubre de
+ * 2026 con herramientas/workerd/memoria.mjs. los números están en el CLAUDE.md.
+ * Sin este tope el Worker moría por memoria, sin decir nada.
+ */
+const MAX_BYTES_DE_UNA_RESPUESTA = 20 * 1024 * 1024;
+
 /** Saltos que se siguen por consulta. La CMF encadena 1 o 2, y un círculo no termina nunca. */
 const MAX_REDIRECCIONES = 5;
 
@@ -638,7 +649,7 @@ export async function fetchCmf(
     // destino no permitido) no vuelve a pasar por el catch.
     let res: Response;
     try {
-      res = await resolverChallenge(porProxy && salida ? salida.fetchFn : fetchConCfg, url, { ...init, headers }, jar);
+      res = await resolverChallenge(porProxy && salida ? salida.fetchFn : fetchConCfg, url, { ...init, headers }, jar, MAX_BYTES_DE_UNA_RESPUESTA);
     } catch (e) {
       limitador.liberar(cupo);
       // El plazo total del cuerpo. Quien no terminó es la CMF, venga directa o
@@ -647,7 +658,8 @@ export async function fetchCmf(
       // que un TimeoutError ajeno que venga del proxy siga contando como proxy
       // caído. Lo mismo el desafío repetido. el proxy hizo su trabajo y es la
       // CMF la que no aceptó la consulta.
-      if (plazosTotalesVencidos.has(e as object) || e instanceof DesafioRepetido) throw e;
+      // Y un documento que no cabe en memoria. repetir la consulta trae el mismo.
+      if (plazosTotalesVencidos.has(e as object) || e instanceof DesafioRepetido || e instanceof RespuestaDemasiadoGrande) throw e;
       if (porProxy && salida) {
         // Un proxy colgado o sin red es un proxy caído. No se le insiste.
         registrarSalida("proxy_fallo", 0, u);
@@ -806,7 +818,7 @@ function registrarRespuestaInutil(
 async function exigirRespuestaUtil(res: Response, url: string, texto?: string): Promise<void> {
   if (res.ok && texto === undefined) return;
   const host = new URL(url).hostname;
-  const cuerpo = texto ?? decodificarBody(await res.arrayBuffer());
+  const cuerpo = texto ?? decodificarBody(await bytesDe(res));
   const cortafuegos = MARCA_CORTAFUEGOS.test(cuerpo.slice(0, 4000));
   if (res.ok && !cortafuegos) return;
   registrarRespuestaInutil(res, url, cuerpo, { cortafuegos });
@@ -814,7 +826,7 @@ async function exigirRespuestaUtil(res: Response, url: string, texto?: string): 
 }
 
 /** Decodifica el body de una respuesta legacy: UTF-8 si es válido, si no windows-1252. */
-function decodificarBody(bytes: ArrayBuffer): string {
+function decodificarBody(bytes: Uint8Array): string {
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
@@ -839,7 +851,7 @@ export async function getLegacy(
     if (cacheado) return cacheado;
   }
   const res = await fetchCmf(url, {}, env);
-  const bytes = await res.arrayBuffer();
+  const bytes = await bytesDe(res);
   const texto = decodificarBody(bytes);
   await exigirRespuestaUtil(res, url, texto);
   if (cacheClave) cacheHttp.set(cacheClave, texto, config(env).cacheTtlS * 1000);
@@ -854,7 +866,7 @@ export async function getLegacyConCookies(
 ): Promise<string> {
   const url = `https://www.cmfchile.cl${path}`;
   const res = await fetchCmf(url, { headers: { Cookie: cookies } }, env);
-  return decodificarBody(await res.arrayBuffer());
+  return decodificarBody(await bytesDe(res));
 }
 
 /** POST form-urlencoded con cookies explícitas (flujo captcha). */
@@ -880,7 +892,7 @@ export async function postLegacyConCookies(
     },
     env,
   );
-  return decodificarBody(await res.arrayBuffer());
+  return decodificarBody(await bytesDe(res));
 }
 
 /** POST form-urlencoded hacia sistemas legacy. */
@@ -910,7 +922,7 @@ export async function postLegacy(
     },
     env,
   );
-  const bytes = await res.arrayBuffer();
+  const bytes = await bytesDe(res);
   const texto = decodificarBody(bytes);
   await exigirRespuestaUtil(res, url, texto);
   return texto;
@@ -984,7 +996,7 @@ export async function getLegacyBinario(
   const url = `https://www.cmfchile.cl${path}${qs.size ? `?${qs}` : ""}`;
   const res = await fetchCmf(url, {}, env);
   await exigirRespuestaUtil(res, url);
-  return new Uint8Array(await res.arrayBuffer());
+  return bytesDe(res);
 }
 
 /** POST form-urlencoded binario: igual que postLegacy pero devuelve los bytes crudos. */
@@ -1015,7 +1027,7 @@ export async function postLegacyBinario(
     env,
   );
   await exigirRespuestaUtil(res, url);
-  return new Uint8Array(await res.arrayBuffer());
+  return bytesDe(res);
 }
 export async function apiV3<T = unknown>(
   path: string,
@@ -1052,8 +1064,7 @@ export async function apiV3<T = unknown>(
 export async function fetchCmfBinario(url: string, env: CmfEnv = {}): Promise<{ bytes: Uint8Array; contentType: string }> {
   const res = await fetchCmf(url, {}, env);
   await exigirRespuestaUtil(res, url);
-  const buf = await res.arrayBuffer();
-  return { bytes: new Uint8Array(buf), contentType: res.headers.get("Content-Type") ?? "application/octet-stream" };
+  return { bytes: await bytesDe(res), contentType: res.headers.get("Content-Type") ?? "application/octet-stream" };
 }
 
 /** Un documento que llega como HTML es una página de error o de bloqueo, no el documento. */
@@ -1076,8 +1087,7 @@ export async function fetchCmfBinarioCached(
   if (cacheado) return { bytes: cacheado.bytes, contentType: cacheado.contentType };
   const res = await fetchCmf(url, {}, env);
   await exigirRespuestaUtil(res, url);
-  const buf = await res.arrayBuffer();
-  const bytes = new Uint8Array(buf);
+  const bytes = await bytesDe(res);
   // Antes se cacheaba sin mirar el estado: una página de error quedaba 15
   // minutos como si fuera el PDF.
   exigirBinario(res, url, bytes);

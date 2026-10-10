@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { normativaDescargaSchema, filasSchema, xbrlVisorSchema, xbrlConsultaSchema, xbrlTaxonomiasSchema, documentoInfoSchema, documentoDescargaSchema, documentoMarkdownSchema } from "../util/schemas-output.js";
-import { getLegacy, postLegacy, getLegacyBinario, fetchCmf, fetchCmfBinario, type CmfEnv } from "../client/cmf-client.js";
+import { getLegacy, postLegacy, getLegacyBinario, fetchCmf, fetchCmfBinario, bytesDe, type CmfEnv } from "../client/cmf-client.js";
 import { textoPlanoHtml, htmlTablaAJson, fechaLegacyCompleta, fechaLegacy, xlsAJson } from "../client/parsers.js";
 import { fromError, toolError, toolErrorFuente, toolOk, resumirTabla, paginarTexto } from "../util/errors.js";
 import { urlDocumentoCmf } from "../util/nombres.js";
@@ -864,17 +864,17 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
         const url = `https://www.cmfchile.cl/sitio/aplic/serdoc/ver_sgd.php?s567=${encodeURIComponent(s567)}&secuencia=-1&t=${Date.now()}`;
         const res = await fetchCmf(url, {}, env);
         if (!res.ok) return toolError(`La CMF respondió HTTP ${res.status} al descargar el documento (token inválido o expirado).`);
-        const buf = await res.arrayBuffer();
-        const tamano = buf.byteLength;
+        const bytes = await bytesDe(res);
+        const tamano = bytes.byteLength;
         const contentType = res.headers.get("Content-Type") ?? "";
-        const esHtml = /text\/html/i.test(contentType) || (tamano > 0 && new Uint8Array(buf)[0] === 0x3c); // "<"
+        const esHtml = /text\/html/i.test(contentType) || (tamano > 0 && bytes[0] === 0x3c); // "<"
         if (esHtml) {
           return toolError(
             "La CMF devolvió una página HTML en vez del documento: el token s567 probablemente es inválido o expiró. " +
               "Obtenga un token fresco de las tools de hechos/sanciones/resoluciones y reintente.",
           );
         }
-        const tramo = tramoBase64(new Uint8Array(buf), offset_chars, max_chars);
+        const tramo = tramoBase64(bytes, offset_chars, max_chars);
         return toolOk(
           `Documento descargado (${Math.round(tamano / 1024)} KB, ${contentType}). ${avisoDeTramoBase64(tramo, "cmf_documento_descargar")}`,
           { s567, tamano, contentType, ...tramo },
