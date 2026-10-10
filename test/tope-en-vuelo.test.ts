@@ -176,19 +176,31 @@ test("la cola de cupo respeta el orden de llegada, aunque otras consultas encade
 });
 
 /** Una respuesta que ocupa su cupo `ms`, porque el cliente lee el cuerpo con el cupo tomado. */
-const pegada = (ms: number) =>
-  new Response(
+function pegada(ms: number): Response {
+  let fin: ReturnType<typeof setTimeout>;
+  return new Response(
     new ReadableStream<Uint8Array>({
       start(c) {
-        setTimeout(() => c.close(), ms);
+        fin = setTimeout(() => c.close(), ms);
+      },
+      cancel() {
+        clearTimeout(fin);
       },
     }),
   );
+}
 
+// Con un plazo de red largo. Estas respuestas no mandan ningún tramo hasta
+// que terminan, y el plazo de silencio de fábrica las cortaría a los 12
+// segundos.
 const ocuparCupos = (ms: number, env: Record<string, string>) =>
   Promise.all(
     Array.from({ length: TOPE }, (_, i) =>
-      fetchCmf(`https://tasas.cmfchile.cl/pegada${i}?ms=${ms}`, {}, { CMF_ESPERA_CUPO_MS: "15000", ...env }).then((r) => r.text()),
+      fetchCmf(
+        `https://tasas.cmfchile.cl/pegada${i}?ms=${ms}`,
+        {},
+        { CMF_ESPERA_CUPO_MS: "15000", CMF_UPSTREAM_TIMEOUT_MS: "60000", ...env },
+      ).then((r) => r.text()),
     ),
   );
 
@@ -319,25 +331,97 @@ test("un proxy que falla en la red devuelve su cupo", async () => {
   assert.equal(maximo, TOPE, `máximo en vuelo. ${maximo}`);
 });
 
+/** Con los 4 cupos ocupados por consultas vivas, una quinta no entra y nadie fue dado por muerto. */
+async function exigirCuposVivos(avisos: string[], env: Record<string, string>): Promise<void> {
+  await assert.rejects(
+    fetchCmf("https://api.sbif.cl/quinta", {}, { ...env, CMF_ESPERA_CUPO_MS: "300" }),
+    /no alcanz. cupo en 300 ms/,
+  );
+  assert.ok(!avisos.some((a) => a.includes("cmf_cupo_recuperado")), `avisos. ${avisos.join(" | ")}`);
+}
+
 // Una consulta viva y lenta conserva su cupo. Quien tiene un cupo renueva su
 // señal de vida cada segundo, y sin esa renovación el limitador la daría por
-// muerta a los 10 segundos y dejaría pasar una quinta consulta.
-test("una consulta viva que tarda más de 10 segundos conserva su cupo", async () => {
+// muerta a los 5 segundos y dejaría pasar una quinta consulta.
+test("una consulta viva que tarda más que la gracia conserva su cupo", async () => {
   const env = { CMF_RATE_LIMIT_MS: "0" };
   await conRedLenta(
     redConPegadas(() => undefined),
     async (avisos) => {
-      const ocupadas = ocuparCupos(11500, env);
+      const ocupadas = ocuparCupos(9500, env);
       await yEsperar(ocupadas, async () => {
-        await new Promise((r) => setTimeout(r, 10700));
-        await assert.rejects(
-          fetchCmf("https://api.sbif.cl/quinta", {}, { ...env, CMF_ESPERA_CUPO_MS: "200" }),
-          /no alcanz. cupo en 200 ms/,
-        );
-        assert.ok(!avisos.some((a) => a.includes("cmf_cupo_recuperado")), `avisos. ${avisos.join(" | ")}`);
+        await new Promise((r) => setTimeout(r, 6500));
+        await exigirCuposVivos(avisos, env);
+        // 6,5 segundos sin que llegue ninguna consulta no son un hilo detenido.
+        // El pulso lo mantienen las señales de vida de los 4 cupos.
+        assert.ok(!avisos.some((a) => a.includes("cmf_hilo_detenido")), `aviso falso de detención. ${avisos.join(" | ")}`);
       });
     },
   );
+});
+
+// Un hilo detenido no es una consulta muerta. Mientras el hilo está detenido
+// nadie puede renovar su señal de vida, ni los vivos. Medido por la cuarta
+// revisión adversarial el 10 de octubre de 2026. una detención de 9,5
+// segundos daba por muertas a las 4 consultas en vuelo y dejaba entrar a
+// otras 4, y cada detención siguiente sumaba 4 más, sin techo. Convertir un
+// PDF de 200 a 400 páginas detiene el hilo ese tiempo.
+test("un hilo detenido 11 segundos no da por muerta a ninguna consulta viva", async () => {
+  const env = { CMF_RATE_LIMIT_MS: "0" };
+  await conRedLenta(
+    redConPegadas(() => undefined),
+    async (avisos) => {
+      const ocupadas = ocuparCupos(14500, env);
+      await yEsperar(ocupadas, async () => {
+        await new Promise((r) => setTimeout(r, 100));
+        const hasta = Date.now() + 11000;
+        while (Date.now() < hasta) {
+          // El hilo no suelta el control. Ningún temporizador corre.
+        }
+        await exigirCuposVivos(avisos, env);
+        assert.ok(avisos.some((a) => a.includes("cmf_hilo_detenido")), `sin aviso de la detención. ${avisos.join(" | ")}`);
+      });
+    },
+  );
+});
+
+test("quien espera en la cola más de 2 segundos conserva su puesto", async () => {
+  const env = { CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "15000" };
+  const salidas: string[] = [];
+  const anotar: Respuesta = (url) => {
+    const m = /\/paciente-(\w)/.exec(url);
+    if (m) salidas.push(m[1]);
+    return undefined;
+  };
+  await conRedLenta(redConPegadas(anotar), async () => {
+    const ocupadas = ocuparCupos(3000, env);
+    await yEsperar(ocupadas, async () => {
+      const a = fetchCmf("https://api.sbif.cl/paciente-a", {}, env);
+      await new Promise((r) => setTimeout(r, 30));
+      const b = fetchCmf("https://datosbanco.cmfchile.cl/paciente-b", {}, env);
+      await Promise.all([a, b]);
+    });
+  });
+  assert.deepEqual(salidas, ["a", "b"]);
+});
+
+// Cada consulta en cola mira la cola cada 50 ms, así que una cola enorme
+// gasta el hilo en sondear. Medido por la misma revisión. con 10000 en cola
+// el hilo quedaba ocupado más de 5 segundos seguidos y nadie entraba, aun con
+// cupos libres. Y con 4 cupos y el ritmo de fábrica, en 120 segundos no
+// alcanzan a pasar más de unas 110.
+test("la cola de cupo tiene un tope de 200, y la que no cabe falla al instante", async () => {
+  const env = { CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "15000" };
+  await conRedLenta(redConPegadas(() => undefined), async (avisos) => {
+    const ocupadas = ocuparCupos(700, env);
+    const enCola = Array.from({ length: 200 }, (_, i) => fetchCmf(`https://www.cmfchile.cl/en-cola${i}`, {}, env));
+    await yEsperar(Promise.allSettled([ocupadas, ...enCola]), async () => {
+      const inicio = Date.now();
+      await assert.rejects(fetchCmf("https://api.sbif.cl/no-cabe", {}, env), /200 consultas esperando/);
+      assert.ok(Date.now() - inicio < 300, `tardó ${Date.now() - inicio} ms en rechazarla`);
+      assert.ok(avisos.some((a) => a.includes("cola_llena")), `sin aviso. ${avisos.join(" | ")}`);
+    });
+  });
 });
 
 // Las 2 pruebas que siguen van al final a propósito. Dejan consultas que no
@@ -378,8 +462,16 @@ test("un cupo cuyo dueño murió vuelve solo, y queda un aviso en el log", async
     // tiene que entrar cuando su señal de vida se da por perdida.
     const res = await fetchCmf("https://api.sbif.cl/viva", {}, { ...env, CMF_ESPERA_CUPO_MS: "20000" });
     assert.equal(res.status, 200);
-    const recuperados = avisos.filter((a) => a.includes("cmf_cupo_recuperado"));
-    assert.equal(recuperados.length, TOPE, `avisos. ${avisos.join(" | ")}`);
+    // Los 4 cupos nacieron con 1 ms de diferencia, así que la viva puede
+    // entrar cuando se barrieron 2 y los otros 2 caen un instante después.
+    // Contar apenas entra daba rojo al azar. Se le da 3 segundos al barrido,
+    // que corre cada vez que llega una consulta.
+    const cuantos = () => avisos.filter((a) => a.includes("cmf_cupo_recuperado")).length;
+    for (const limite = Date.now() + 3000; cuantos() < TOPE && Date.now() < limite; ) {
+      await new Promise((r) => setTimeout(r, 100));
+      await fetchCmf("https://api.sbif.cl/otra-viva", {}, { ...env, CMF_ESPERA_CUPO_MS: "20000" });
+    }
+    assert.equal(cuantos(), TOPE, `avisos. ${avisos.join(" | ")}`);
   });
   // Se recuperaron los 4, ni uno más ni uno menos.
   const maximo = await conRedLenta(

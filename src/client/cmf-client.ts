@@ -121,11 +121,26 @@ interface Cupo {
 /** Cada cuánto renueva su señal de vida quien tiene un cupo. */
 const LATIDO_MS = 1000;
 /** Sin señal de vida por este tiempo, el dueño de un cupo se da por muerto. */
-const GRACIA_CUPO_MS = 10000;
+const GRACIA_CUPO_MS = 5000;
 /** Cada cuánto mira la cola quien espera un cupo, y renueva su señal. */
 const SONDEO_COLA_MS = 50;
 /** Sin señal de vida por este tiempo, quien esperaba en la cola se da por muerto. */
 const GRACIA_COLA_MS = 2000;
+/**
+ * Si ningún temporizador del limitador corrió en este tiempo, el hilo estuvo
+ * detenido. Tiene que ser menor que las 2 gracias, para que ninguna detención
+ * capaz de vencer una señal pase sin verse.
+ */
+const UMBRAL_DETENCION_MS = 1500;
+/** Tras una detención, cuánto se espera sin barrer para que los vivos renueven su señal. */
+const CUARENTENA_MS = 2000;
+/**
+ * Cuántas consultas pueden esperar cupo. Con 4 cupos y el ritmo de fábrica, en
+ * los 120 segundos de espera no alcanzan a pasar más de unas 110. Y cada una
+ * sondea cada 50 ms. con 10000 en cola el hilo quedaba ocupado más de 5
+ * segundos seguidos y nadie entraba (medido el 10 de octubre de 2026).
+ */
+const MAX_COLA = 200;
 
 /**
  * Rate limiter por host: cola con plazo y max in-flight. Hay UNO por proceso.
@@ -148,13 +163,38 @@ const GRACIA_COLA_MS = 2000;
  * muere, sus temporizadores mueren con él, la señal envejece, y cualquier otra
  * consulta que pase barre el cupo o el puesto. Cada consulta toma su cupo ella
  * misma, en su propio contexto.
+ *
+ * UN HILO DETENIDO NO ES UNA CONSULTA MUERTA. Mientras el hilo está detenido,
+ * por ejemplo convirtiendo un PDF de 300 páginas, nadie puede renovar su
+ * señal, tampoco los vivos. Medido el 10 de octubre de 2026. una detención de
+ * 9,5 segundos daba por muertas a las 4 consultas en vuelo y dejaba entrar a
+ * otras 4, y cada detención siguiente sumaba 4 más. Por eso el limitador
+ * lleva un pulso, que marca cada temporizador suyo que corre. Un salto largo
+ * en el pulso es una detención, y después de una detención no se barre a
+ * nadie durante CUARENTENA_MS. En ese rato los vivos renuevan su señal, y los
+ * muertos no.
  */
 class RateLimiter {
   private ultimo = new Map<string, number>();
   private tomados = new Set<Cupo>();
   /** Quienes esperan cupo, en orden de llegada. */
   private cola: Array<{ visto: number }> = [];
+  /** La última vez que corrió algo del limitador. */
+  private pulso = 0;
+  private cuarentenaHasta = 0;
   constructor(private maxInflight = 4) {}
+
+  /** Marca el pulso. Si venía de un salto largo, abre la cuarentena. */
+  private pulsar(ahora: number): void {
+    const salto = ahora - this.pulso;
+    this.pulso = ahora;
+    if (salto <= UMBRAL_DETENCION_MS) return;
+    this.cuarentenaHasta = ahora + CUARENTENA_MS;
+    // Con el limitador vacío un salto largo es solo que no había tráfico.
+    if (this.tomados.size > 0 || this.cola.length > 0) {
+      console.warn(JSON.stringify({ cmf_hilo_detenido: { ms: salto, en_vuelo: this.tomados.size, en_cola: this.cola.length } }));
+    }
+  }
 
   /**
    * Espera cupo y turno, y entrega el cupo, que después se pasa a liberar().
@@ -193,7 +233,9 @@ class RateLimiter {
   private tomar(): Cupo {
     const cupo: Cupo = { visto: Date.now() };
     cupo.latido = setInterval(() => {
-      cupo.visto = Date.now();
+      const ahora = Date.now();
+      this.pulsar(ahora);
+      cupo.visto = ahora;
     }, LATIDO_MS);
     // En Node, para que un cupo sin devolver no deje vivo el proceso. En
     // Workers un temporizador es un número y no tiene unref.
@@ -205,6 +247,8 @@ class RateLimiter {
   /** Saca los cupos y los puestos de la cola cuyo dueño dejó de dar señales de vida. */
   private barrer(): void {
     const ahora = Date.now();
+    this.pulsar(ahora);
+    if (ahora < this.cuarentenaHasta) return;
     for (const cupo of this.tomados) {
       if (ahora - cupo.visto <= GRACIA_CUPO_MS) continue;
       this.liberar(cupo);
@@ -226,6 +270,12 @@ class RateLimiter {
    * consulta esperando para siempre y sin rastro.
    */
   private async hacerCola(host: string, esperaCupoMs: number): Promise<Cupo> {
+    if (this.cola.length >= MAX_COLA) {
+      console.warn(JSON.stringify({ cmf_cupo: { motivo: "cola_llena", en_vuelo: this.tomados.size, en_cola: this.cola.length, host } }));
+      throw new Error(
+        `El servidor tiene ${this.cola.length} consultas esperando su turno hacia la CMF y no recibe más por ahora. Reintente en unos minutos.`,
+      );
+    }
     const limite = Date.now() + esperaCupoMs;
     const puesto = { visto: Date.now() };
     this.cola.push(puesto);
