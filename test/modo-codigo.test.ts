@@ -8,6 +8,7 @@
  * 3. El servidor no recorta. lo que la operación devuelve llega entero al
  *    programa, incluida la url del documento que antes se perdía.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/client";

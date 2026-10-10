@@ -13,6 +13,7 @@
  * que toda tool acepta. Si la fuente traía el dígito verificador, viaja en
  * `rut_dv`, para que no se pierda.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";

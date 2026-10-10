@@ -20,6 +20,7 @@
  * de verdad un parametro que empiece con captcha, que es el efecto y no
  * la presencia.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

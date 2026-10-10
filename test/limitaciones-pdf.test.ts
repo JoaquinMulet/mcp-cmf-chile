@@ -10,6 +10,7 @@
  * qué pierde en la transformación, y le ofrece el camino más fiable, que
  * para un modelo con visión es leer el PDF como imagen.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";

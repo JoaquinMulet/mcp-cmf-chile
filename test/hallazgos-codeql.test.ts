@@ -12,6 +12,7 @@
  * hallazgos queda aca, ejercitando la funcion de verdad, asi que el
  * defecto no puede volver aunque el analisis de la nube se apague.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";

@@ -10,6 +10,7 @@
  * quedó con pendientes porque el enlace al documento viajaba solo en el
  * JSON, y porque el texto cortaba en 8 filas de las 100 pedidas.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";

@@ -4,6 +4,7 @@
  * nombre, o algún parámetro sin .describe(). Nace verde; cualquier degradación
  * futura lo pone rojo.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "../src/server.js";

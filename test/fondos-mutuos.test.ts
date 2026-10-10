@@ -21,6 +21,7 @@
  * `txtCsvAJson`. Un fixture inventado habría heredado el mismo error de
  * memoria que causó el defecto.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";

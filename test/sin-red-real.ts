@@ -15,6 +15,7 @@
  * antes de importar el cliente.
  */
 globalThis.fetch = (async (url: string | URL | Request) => {
-  const destino = String(url instanceof Request ? url.url : url).split("?")[0];
-  throw new Error(`Una prueba dejó una consulta viva fuera de su red simulada, hacia ${destino}`);
+  // Solo origen y ruta. La query, el ancla y las credenciales no viajan al error.
+  const u = new URL(url instanceof Request ? url.url : String(url));
+  throw new Error(`Una prueba dejó una consulta viva fuera de su red simulada, hacia ${u.origin}${u.pathname}`);
 }) as typeof fetch;

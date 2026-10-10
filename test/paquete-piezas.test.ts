@@ -12,6 +12,7 @@
  * documento firmado, y esa columna ya se perdio una vez en el servidor,
  * asi que merece prueba propia en vez de llegar por casualidad.
  */
+import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fichaUrl, filasConLinks } from "../src/tools/paquete.js";
