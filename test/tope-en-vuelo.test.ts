@@ -353,7 +353,7 @@ test("una consulta viva que tarda más que la gracia conserva su cupo", async ()
         await new Promise((r) => setTimeout(r, 6500));
         await exigirCuposVivos(avisos, env);
         // 6,5 segundos sin que llegue ninguna consulta no son un hilo detenido.
-        // El pulso lo mantienen las señales de vida de los 4 cupos.
+        // Una detención la delata un temporizador que corre atrasado, no el silencio.
         assert.ok(!avisos.some((a) => a.includes("cmf_hilo_detenido")), `aviso falso de detención. ${avisos.join(" | ")}`);
       });
     },
@@ -408,17 +408,25 @@ test("quien espera en la cola más de 2 segundos conserva su puesto", async () =
 // Cada consulta en cola mira la cola cada 50 ms, así que una cola enorme
 // gasta el hilo en sondear. Medido por la misma revisión. con 10000 en cola
 // el hilo quedaba ocupado más de 5 segundos seguidos y nadie entraba, aun con
-// cupos libres. Y con 4 cupos y el ritmo de fábrica, en 120 segundos no
-// alcanzan a pasar más de unas 110.
-test("la cola de cupo tiene un tope de 200, y la que no cabe falla al instante", async () => {
+// cupos libres. El tope es 1000. con 4 cupos y el ritmo de fábrica hacia los
+// 13 hosts, en 120 segundos no alcanzan a pasar más de unas 1400.
+//
+// La que no cabe no falla al instante. Espera 2 segundos y medio, porque la
+// cola puede estar llena de consultas muertas, y eso recién se sabe cuando
+// pasa la gracia de sus puestos.
+test("la cola de cupo tiene un tope de 1000, y la que no cabe falla tras esperar la gracia de la cola", async () => {
   const env = { CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "15000" };
   await conRedLenta(redConPegadas(() => undefined), async (avisos) => {
-    const ocupadas = ocuparCupos(700, env);
-    const enCola = Array.from({ length: 200 }, (_, i) => fetchCmf(`https://www.cmfchile.cl/en-cola${i}`, {}, env));
+    const ocupadas = ocuparCupos(6000, env);
+    // Las 1000 de la cola se rinden solas a los 5 segundos, para no tener que atenderlas.
+    const enCola = Array.from({ length: 1000 }, (_, i) =>
+      fetchCmf(`https://www.cmfchile.cl/en-cola${i}`, {}, { ...env, CMF_ESPERA_CUPO_MS: "5000" }),
+    );
     await yEsperar(Promise.allSettled([ocupadas, ...enCola]), async () => {
       const inicio = Date.now();
-      await assert.rejects(fetchCmf("https://api.sbif.cl/no-cabe", {}, env), /200 consultas esperando/);
-      assert.ok(Date.now() - inicio < 300, `tardó ${Date.now() - inicio} ms en rechazarla`);
+      await assert.rejects(fetchCmf("https://api.sbif.cl/no-cabe", {}, env), /1000 consultas esperando/);
+      const tardo = Date.now() - inicio;
+      assert.ok(tardo >= 2400 && tardo < 4500, `tardó ${tardo} ms en rechazarla`);
       assert.ok(avisos.some((a) => a.includes("cola_llena")), `sin aviso. ${avisos.join(" | ")}`);
     });
   });
@@ -503,4 +511,108 @@ test("quien murió esperando en la cola no frena a los que vienen detrás, ni se
     () => lanzarLentas(10, env).then(() => {}),
   );
   assert.equal(maximo, TOPE, `máximo en vuelo. ${maximo}`);
+});
+
+// Lo encontró la quinta revisión adversarial el 10 de octubre de 2026, con el
+// código ya desplegado. El limitador tomaba por hilo detenido todo silencio
+// largo, y tras un silencio largo no barría a nadie durante 2 segundos. Pero
+// un silencio largo también es lo que hay cuando no quedó nadie vivo. Con 4
+// cupos y 200 puestos de consultas muertas, cada consulta nueva veía el
+// silencio, no barría, encontraba la cola llena y fallaba al instante. Como
+// no se quedaba a esperar, la siguiente repetía lo mismo, sin fin. Bastaban 4
+// programas de /codigo que respondieran con sus llamadas pendientes.
+test("una cola llena de consultas muertas no deja a la instancia rechazando todo", async () => {
+  const env = { CMF_RATE_LIMIT_MS: "0" };
+  await conRedLenta(redConMuertas, async () => {
+    lanzarMuertas(
+      ["setInterval", "setTimeout"],
+      Array.from({ length: TOPE + 1000 }, (_, i) => `https://www.cmfchile.cl/muerta${i}`),
+      env,
+    );
+    // Llegan de a una y espaciadas, que es cuando el silencio se confundía.
+    for (const i of [0, 1, 2]) {
+      await new Promise((r) => setTimeout(r, 1700));
+      const res = await fetchCmf(`https://api.sbif.cl/espaciada${i}`, {}, { ...env, CMF_ESPERA_CUPO_MS: "9000" });
+      assert.equal(res.status, 200);
+    }
+  });
+  const maximo = await conRedLenta(
+    () => undefined,
+    () => lanzarLentas(10, env).then(() => {}),
+  );
+  assert.equal(maximo, TOPE, `máximo en vuelo. ${maximo}`);
+});
+
+// La misma confusión, sin cola. Con 3 cupos muertos y consultas que llegan de
+// a una, cada una entraba directo por el cupo libre, veía el silencio y no
+// barría. Los 3 muertos no volvían nunca y la instancia quedaba con 1 cupo.
+test("3 cupos muertos vuelven aunque las consultas lleguen de a una y entren directo", async () => {
+  const env = { CMF_RATE_LIMIT_MS: "0" };
+  await conRedLenta(redConMuertas, async (avisos) => {
+    lanzarMuertas(
+      ["setInterval"],
+      [0, 1, 2].map((i) => `https://www.cmfchile.cl/muerta-suelta${i}`),
+      env,
+    );
+    await new Promise((r) => setTimeout(r, 5300));
+    for (const i of [0, 1]) {
+      const res = await fetchCmf(`https://api.sbif.cl/de-a-una${i}`, {}, env);
+      assert.equal(res.status, 200);
+      await new Promise((r) => setTimeout(r, 1700));
+    }
+    assert.equal(avisos.filter((a) => a.includes("cmf_cupo_recuperado")).length, 3, `avisos. ${avisos.join(" | ")}`);
+  });
+});
+
+// Una detención que cae justo mientras alguien espera en la cola. Su sondeo
+// corre apenas termina la detención, antes que las señales de vida de los
+// dueños de los cupos, que vencían un poco después. Si ese sondeo barriera,
+// daría por muertos a los 4 vivos.
+test("un sondeo que corre atrasado por una detención no barre a nadie", async () => {
+  const env = { CMF_RATE_LIMIT_MS: "0" };
+  await conRedLenta(
+    redConPegadas(() => undefined),
+    async (avisos) => {
+      const ocupadas = ocuparCupos(9500, env);
+      await yEsperar(ocupadas, async () => {
+        // Recién pasada una señal de vida, para que la próxima venza después del sondeo.
+        await new Promise((r) => setTimeout(r, 1100));
+        const enCola = fetchCmf("https://api.sbif.cl/esperando", {}, { ...env, CMF_ESPERA_CUPO_MS: "15000" });
+        await new Promise((r) => setTimeout(r, 20));
+        const hasta = Date.now() + 6500;
+        while (Date.now() < hasta) {
+          // El hilo no suelta el control.
+        }
+        await new Promise((r) => setTimeout(r, 400));
+        assert.ok(!avisos.some((a) => a.includes("cmf_cupo_recuperado")), `dio por muerto a un vivo. ${avisos.join(" | ")}`);
+        assert.ok(avisos.some((a) => a.includes("cmf_hilo_detenido")), `sin aviso de la detención. ${avisos.join(" | ")}`);
+        await enCola;
+      });
+    },
+  );
+});
+
+// Lo mismo para el barrido que deja quien entra directo, sin pasar por la cola.
+test("el barrido de quien entra directo tampoco barre si corre atrasado por una detención", async () => {
+  const env = { CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "15000", CMF_UPSTREAM_TIMEOUT_MS: "60000" };
+  await conRedLenta(
+    redConPegadas(() => undefined),
+    async (avisos) => {
+      // 3 cupos ocupados por consultas vivas, y 1 libre.
+      const ocupadas = Promise.all(
+        [0, 1, 2].map((i) => fetchCmf(`https://tasas.cmfchile.cl/pegada${i}?ms=9500`, {}, env).then((r) => r.text())),
+      );
+      await yEsperar(ocupadas, async () => {
+        await new Promise((r) => setTimeout(r, 1100));
+        const directa = fetchCmf("https://tasas.cmfchile.cl/pegada3?ms=8500", {}, env).then((r) => r.text());
+        const hasta = Date.now() + 6500;
+        while (Date.now() < hasta) {
+          // El hilo no suelta el control.
+        }
+        await new Promise((r) => setTimeout(r, 400));
+        assert.ok(!avisos.some((a) => a.includes("cmf_cupo_recuperado")), `dio por muerto a un vivo. ${avisos.join(" | ")}`);
+        await directa;
+      });
+    },
+  );
 });

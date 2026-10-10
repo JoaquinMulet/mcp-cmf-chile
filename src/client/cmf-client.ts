@@ -118,6 +118,12 @@ interface Cupo {
   latido?: ReturnType<typeof setInterval>;
 }
 
+/** Un puesto en la cola. `fuera` queda en true si alguien lo barrió. */
+interface Puesto {
+  visto: number;
+  fuera: boolean;
+}
+
 /** Cada cuánto renueva su señal de vida quien tiene un cupo. */
 const LATIDO_MS = 1000;
 /** Sin señal de vida por este tiempo, el dueño de un cupo se da por muerto. */
@@ -127,20 +133,20 @@ const SONDEO_COLA_MS = 50;
 /** Sin señal de vida por este tiempo, quien esperaba en la cola se da por muerto. */
 const GRACIA_COLA_MS = 2000;
 /**
- * Si ningún temporizador del limitador corrió en este tiempo, el hilo estuvo
- * detenido. Tiene que ser menor que las 2 gracias, para que ninguna detención
- * capaz de vencer una señal pase sin verse.
+ * Un temporizador que corre con más atraso que este vio el hilo detenido, y no
+ * barre. Tiene que ser bastante menor que las 2 gracias. un temporizador que
+ * corre a tiempo garantiza que todo temporizador que vencía antes ya corrió,
+ * y los que vencían después llevan a lo más este atraso.
  */
-const UMBRAL_DETENCION_MS = 1500;
-/** Tras una detención, cuánto se espera sin barrer para que los vivos renueven su señal. */
-const CUARENTENA_MS = 2000;
+const ATRASO_MAXIMO_MS = 1000;
 /**
- * Cuántas consultas pueden esperar cupo. Con 4 cupos y el ritmo de fábrica, en
- * los 120 segundos de espera no alcanzan a pasar más de unas 110. Y cada una
- * sondea cada 50 ms. con 10000 en cola el hilo quedaba ocupado más de 5
- * segundos seguidos y nadie entraba (medido el 10 de octubre de 2026).
+ * Cuántas consultas pueden esperar cupo. Con 4 cupos y el ritmo de fábrica
+ * hacia los 13 hosts, en los 120 segundos de espera no alcanzan a pasar más
+ * de unas 1400. Sin tope, con 10000 en cola el hilo quedaba ocupado más de 5
+ * segundos seguidos solo en sondear, y nadie entraba (medido el 10 de octubre
+ * de 2026).
  */
-const MAX_COLA = 200;
+const MAX_COLA = 1000;
 
 /**
  * Rate limiter por host: cola con plazo y max in-flight. Hay UNO por proceso.
@@ -160,41 +166,33 @@ const MAX_COLA = 200;
  *
  * Por eso cada cupo y cada puesto en la cola llevan una señal de vida, `visto`,
  * que renueva su propio dueño con sus propios temporizadores. Si el dueño
- * muere, sus temporizadores mueren con él, la señal envejece, y cualquier otra
- * consulta que pase barre el cupo o el puesto. Cada consulta toma su cupo ella
- * misma, en su propio contexto.
+ * muere, sus temporizadores mueren con él y la señal envejece. Cada consulta
+ * toma su cupo ella misma, en su propio contexto.
  *
- * UN HILO DETENIDO NO ES UNA CONSULTA MUERTA. Mientras el hilo está detenido,
- * por ejemplo convirtiendo un PDF de 300 páginas, nadie puede renovar su
- * señal, tampoco los vivos. Medido el 10 de octubre de 2026. una detención de
- * 9,5 segundos daba por muertas a las 4 consultas en vuelo y dejaba entrar a
- * otras 4, y cada detención siguiente sumaba 4 más. Por eso el limitador
- * lleva un pulso, que marca cada temporizador suyo que corre. Un salto largo
- * en el pulso es una detención, y después de una detención no se barre a
- * nadie durante CUARENTENA_MS. En ese rato los vivos renuevan su señal, y los
- * muertos no.
+ * SOLO BARRE UN TEMPORIZADOR QUE CORRIÓ A TIEMPO. Una señal vieja puede ser un
+ * dueño muerto o un hilo que estuvo detenido, por ejemplo convirtiendo un PDF
+ * de 300 páginas. Mientras el hilo está detenido nadie renueva su señal,
+ * tampoco los vivos (medido el 10 de octubre de 2026. una detención de 9,5
+ * segundos daba por muertas a las 4 consultas en vuelo). Quien puede
+ * distinguir los 2 casos es un temporizador, porque sabe a qué hora le tocaba
+ * correr. Si corrió a tiempo, el hilo no estuvo detenido, y todo temporizador
+ * de un vivo que vencía antes ya corrió. Una consulta que recién llega no
+ * sabe nada de eso, así que no barre. deja un temporizador y barre él.
+ *
+ * La versión anterior medía el silencio entre 2 eventos cualesquiera, y un
+ * silencio largo también es lo que hay cuando no quedó nadie vivo. Con 4
+ * cupos y 200 puestos de consultas muertas, cada consulta nueva veía el
+ * silencio, no barría, encontraba la cola llena y fallaba al instante, sin
+ * fin (medido el 10 de octubre de 2026, por la quinta revisión adversarial).
  */
 class RateLimiter {
   private ultimo = new Map<string, number>();
   private tomados = new Set<Cupo>();
   /** Quienes esperan cupo, en orden de llegada. */
-  private cola: Array<{ visto: number }> = [];
-  /** La última vez que corrió algo del limitador. */
-  private pulso = 0;
-  private cuarentenaHasta = 0;
+  private cola: Puesto[] = [];
+  private ultimoBarrido = 0;
+  private ultimoAvisoDeDetencion = 0;
   constructor(private maxInflight = 4) {}
-
-  /** Marca el pulso. Si venía de un salto largo, abre la cuarentena. */
-  private pulsar(ahora: number): void {
-    const salto = ahora - this.pulso;
-    this.pulso = ahora;
-    if (salto <= UMBRAL_DETENCION_MS) return;
-    this.cuarentenaHasta = ahora + CUARENTENA_MS;
-    // Con el limitador vacío un salto largo es solo que no había tráfico.
-    if (this.tomados.size > 0 || this.cola.length > 0) {
-      console.warn(JSON.stringify({ cmf_hilo_detenido: { ms: salto, en_vuelo: this.tomados.size, en_cola: this.cola.length } }));
-    }
-  }
 
   /**
    * Espera cupo y turno, y entrega el cupo, que después se pasa a liberar().
@@ -202,14 +200,21 @@ class RateLimiter {
    * cupo.
    */
   async esperar(host: string, minMs: number, esperaCupoMs: number): Promise<Cupo> {
-    this.barrer();
     // El cupo se toma en el mismo paso en que se revisa, antes de esperar el
     // turno. Anotarlo después de la espera dejaba pasar la revisión a todas
     // las llamadas lanzadas juntas, con el contador todavía en 0 (10 en vuelo
     // con tope de 4, medido el 9 de octubre de 2026). Y con gente en la cola
     // nadie entra directo, aunque haya un cupo libre.
-    const cupo =
-      this.tomados.size < this.maxInflight && this.cola.length === 0 ? this.tomar() : await this.hacerCola(host, esperaCupoMs);
+    let cupo: Cupo;
+    if (this.tomados.size < this.maxInflight && this.cola.length === 0) {
+      cupo = this.tomar();
+      // Quien entra directo no pasa por la cola, así que deja su propio
+      // barrido. Sin él, los cupos de consultas muertas no volvían mientras
+      // las consultas llegaran de a una.
+      this.barrerDespues();
+    } else {
+      cupo = await this.hacerCola(host, esperaCupoMs);
+    }
     // El turno se RESERVA antes de esperar. Si se calculara la espera y
     // recién después se anotara la hora, 5 llamadas lanzadas juntas
     // leerían la misma hora vieja, esperarían lo mismo y saldrían en
@@ -234,8 +239,9 @@ class RateLimiter {
     const cupo: Cupo = { visto: Date.now() };
     cupo.latido = setInterval(() => {
       const ahora = Date.now();
-      this.pulsar(ahora);
+      const aTiempo = this.corrioATiempo(ahora, cupo.visto + LATIDO_MS);
       cupo.visto = ahora;
+      if (aTiempo) this.barrer(ahora);
     }, LATIDO_MS);
     // En Node, para que un cupo sin devolver no deje vivo el proceso. En
     // Workers un temporizador es un número y no tiene unref.
@@ -244,19 +250,48 @@ class RateLimiter {
     return cupo;
   }
 
-  /** Saca los cupos y los puestos de la cola cuyo dueño dejó de dar señales de vida. */
-  private barrer(): void {
-    const ahora = Date.now();
-    this.pulsar(ahora);
-    if (ahora < this.cuarentenaHasta) return;
+  /**
+   * Dice si un temporizador que vencía en `vencia` corrió a tiempo. Si no, el
+   * hilo estuvo detenido, y queda un aviso en el log, uno por detención.
+   */
+  private corrioATiempo(ahora: number, vencia: number): boolean {
+    const atraso = ahora - vencia;
+    if (atraso <= ATRASO_MAXIMO_MS) return true;
+    if (ahora - this.ultimoAvisoDeDetencion > ATRASO_MAXIMO_MS) {
+      this.ultimoAvisoDeDetencion = ahora;
+      console.warn(JSON.stringify({ cmf_hilo_detenido: { ms: atraso, en_vuelo: this.tomados.size, en_cola: this.cola.length } }));
+    }
+    return false;
+  }
+
+  /** Deja un barrido para dentro de un sondeo, con un temporizador propio. */
+  private barrerDespues(): void {
+    const vence = Date.now() + SONDEO_COLA_MS;
+    const t = setTimeout(() => {
+      const ahora = Date.now();
+      if (this.corrioATiempo(ahora, vence)) this.barrer(ahora);
+    }, SONDEO_COLA_MS);
+    (t as { unref?: () => void }).unref?.();
+  }
+
+  /**
+   * Saca los cupos y los puestos de la cola cuyo dueño dejó de dar señales de
+   * vida. Solo lo llama un temporizador que corrió a tiempo.
+   */
+  private barrer(ahora: number): void {
+    // Con muchos en cola, todos sondean en el mismo instante. Basta un barrido.
+    if (ahora - this.ultimoBarrido < SONDEO_COLA_MS / 2) return;
+    this.ultimoBarrido = ahora;
     for (const cupo of this.tomados) {
       if (ahora - cupo.visto <= GRACIA_CUPO_MS) continue;
       this.liberar(cupo);
       console.warn(JSON.stringify({ cmf_cupo_recuperado: { sin_senal_ms: ahora - cupo.visto, en_vuelo: this.tomados.size } }));
     }
-    if (this.cola.some((puesto) => ahora - puesto.visto > GRACIA_COLA_MS)) {
-      this.cola = this.cola.filter((puesto) => ahora - puesto.visto <= GRACIA_COLA_MS);
-    }
+    if (!this.cola.some((puesto) => ahora - puesto.visto > GRACIA_COLA_MS)) return;
+    this.cola = this.cola.filter((puesto) => {
+      puesto.fuera = ahora - puesto.visto > GRACIA_COLA_MS;
+      return !puesto.fuera;
+    });
   }
 
   /**
@@ -270,23 +305,39 @@ class RateLimiter {
    * consulta esperando para siempre y sin rastro.
    */
   private async hacerCola(host: string, esperaCupoMs: number): Promise<Cupo> {
-    if (this.cola.length >= MAX_COLA) {
-      console.warn(JSON.stringify({ cmf_cupo: { motivo: "cola_llena", en_vuelo: this.tomados.size, en_cola: this.cola.length, host } }));
-      throw new Error(
-        `El servidor tiene ${this.cola.length} consultas esperando su turno hacia la CMF y no recibe más por ahora. Reintente en unos minutos.`,
-      );
-    }
     const limite = Date.now() + esperaCupoMs;
-    const puesto = { visto: Date.now() };
-    this.cola.push(puesto);
+    const puesto: Puesto = { visto: Date.now(), fuera: false };
+    // Con la cola llena no entra todavía, pero tampoco se va al instante. La
+    // cola puede estar llena de muertos, y un puesto muerto recién se puede
+    // barrer cuando pasa su gracia. Espera eso y un poco más.
+    const finAntesala = Date.now() + GRACIA_COLA_MS + 10 * SONDEO_COLA_MS;
+    let enCola = this.cola.length < MAX_COLA;
+    if (enCola) this.cola.push(puesto);
     for (;;) {
-      await new Promise((r) => setTimeout(r, Math.max(1, Math.min(SONDEO_COLA_MS, limite - Date.now()))));
+      const pausa = Math.max(1, Math.min(SONDEO_COLA_MS, limite - Date.now()));
+      const vence = Date.now() + pausa;
+      await new Promise((r) => setTimeout(r, pausa));
       const ahora = Date.now();
+      const aTiempo = this.corrioATiempo(ahora, vence);
       puesto.visto = ahora;
-      this.barrer();
-      // Si este hilo estuvo detenido más que la gracia, otro barrió el puesto.
-      // Vuelve al final de la cola.
-      if (!this.cola.includes(puesto)) this.cola.push(puesto);
+      if (aTiempo) this.barrer(ahora);
+      if (!enCola) {
+        // Tras una detención todavía no se barrió, así que no se decide nada.
+        if (!aTiempo) continue;
+        if (this.cola.length >= MAX_COLA) {
+          if (ahora < finAntesala && ahora < limite) continue;
+          console.warn(JSON.stringify({ cmf_cupo: { motivo: "cola_llena", en_vuelo: this.tomados.size, en_cola: this.cola.length, host } }));
+          throw new Error(
+            `El servidor tiene ${this.cola.length} consultas esperando su turno hacia la CMF y no recibe más por ahora. Reintente en unos minutos.`,
+          );
+        }
+        this.cola.push(puesto);
+        enCola = true;
+      } else if (puesto.fuera) {
+        // Otro lo barrió mientras este hilo estaba detenido. Vuelve al final.
+        puesto.fuera = false;
+        this.cola.push(puesto);
+      }
       if (this.cola[0] === puesto && this.tomados.size < this.maxInflight) {
         this.cola.shift();
         return this.tomar();
