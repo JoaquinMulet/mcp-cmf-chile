@@ -79,9 +79,19 @@ async function main(): Promise<void> {
   // Exactamente las del repositorio, no «82 o más». Con el piso, perder 3
   // herramientas en un despliegue pasó en verde (9 de octubre de 2026).
   const { faltan, sobran } = compararHerramientas([...construirRegistro().values()].map((o) => o.nombreTool), nombres);
-  check(faltan.length === 0, `el servidor publica todas las herramientas del repositorio (faltan: ${faltan.join(", ") || "ninguna"})`);
-  check(sobran.length === 0, `el servidor no publica herramientas ajenas al repositorio (sobran: ${sobran.join(", ") || "ninguna"})`);
   console.log(`INFO  tools/list devuelve ${tools.length} tools`);
+  if (process.env.CMF_ANTES_DE_DESPLEGAR === "1") {
+    // La CI corre antes del despliegue. La instancia viva todavía no tiene lo
+    // que este commit agrega o quita, así que acá la diferencia se informa y
+    // no bloquea. Sin esto, agregar una herramienta dejaba la CI en rojo, y el
+    // despliegue que la arregla exige la CI en verde.
+    check(tools.length > 0, "tools/list devuelve al menos una herramienta");
+    console.log(`INFO  antes de desplegar. faltan en la instancia viva: ${faltan.join(", ") || "ninguna"}`);
+    console.log(`INFO  antes de desplegar. sobran en la instancia viva: ${sobran.join(", ") || "ninguna"}`);
+  } else {
+    check(faltan.length === 0, `el servidor publica todas las herramientas del repositorio (faltan: ${faltan.join(", ") || "ninguna"})`);
+    check(sobran.length === 0, `el servidor no publica herramientas ajenas al repositorio (sobran: ${sobran.join(", ") || "ninguna"})`);
+  }
   check(new Set(nombres).size === nombres.length, "nombres de tools únicos");
   const sinDesc = tools.filter((t) => !t.description || t.description.length < 10);
   check(sinDesc.length === 0, `toda tool tiene description >= 10 chars (${sinDesc.length} sin descripción)`);

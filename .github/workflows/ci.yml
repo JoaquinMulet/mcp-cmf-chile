@@ -27,6 +27,11 @@ jobs:
         run: npx tsx test/verify-remote.ts
         env:
           CMF_MCP_URL: ${{ vars.CMF_MCP_URL || 'https://cmf-mcp.kumocloud.cl/mcp' }}
+          # La CI corre ANTES del despliegue, asi que la instancia viva todavia
+          # no tiene lo que este commit agrega o quita. Aca la diferencia de
+          # herramientas se informa. Quien la exige es
+          # `npm run verificar-desplegado`, que corre despues de desplegar.
+          CMF_ANTES_DE_DESPLEGAR: "1"
 
   verify-cmf:
     runs-on: ubuntu-latest

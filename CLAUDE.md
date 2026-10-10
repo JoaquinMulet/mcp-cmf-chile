@@ -848,7 +848,15 @@ que falta es un despliegue incompleto, y una que sobra es un despliegue hecho de
 sucio. Las 3 herramientas volvieron al trunk con su prueba. Regla. lo desplegado se compara
 con el trunk por IGUALDAD, nunca con un mínimo. Y antes de desplegar desde un árbol limpio
 por primera vez en un repositorio con otros árboles de trabajo, se mira qué publica producción
-que el trunk no tenga.
+que el trunk no tenga. Lo que conviene saber. La CI corre `verify-remote.ts` ANTES del
+despliegue, así que ahí la diferencia solo se informa (`CMF_ANTES_DE_DESPLEGAR=1` en `ci.yml`).
+Sin eso, agregar una herramienta dejaba la CI en rojo y el despliegue que la arregla exige la CI
+en verde. La igualdad la exige `npm run verificar-desplegado`, después de desplegar. Y el código
+que vivió fuera del trunk no había pasado por CodeQL. El día que entró, CodeQL marcó en él un
+`js/double-escaping` de severidad alta, el mismo defecto que `parsers.ts` ya había curado en
+agosto, en una función hermana que decodificaba entidades por su cuenta. Ahora `textoPlanoHtml`
+vive en `parsers.ts` y usa `decodificarEntidades`, y `test/hallazgos-codeql.test.ts` falla si
+otro archivo de `src` decodifica `&amp;` junto con otra entidad.
 
 ## Gotchas
 
