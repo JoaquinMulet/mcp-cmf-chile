@@ -1,4 +1,4 @@
-﻿# Conexión del MCP de la CMF
+# Conexión del MCP de la CMF
 
 ## Hosteado por nosotros (recomendado)
 

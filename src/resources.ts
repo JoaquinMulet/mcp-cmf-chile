@@ -1,4 +1,4 @@
-﻿import { ResourceTemplate } from "@modelcontextprotocol/server";
+import { ResourceTemplate } from "@modelcontextprotocol/server";
 import type { McpServer } from "@modelcontextprotocol/server";
 import type { CmfEnv } from "./client/cmf-client.js";
 import { obtenerCaptcha } from "./captcha.js";

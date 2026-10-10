@@ -1,4 +1,4 @@
-﻿import type { McpServer } from "@modelcontextprotocol/server";
+import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { empresaArraySchema, historialSchema, globalesSchema, paginadoSchema, filasSchema } from "../util/schemas-output.js";
 import { getLegacy, postLegacy, postLegacyBinario, getLegacyBinario, fetchCmf, fetchCmfBinario, getLegacyConCookies, type CmfEnv } from "../client/cmf-client.js";

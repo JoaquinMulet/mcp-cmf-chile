@@ -1,4 +1,4 @@
-﻿import type { McpServer } from "@modelcontextprotocol/server";
+import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { gridSchema, paginadoSchema } from "../util/schemas-output.js";
 import { getLegacy, type CmfEnv } from "../client/cmf-client.js";

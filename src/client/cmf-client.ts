@@ -1,4 +1,4 @@
-﻿import { resolverChallenge, crearCookieJar, conCookiesDelJar, DesafioRepetido, UA_DEFAULT } from "./anti-bot.js";
+import { resolverChallenge, crearCookieJar, conCookiesDelJar, DesafioRepetido, UA_DEFAULT } from "./anti-bot.js";
 import { cacheHttp, cacheBinario } from "./cache.js";
 
 /** Entorno del servidor (Workers env o vacío en STDIO). */

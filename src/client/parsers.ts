@@ -1,4 +1,4 @@
-﻿import * as XLSX from "xlsx";
+import * as XLSX from "xlsx";
 
 /** Decodifica entidades HTML básicas. El input ya viene decodificado a UTF-8 por el cliente. */
 export function decodificarEntidades(s: string): string {

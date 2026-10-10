@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Post-procesamiento de tablas de estados financieros extraídas de PDFs:
  * 1) Separación de cifras: una celda con N números → N celdas.
  * 2) Des-fusión de conceptos: N conceptos + cifras → N filas en orden.

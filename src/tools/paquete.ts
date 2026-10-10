@@ -1,4 +1,4 @@
-﻿import * as z from "zod/v4";
+import * as z from "zod/v4";
 import { paqueteSchema, paqueteDocumentosSchema, fondosPaqueteSchema } from "../util/schemas-output.js";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { getLegacy, postLegacy, getLegacyBinario, postLegacyBinario, fetchCmfBinarioCached, type CmfEnv } from "../client/cmf-client.js";

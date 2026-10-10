@@ -1,4 +1,4 @@
-﻿# Sistemas de la CMF: cubiertos y excluidos
+# Sistemas de la CMF: cubiertos y excluidos
 
 El servidor expone los sistemas públicos de datos de la CMF listados abajo. Esta tabla resume la cobertura por sistema.
 

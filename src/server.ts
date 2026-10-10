@@ -1,4 +1,4 @@
-﻿import { McpServer } from "@modelcontextprotocol/server";
+import { McpServer } from "@modelcontextprotocol/server";
 import type { CmfEnv } from "./client/cmf-client.js";
 import { registrarToolsApi } from "./tools/api-oficial.js";
 import { registrarToolsEmpresas } from "./tools/empresas.js";

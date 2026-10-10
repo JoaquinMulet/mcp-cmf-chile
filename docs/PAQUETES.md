@@ -1,4 +1,4 @@
-﻿# Paquetes de alto nivel
+# Paquetes de alto nivel
 
 Cuatro herramientas que permiten descargar y organizar información de la CMF con pocas llamadas y un directorio lógico con nombres de archivo normalizados.
 

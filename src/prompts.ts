@@ -1,4 +1,4 @@
-﻿import type { McpServer } from "@modelcontextprotocol/server";
+import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 
 /** Prompts MCP: plantillas para tareas típicas con datos de la CMF. */

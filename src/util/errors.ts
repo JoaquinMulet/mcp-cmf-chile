@@ -1,4 +1,4 @@
-﻿import type { CallToolResult } from "@modelcontextprotocol/server";
+import type { CallToolResult } from "@modelcontextprotocol/server";
 
 /** Resultado de tool estandarizado: error accionable para el modelo (SEP-1303). */
 export function toolError(mensaje: string): CallToolResult {

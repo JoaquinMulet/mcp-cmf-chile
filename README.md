@@ -1,4 +1,4 @@
-﻿# MCP para la CMF de Chile 🇨🇱
+# MCP para la CMF de Chile 🇨🇱
 
 Servidor **Model Context Protocol** (spec 2026-07-28, dual-era: también responde el handshake `initialize` legacy 2025-11-25) con **todos los datos públicos de la Comisión para el Mercado Financiero de Chile (CMF)**: empresas en bolsa, estados financieros (EEFF), hechos esenciales, fondos mutuos, fondos de inversión, normativa, seguros, indicadores económicos y bancos.
 

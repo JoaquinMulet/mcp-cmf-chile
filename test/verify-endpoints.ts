@@ -1,4 +1,4 @@
-﻿import { createServer } from "../src/server.js";
+import { createServer } from "../src/server.js";
 import { cargarPdfModuleDesdeDisco } from "../src/pdf.js";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";

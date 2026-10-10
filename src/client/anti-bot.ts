@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Resolución del challenge anti-bot F5 ASM ("cookiesession") de los sistemas legacy de la CMF.
  *
  * Flujo del challenge F5 (cookiesession1):
