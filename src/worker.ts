@@ -1,6 +1,7 @@
 import { createMcpHandler } from "agents/mcp/server";
 import { createServer } from "./server.js";
 import type { CmfEnv } from "./client/cmf-client.js";
+import { peticionEnCurso } from "./client/peticion.js";
 import { ejecutorDeWorker, type WorkerLoaderLike, type Prestamos } from "./sandbox.js";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { construirRegistro } from "./registro.js";
@@ -73,7 +74,12 @@ export class PuenteCmf extends WorkerEntrypoint<CmfEnv> {
     if (!fn) {
       throw new Error(`La operación "${nombre}" no existe. Búscala primero con cmf_buscar.`);
     }
-    return JSON.stringify(await fn(args ?? {})) ?? "null";
+    // Cada llamada del programa es una petición aparte de este Worker, con su
+    // propio waitUntil. Un programa que responde con llamadas pendientes las
+    // dejaba abandonadas con su cupo tomado.
+    const ctx = this.ctx as { waitUntil(p: Promise<unknown>): void };
+    const peticion = { esperarHasta: (p: Promise<unknown>) => ctx.waitUntil(p) };
+    return peticionEnCurso.run(peticion, async () => JSON.stringify(await fn(args ?? {})) ?? "null");
   }
 }
 
@@ -102,7 +108,7 @@ async function revisarCuota(request: Request, env: EntornoWorker): Promise<Respo
  * Patrón oficial de Cloudflare (ver docs handler-api): factory per-request, nunca
  * exportar el callable directo (wrangler lo trataría como WorkerEntrypoint).
  */
-export default {
+const atencion = {
   async fetch(request: Request, env: EntornoWorker, ctx: ExecutionContext) {
     // Auth opcional: si CMF_HTTP_TOKEN está definido, exigir bearer
     const token = env.CMF_HTTP_TOKEN;
@@ -154,4 +160,12 @@ export default {
 
     return createMcpHandler(() => createServer(conf))(request, env, ctx);
   },
+} satisfies ExportedHandler<EntornoWorker>;
+
+export default {
+  // El cliente HTTP encuentra acá el waitUntil de esta petición. En Workers,
+  // lo que una petición deja pendiente al responder se abandona, y con eso se
+  // perdía el cupo de sus consultas. Ver src/client/peticion.ts.
+  fetch: (request: Request, env: EntornoWorker, ctx: ExecutionContext) =>
+    peticionEnCurso.run({ esperarHasta: (p) => ctx.waitUntil(p) }, () => atencion.fetch(request, env, ctx)),
 } satisfies ExportedHandler<EntornoWorker>;

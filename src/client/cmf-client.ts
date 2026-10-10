@@ -1,5 +1,7 @@
 import { resolverChallenge, crearCookieJar, conCookiesDelJar, bytesDe, DesafioRepetido, RespuestaDemasiadoGrande, UA_DEFAULT } from "./anti-bot.js";
+import type { CookieJar } from "./anti-bot.js";
 import { cacheHttp, cacheBinario } from "./cache.js";
+import { mantenerViva } from "./peticion.js";
 
 // Para quien llama a fetchCmf directo y quiere los bytes sin otra copia.
 export { bytesDe };
@@ -355,13 +357,21 @@ class RateLimiter {
     // este plazo otra consulta puede dejar el suyo.
     this.vigiaHasta = ahora + 2 * RACHA_PARA_BARRER_MS;
     const racha = new Racha(SONDEO_COLA_MS);
+    let termino = () => {};
     const vigia = setInterval(() => {
       const instante = Date.now();
       if (!this.correr(racha, instante) && instante < this.vigiaHasta) return;
       clearInterval(vigia);
       this.vigiaHasta = 0;
+      termino();
     }, SONDEO_COLA_MS);
     (vigia as { unref?: () => void }).unref?.();
+    // En Workers el vigía es de la petición que lo deja, y una consulta corta
+    // termina mucho antes que los 2 segundos y medio que él necesita. Sin
+    // esto, con consultas cortas que llegaban de a una, los cupos muertos no
+    // volvían nunca (medido en workerd el 10 de octubre de 2026. 0 de 3 tras
+    // 8 consultas). La petición queda viva hasta que el vigía termina.
+    mantenerViva(new Promise<void>((listo) => (termino = listo)));
   }
 
   /**
@@ -620,7 +630,7 @@ function registrarSalida(motivo: "directo_bloqueado" | "proxy_fallo", status: nu
  * Núcleo: request HTTP hacia la CMF con allowlist, UA, cookie jar, anti-bot,
  * rate limit, retry con backoff y manejo de redirects validados.
  */
-export async function fetchCmf(
+export function fetchCmf(
   url: string,
   init: RequestInit = {},
   env: CmfEnv = {},
@@ -628,6 +638,14 @@ export async function fetchCmf(
   /** Interno. Redirecciones ya seguidas para llegar a esta URL. */
   saltos = 0,
 ): Promise<Response> {
+  const consulta = consultarCmf(url, init, env, jar, saltos);
+  // En Workers, una consulta cuya petición terminó quedaba abandonada con su
+  // cupo tomado. Así sigue hasta terminar y lo devuelve ella misma.
+  mantenerViva(consulta);
+  return consulta;
+}
+
+async function consultarCmf(url: string, init: RequestInit, env: CmfEnv, jar: CookieJar, saltos: number): Promise<Response> {
   const u = validarUrl(url);
   const cfg = config(env);
   const headers = new Headers(init.headers ?? {});
