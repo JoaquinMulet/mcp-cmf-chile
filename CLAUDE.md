@@ -890,16 +890,38 @@ está detenido nadie renueva su señal, tampoco los vivos. Una detención de 9,5
 muertas a las 4 consultas en vuelo y dejaba entrar a otras 4, y cada detención siguiente sumaba
 4 más, sin techo (16 en vuelo tras 3 detenciones, medido). Y no hace falta un PDF enorme.
 `processPdf` detuvo el hilo 8 segundos con un PDF de 200 páginas y 0,7 MB. Un programa de
-`/codigo` que gasta su CPU detiene también al Worker principal en workerd local. Por eso el
-limitador lleva un pulso, que marca cada temporizador suyo que corre. Un salto de más de
-`UMBRAL_DETENCION_MS` (1500) en el pulso es una detención, deja una línea `cmf_hilo_detenido`,
-y abre una cuarentena de `CUARENTENA_MS` (2000) en la que no se barre a nadie. En ese rato los
-vivos renuevan su señal y los muertos no. El umbral tiene que ser menor que las 2 gracias, o
-una detención capaz de vencer una señal pasaría sin verse. La cola tiene además un tope de 200
-(`MAX_COLA`). Cada puesto sondea cada 50 ms, y con 10000 en cola el hilo quedaba ocupado más de
-5 segundos seguidos y nadie entraba. La que no cabe falla al instante. Regla. **una señal de
+`/codigo` que gasta su CPU detiene también al Worker principal en workerd local. El primer
+arreglo fue un pulso: todo silencio de más de 1,5 segundos entre 2 eventos del limitador se
+tomaba por una detención, y abría 2 segundos de cuarentena sin barrer. **Ese arreglo metió un
+defecto peor, y lo encontró la quinta revisión con el pulso ya desplegado.** Un silencio largo
+también es lo que hay cuando no quedó nadie vivo. Con 4 cupos y 200 puestos de consultas
+muertas, cada consulta nueva veía el silencio, no barría, encontraba la cola llena y fallaba
+al instante. Como no se quedaba a esperar, la siguiente repetía lo mismo, sin fin. Bastaban 4
+programas de `/codigo` desde una IP. Y con 1 a 3 cupos muertos y tráfico espaciado, los
+muertos no volvían nunca. El diseño que quedó. **solo barre un temporizador que corrió a
+tiempo.** Quien puede distinguir un dueño muerto de un hilo detenido es un temporizador,
+porque sabe a qué hora le tocaba correr (`corrioATiempo`, con `ATRASO_MAXIMO_MS` de 1000). Si
+corrió a tiempo, el hilo no estuvo detenido, y todo temporizador de un vivo que vencía antes
+ya corrió, porque los temporizadores vencidos corren en el orden en que vencían. Una consulta
+que recién llega no sabe nada de eso, así que no barre: si entra directo deja un barrido para
+50 ms después (`barrerDespues`), y si hace cola barre en cada sondeo que corre a tiempo. Un
+temporizador que corre atrasado deja una línea `cmf_hilo_detenido` y no barre. La cola tiene
+un tope de 1000 (`MAX_COLA`). Cada puesto sondea cada 50 ms, y con 10000 en cola el hilo
+quedaba ocupado más de 5 segundos seguidos y nadie entraba. El primer tope fue 200 y rompía un
+uso legítimo, 240 consultas juntas repartidas en 12 hosts, que antes pasaban todas. La que no
+cabe no falla al instante: espera 2 segundos y medio, porque la cola puede estar llena de
+muertos y eso recién se sabe cuando pasa la gracia de sus puestos. Reglas. **una señal de
 vida mide 2 cosas a la vez, si el dueño vive y si el reloj corrió**, y hay que separar la
-segunda antes de creerle a la primera. La misma revisión encontró un defecto anterior a todo
+segunda antes de creerle a la primera. Y **una ausencia se prueba con quien tenía que estar,
+no con el silencio**: el silencio no distingue «todos callaron» de «no queda nadie». La misma
+quinta revisión encontró 3 defectos antiguos del desafío anti-bot, que quedaron cerrados. Si
+la consulta repetida volvía a ser el desafío, la tool recibía esa página como dato; ahora es
+un error que lo dice. Las cookies del jar REEMPLAZABAN a las de quien llama, así que el envío
+del código del captcha perdía su cookie de sesión si le tocaba un desafío; ahora se suman
+(`conCookiesDelJar`, también en `fetchCmf`). Y cada respuesta se convertía entera a texto solo
+para mirar si era un desafío, que mide menos de 4000 caracteres; ahora se lee como bytes y se
+convierte solo si es chica. Un documento de 40 MB ocupaba 124 MB y ahora ocupa 84, medido en
+Node. El Worker tiene 128. La revisión anterior había encontrado otro defecto anterior a todo
 esto, que se cerró ese día. Cuando la CMF respondía el desafío anti-bot, `resolverChallenge`
 entregaba la respuesta de la consulta repetida sin leer. `fetchCmf` devolvía el cupo ahí y el
 cuerpo se bajaba después, fuera del tope (12 cuerpos a la vez con tope de 4, medido). Y las
