@@ -306,13 +306,13 @@ class RateLimiter {
    */
   private async hacerCola(host: string, esperaCupoMs: number): Promise<Cupo> {
     const limite = Date.now() + esperaCupoMs;
-    const puesto: Puesto = { visto: Date.now(), fuera: false };
     // Con la cola llena no entra todavía, pero tampoco se va al instante. La
     // cola puede estar llena de muertos, y un puesto muerto recién se puede
     // barrer cuando pasa su gracia. Espera eso y un poco más.
-    const finAntesala = Date.now() + GRACIA_COLA_MS + 10 * SONDEO_COLA_MS;
-    let enCola = this.cola.length < MAX_COLA;
-    if (enCola) this.cola.push(puesto);
+    const finAntesala = Math.min(limite, Date.now() + GRACIA_COLA_MS + 10 * SONDEO_COLA_MS);
+    // Nace afuera. Entra de inmediato si hay lugar.
+    const puesto: Puesto = { visto: Date.now(), fuera: true };
+    this.entrar(puesto, true, true, host);
     for (;;) {
       const pausa = Math.max(1, Math.min(SONDEO_COLA_MS, limite - Date.now()));
       const vence = Date.now() + pausa;
@@ -321,36 +321,43 @@ class RateLimiter {
       const aTiempo = this.corrioATiempo(ahora, vence);
       puesto.visto = ahora;
       if (aTiempo) this.barrer(ahora);
-      if (!enCola) {
-        // Tras una detención todavía no se barrió, así que no se decide nada.
-        if (!aTiempo) continue;
-        if (this.cola.length >= MAX_COLA) {
-          if (ahora < finAntesala && ahora < limite) continue;
-          console.warn(JSON.stringify({ cmf_cupo: { motivo: "cola_llena", en_vuelo: this.tomados.size, en_cola: this.cola.length, host } }));
-          throw new Error(
-            `El servidor tiene ${this.cola.length} consultas esperando su turno hacia la CMF y no recibe más por ahora. Reintente en unos minutos.`,
-          );
-        }
-        this.cola.push(puesto);
-        enCola = true;
-      } else if (puesto.fuera) {
-        // Otro lo barrió mientras este hilo estaba detenido. Vuelve al final.
-        puesto.fuera = false;
-        this.cola.push(puesto);
-      }
+      // Afuera está quien todavía no encontró lugar, y también quien fue
+      // barrido mientras este hilo estaba detenido, que vuelve al final.
+      if (puesto.fuera) this.entrar(puesto, aTiempo, ahora < finAntesala, host);
       if (this.cola[0] === puesto && this.tomados.size < this.maxInflight) {
         this.cola.shift();
         return this.tomar();
       }
-      if (ahora < limite) continue;
-      this.cola = this.cola.filter((otro) => otro !== puesto);
-      console.warn(
-        JSON.stringify({ cmf_cupo: { en_vuelo: this.tomados.size, en_cola: this.cola.length, espera_ms: esperaCupoMs, host } }),
-      );
-      throw new Error(
-        `El servidor tiene sus ${this.maxInflight} consultas a la CMF ocupadas y esta no alcanzó cupo en ${esperaCupoMs} ms. Reintente en unos minutos.`,
-      );
+      if (ahora >= limite) this.rendirse(puesto, host, esperaCupoMs);
     }
+  }
+
+  /**
+   * Mete en la cola un puesto que está afuera, si hay lugar. Si la cola sigue
+   * llena cuando ya no queda antesala, lanza.
+   */
+  private entrar(puesto: Puesto, aTiempo: boolean, quedaAntesala: boolean, host: string): void {
+    // Tras una detención todavía no se barrió, así que no se decide nada.
+    if (!aTiempo) return;
+    if (this.cola.length < MAX_COLA) {
+      puesto.fuera = false;
+      this.cola.push(puesto);
+      return;
+    }
+    if (quedaAntesala) return;
+    console.warn(JSON.stringify({ cmf_cupo: { motivo: "cola_llena", en_vuelo: this.tomados.size, en_cola: this.cola.length, host } }));
+    throw new Error(
+      `El servidor tiene ${this.cola.length} consultas esperando su turno hacia la CMF y no recibe más por ahora. Reintente en unos minutos.`,
+    );
+  }
+
+  /** Saca el puesto de la cola y lanza el error de quien no alcanzó cupo en su plazo. */
+  private rendirse(puesto: Puesto, host: string, esperaCupoMs: number): never {
+    this.cola = this.cola.filter((otro) => otro !== puesto);
+    console.warn(JSON.stringify({ cmf_cupo: { en_vuelo: this.tomados.size, en_cola: this.cola.length, espera_ms: esperaCupoMs, host } }));
+    throw new Error(
+      `El servidor tiene sus ${this.maxInflight} consultas a la CMF ocupadas y esta no alcanzó cupo en ${esperaCupoMs} ms. Reintente en unos minutos.`,
+    );
   }
 }
 
