@@ -105,7 +105,17 @@ export async function resolverChallenge(
   const retryHeaders = new Headers(headers);
   const nuevaCookie = jar.header(urlObj);
   if (nuevaCookie) retryHeaders.set("Cookie", nuevaCookie);
-  return fetchFn(url, { ...init, headers: retryHeaders });
+  const final = await fetchFn(url, { ...init, headers: retryHeaders });
+  // La respuesta repetida se trata igual que una primera respuesta que no fue
+  // desafío. Su cuerpo se lee entero acá, y sus cookies quedan en el jar.
+  // Quien llama tiene tomado un cupo del limitador hasta que esta función
+  // termina. Entregar la respuesta sin leer dejaba que el cuerpo se bajara con
+  // el cupo ya devuelto (12 cuerpos a la vez con tope de 4, medido el 10 de
+  // octubre de 2026), y perdía la cookie de sesión que el flujo del captcha
+  // necesita. Se lee como bytes, porque acá no hace falta el texto.
+  await final.clone().arrayBuffer();
+  jar.setFromHeaders(final.headers);
+  return final;
 }
 
 export const UA_DEFAULT =

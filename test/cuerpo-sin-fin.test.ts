@@ -11,6 +11,7 @@ import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fetchCmf } from "../src/client/cmf-client.js";
+import { crearCookieJar } from "../src/client/anti-bot.js";
 
 const TOPE = 4;
 const INTENTOS = 3;
@@ -338,20 +339,35 @@ test("la respuesta al desafío anti-bot, que nadie lee, se suelta", async () => 
   );
 });
 
-test("quien deja de leer una respuesta corta su descarga", async () => {
-  const env = { CMF_RATE_LIMIT_MS: "0" };
-  let razon: unknown;
+// Hasta el 10 de octubre de 2026 la respuesta que sigue al desafío llegaba a
+// quien llama sin leer, y un cuerpo colgado ahí le reventaba en la mano, sin
+// reintento. Ahora esa respuesta se lee dentro de la consulta, con el cupo
+// tomado, igual que una primera respuesta. Las 2 pruebas que siguen fijan lo
+// que eso cambia.
+test("tras el desafío, un cuerpo que se cuelga vence dentro de la consulta, se reintenta y se suelta", async () => {
+  const env = { CMF_RATE_LIMIT_MS: "0", CMF_UPSTREAM_TIMEOUT_MS: "150" };
+  let colgados = 0;
+  let soltados = 0;
   await conRed(
-    (abrir) => redConDesafio(conCookie, () => new Response(abrir({ primerTramo: "empieza", alCancelar: (r) => void (razon = r) }))),
+    (abrir) =>
+      redConDesafio(conCookie, () => {
+        colgados++;
+        return new Response(abrir({ primerTramo: "empieza", alCancelar: () => void soltados++ }));
+      }),
     async () => {
-      const res = await fetchCmf("https://www.cmfchile.cl/a-medias", {}, env);
-      await res.body?.cancel("me voy");
-      assert.equal(razon, "me voy");
+      const fin = await fetchCmf("https://www.cmfchile.cl/a-medias.php?token=secreto", {}, env).then(
+        (r) => `devolvió ${r.status}`,
+        (e) => `lanzó. ${(e as Error).message}`,
+      );
+      assert.match(fin, /^lanzó\. .*150 ms.*https:\/\/www\.cmfchile\.cl\/a-medias\.php\)$/);
+      // El desafío ya quedó resuelto en el jar, así que los reintentos van directo a la consulta.
+      assert.equal(colgados, INTENTOS, "intentos");
+      assert.equal(soltados, INTENTOS, "cuerpos soltados");
     },
   );
 });
 
-test("un cuerpo que se cuelga por la salida chilena nombra la página de la CMF, no el proxy", async () => {
+test("tras el desafío, un cuerpo que se cuelga por la salida chilena cuenta como proxy caído", async () => {
   const env = {
     CMF_RATE_LIMIT_MS: "0",
     CMF_REINTENTO_403_MS: "0",
@@ -360,26 +376,81 @@ test("un cuerpo que se cuelga por la salida chilena nombra la página de la CMF,
     CMF_PROXY_TOKEN: "token-de-prueba",
   };
   const marca = { "x-cmf-salida": "1" };
+  const avisos: string[] = [];
+  const avisoOriginal = console.warn;
+  console.warn = (linea: unknown) => void avisos.push(String(linea));
+  try {
+    await conRed(
+      (abrir) => {
+        const porProxy = redConDesafio(
+          () => new Response("ok", { headers: { ...marca, "set-cookie": "cookiesession1=AAAA; Path=/" } }),
+          () => new Response(abrir({ primerTramo: "empieza" }), { headers: marca }),
+          marca,
+        );
+        return (url, init) =>
+          new URL(url).hostname.endsWith(".example.cl")
+            ? porProxy(url, init)
+            : new Response("<html><title>403 Forbidden</title></html>", { status: 403 });
+      },
+      async () => {
+        // Igual que un proxy que se cuelga en su primera respuesta. se entrega el bloqueo original.
+        const res = await fetchCmf("https://www.cmfchile.cl/por-proxy.php?token=secreto", {}, env);
+        assert.equal(res.status, 403);
+        assert.ok(avisos.some((a) => a.includes("proxy_fallo")), `no anotó el proxy caído. ${avisos.join(" | ")}`);
+      },
+    );
+  } finally {
+    console.warn = avisoOriginal;
+  }
+});
+
+test("tras el desafío, las cookies de la respuesta final quedan en el jar", async () => {
+  // El flujo del captcha baja la imagen con un jar y después usa su cookie de
+  // sesión para enviar el código. Si la imagen llegaba tras un desafío, esa
+  // cookie se perdía.
+  const env = { CMF_RATE_LIMIT_MS: "0" };
+  const jar = crearCookieJar();
   await conRed(
-    (abrir) => {
-      const porProxy = redConDesafio(
-        () => new Response("ok", { headers: { ...marca, "set-cookie": "cookiesession1=AAAA; Path=/" } }),
-        () => new Response(abrir({ primerTramo: "empieza" }), { headers: marca }),
-        marca,
-      );
-      return (url, init) =>
-        new URL(url).hostname.endsWith(".example.cl")
-          ? porProxy(url, init)
-          : new Response("<html><title>403 Forbidden</title></html>", { status: 403 });
-    },
+    () => redConDesafio(conCookie, () => new Response("imagen", { headers: { "set-cookie": "SVS_HE=sesion123; Path=/" } })),
     async () => {
-      const res = await fetchCmf("https://www.cmfchile.cl/por-proxy.php?token=secreto", {}, env);
-      const fin = await res.text().then(
-        (t) => `leyó ${t}`,
-        (e) => `lanzó. ${(e as Error).message}`,
-      );
-      assert.match(fin, /^lanzó\. .*150 ms.*https:\/\/www\.cmfchile\.cl\/por-proxy\.php\)$/);
-      assert.ok(!fin.includes("example.cl") && !fin.includes("secreto"), fin);
+      const res = await fetchCmf("https://www.cmfchile.cl/captcha.php", {}, env, jar);
+      assert.equal(await res.text(), "imagen");
+      assert.match(jar.cabeceraCompleta(), /SVS_HE=sesion123/);
     },
   );
+});
+
+// Anterior a todo el trabajo del limitador. Lo midió la cuarta revisión
+// adversarial el 10 de octubre de 2026. Tras el desafío anti-bot,
+// resolverChallenge entregaba la respuesta de la consulta repetida sin leer
+// su cuerpo. fetchCmf devolvía el cupo ahí, y el cuerpo se bajaba después,
+// fuera del tope. Con 12 consultas juntas había 12 cuerpos bajando a la vez.
+test(`tras el desafío anti-bot, el cuerpo se baja con el cupo tomado. nunca más de ${TOPE} a la vez`, async () => {
+  const env = { CMF_RATE_LIMIT_MS: "0" };
+  let bajando = 0;
+  let maximo = 0;
+  const cuerpoLento = () => {
+    bajando++;
+    maximo = Math.max(maximo, bajando);
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        async start(c) {
+          await tras(150, null);
+          bajando--;
+          c.enqueue(new TextEncoder().encode("documento"));
+          c.close();
+        },
+      }),
+    );
+  };
+  await conRed(
+    () => redConDesafio(conCookie, cuerpoLento),
+    async () => {
+      const textos = await Promise.all(
+        Array.from({ length: 12 }, (_, i) => fetchCmf(`https://www.cmfchile.cl/con-desafio${i}.pdf`, {}, env).then((r) => r.text())),
+      );
+      assert.deepEqual([...new Set(textos)], ["documento"]);
+    },
+  );
+  assert.equal(maximo, TOPE, `máximo de cuerpos bajando a la vez. ${maximo}`);
 });
