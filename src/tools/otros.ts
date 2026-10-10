@@ -2,7 +2,7 @@
 import * as z from "zod/v4";
 import { normativaDescargaSchema, filasSchema, xbrlVisorSchema, xbrlConsultaSchema, xbrlTaxonomiasSchema, documentoInfoSchema, documentoDescargaSchema, documentoMarkdownSchema } from "../util/schemas-output.js";
 import { getLegacy, postLegacy, getLegacyBinario, fetchCmf, fetchCmfBinario, type CmfEnv } from "../client/cmf-client.js";
-import { bloqueDe, htmlTablaAJson, fechaLegacyCompleta, fechaLegacy, xlsAJson } from "../client/parsers.js";
+import { textoPlanoHtml, htmlTablaAJson, fechaLegacyCompleta, fechaLegacy, xlsAJson } from "../client/parsers.js";
 import { fromError, toolError, toolErrorFuente, toolOk, resumirTabla, paginarTexto } from "../util/errors.js";
 import { urlDocumentoCmf } from "../util/nombres.js";
 import { bytesABase64 } from "../util/zip.js";
@@ -63,19 +63,6 @@ function textoDocumentosBanco(rut: string, periodo: string, tipo: string, norma:
     ? `\nEnlaces relacionados publicados por la ficha:\n${enlacesFuente.map((d) => `- ${d.nombre}: ${d.url}`).join("\n")}`
     : "";
   return `Sin documentos EEFF bancarios para ${rut} período ${periodo} (${tipo}/${norma}). La ficha bancaria no publicó enlaces para esa combinación. Verifique el período y la norma.${relacionados}\n\n${aviso}`;
-}
-
-function textoPlanoHtml(fragmento: string): string {
-  return fragmento
-    .replace(bloqueDe("script"), " ")
-    .replace(bloqueDe("style"), " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/\s+/g, " ")
-    .trim();
 }
 
 type DocumentoPortalBanco = { nombre: string; url: string; periodo?: string };

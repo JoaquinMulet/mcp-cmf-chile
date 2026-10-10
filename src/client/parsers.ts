@@ -118,8 +118,24 @@ function sinControles(html: string): string {
  * UN solo lugar, para las 3 etiquetas, y que las variantes estén cubiertas
  * por construcción. `\b` evita que `select` coma un `<selection>`.
  */
-export function bloqueDe(tag: string): RegExp {
+function bloqueDe(tag: string): RegExp {
   return new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/\\s*${tag}\\b[^>]*>`, "gi");
+}
+
+/**
+ * El texto visible de un fragmento de HTML, en una sola línea.
+ *
+ * Las entidades las decodifica `decodificarEntidades`, que es la única que
+ * decide el orden. Esta función las decodificaba por su cuenta, con el
+ * ampersand antes que las comillas, y un texto escapado 2 veces salía
+ * desescapado 2 veces (CodeQL, js/double-escaping, 9 de octubre de 2026).
+ */
+export function textoPlanoHtml(fragmento: string): string {
+  const sinMarcado = fragmento
+    .replace(bloqueDe("script"), " ")
+    .replace(bloqueDe("style"), " ")
+    .replace(/<[^>]+>/g, " ");
+  return decodificarEntidades(sinMarcado).replace(/\s+/g, " ").trim();
 }
 
 /** Las celdas de un `<tr>`, con su texto limpio y el enlace de su primer `<a>`. */

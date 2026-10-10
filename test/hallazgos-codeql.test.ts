@@ -14,8 +14,10 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { urlDocumentoCmf } from "../src/util/nombres.js";
-import { decodificarEntidades } from "../src/client/parsers.js";
+import { decodificarEntidades, textoPlanoHtml } from "../src/client/parsers.js";
 
 // --- js/incomplete-sanitization, alta, empresas.ts y paquete.ts ------
 
@@ -63,4 +65,44 @@ test("el ampersand se decodifica AL FINAL, para no desescapar 2 veces", () => {
   assert.equal(decodificarEntidades("&lt;b&gt;"), "<b>");
   assert.equal(decodificarEntidades("Rentas &amp; Seguros"), "Rentas & Seguros");
   assert.equal(decodificarEntidades("Compa&ntilde;&iacute;a"), "Compañía");
+});
+
+// --- js/double-escaping, alta, otros.ts (9 de octubre de 2026) -------
+
+test("el texto plano de un enlace tampoco desescapa 2 veces", () => {
+  // El mismo defecto, en una función hermana que decodificaba por su
+  // cuenta con `&amp;` ANTES que `&quot;`. Entró con las herramientas de
+  // EEFF anuales de bancos, que se escribieron en septiembre sin pasar por
+  // el trunk, y CodeQL lo marcó el día que llegaron.
+  assert.equal(textoPlanoHtml("<a>Banco &amp;quot;X&amp;quot;</a>"), "Banco &quot;X&quot;");
+  assert.equal(textoPlanoHtml("<b>Rentas &amp; Seguros</b>"), "Rentas & Seguros");
+  assert.equal(textoPlanoHtml("<span>Descargar&nbsp;2025</span> <script>x()</script>"), "Descargar 2025");
+  assert.equal(textoPlanoHtml("  dos   espacios \n y salto "), "dos espacios y salto");
+});
+
+/** Archivos de src que decodifican `&amp;` junto con otra entidad, fuera de parsers.ts. */
+function decodificadoresPropios(archivos: Array<{ ruta: string; texto: string }>): string[] {
+  const OTRA_ENTIDAD = /&(quot|lt|gt|nbsp|#39);/;
+  return archivos
+    .filter((a) => !a.ruta.endsWith("parsers.ts") && a.texto.includes("&amp;") && OTRA_ENTIDAD.test(a.texto))
+    .map((a) => a.ruta);
+}
+
+test("nadie en src decodifica entidades por su cuenta: todo pasa por decodificarEntidades", () => {
+  // La clase, no el caso. El orden de las entidades se arregló una vez en
+  // parsers.ts y volvió a romperse en una copia. Una sola función lo decide.
+  const SRC = join(import.meta.dirname, "..", "src");
+  const archivos = readdirSync(SRC, { recursive: true })
+    .map(String)
+    .filter((n) => n.endsWith(".ts"))
+    .map((n) => ({ ruta: n.replaceAll("\\", "/"), texto: readFileSync(join(SRC, n), "utf8") }));
+  assert.ok(archivos.length > 10, "sin archivos leídos, esta comprobación no mide nada");
+  assert.deepEqual(decodificadoresPropios(archivos), []);
+});
+
+test("la comprobación anterior SÍ puede fallar", () => {
+  const copia = { ruta: "tools/otro.ts", texto: 'x.replace(/&amp;/g, "&").replace(/&quot;/g, "x")' };
+  const soloAmp = { ruta: "client/cmf-client.ts", texto: 'action.replace(/&amp;/g, "&")' };
+  const oficial = { ruta: "client/parsers.ts", texto: "&amp; &quot; &lt;" };
+  assert.deepEqual(decodificadoresPropios([copia, soloAmp, oficial]), ["tools/otro.ts"]);
 });
