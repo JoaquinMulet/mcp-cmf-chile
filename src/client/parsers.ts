@@ -118,7 +118,7 @@ function sinControles(html: string): string {
  * UN solo lugar, para las 3 etiquetas, y que las variantes estén cubiertas
  * por construcción. `\b` evita que `select` coma un `<selection>`.
  */
-function bloqueDe(tag: string): RegExp {
+export function bloqueDe(tag: string): RegExp {
   return new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/\\s*${tag}\\b[^>]*>`, "gi");
 }
 

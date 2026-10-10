@@ -2,8 +2,9 @@
 import * as z from "zod/v4";
 import { normativaDescargaSchema, filasSchema, xbrlVisorSchema, xbrlConsultaSchema, xbrlTaxonomiasSchema, documentoInfoSchema, documentoDescargaSchema, documentoMarkdownSchema } from "../util/schemas-output.js";
 import { getLegacy, postLegacy, getLegacyBinario, fetchCmf, fetchCmfBinario, type CmfEnv } from "../client/cmf-client.js";
-import { htmlTablaAJson, fechaLegacyCompleta, fechaLegacy, xlsAJson } from "../client/parsers.js";
+import { bloqueDe, htmlTablaAJson, fechaLegacyCompleta, fechaLegacy, xlsAJson } from "../client/parsers.js";
 import { fromError, toolError, toolErrorFuente, toolOk, resumirTabla, paginarTexto } from "../util/errors.js";
+import { urlDocumentoCmf } from "../util/nombres.js";
 import { bytesABase64 } from "../util/zip.js";
 import { unzip, } from "../util/unzip.js";
 import { toolDeGrid } from "../util/grid.js";
@@ -22,7 +23,124 @@ import { procesarTablasEEFF, textoVerificacion, textoAviso } from "../eeff-table
 import { paginar } from "../util/paginate.js";
 import { avisoDeTramo, paginacion, toolOkPaginado, toolOkTabla } from "../util/tramos.js";
 import { enteroSchema, enumTolerante,
-  anioSchema, codigoSchema, fechaSchema, mesSchema, offsetSchema, limitSchema, rutSchema, sociedadesSchema, tipoNormaSchema } from "../util/schemas.js";
+  anioSchema, codigoSchema, fechaSchema, mesSchema, mesCorteSchema, offsetSchema, limitSchema, rutSchema, sociedadesSchema, tipoBalanceSchema, tipoNormaContableSchema, tipoNormaSchema } from "../util/schemas.js";
+
+const FICHA_BANCO_BASE = "/institucional/mercados/entidad.php";
+const PORTAL_BANCOS_EEFF_PATH = "/portal/estadisticas/626/w4-propertyvalue-43326.html";
+const PORTAL_BANCOS_EEFF_URL = `https://www.cmfchile.cl${PORTAL_BANCOS_EEFF_PATH}`;
+
+function fichaBancoUrl(rut: string, pestania: number): string {
+  return `${FICHA_BANCO_BASE}?mercado=B&rut=${rut}&grupo=&tipoentidad=BANCO&row=&vig=VI&control=svs&pestania=${pestania}`;
+}
+
+function documentosBancoDesdeFicha(html: string): Record<string, string>[] {
+  const documentos: Record<string, string>[] = [];
+  const reDoc = /href="(\.\.\/inc\/inf_financiera\/ifrs\/safec_ifrs_verarchivo\.php\?auth=[^"]+&send=[^"]+)"[^>]*>\s*([^<]{2,80})/g;
+  let dm: RegExpExecArray | null;
+  while ((dm = reDoc.exec(html)) !== null) {
+    documentos.push({ nombre: dm[2].replace(/\s+/g, " ").trim(), url: urlDocumentoCmf(dm[1]) });
+  }
+  return documentos;
+}
+
+function enlacesFuenteBancoDesdeFicha(html: string): Record<string, string>[] {
+  const enlaces: Record<string, string>[] = [];
+  const reEnlace = /href="([^"]+)"[^>]*>\s*([^<]{2,120})/gi;
+  let em: RegExpExecArray | null;
+  while ((em = reEnlace.exec(html)) !== null) {
+    if (/(?:safec|archivo|pdf|inf_financiera|document)/i.test(em[1])) {
+      enlaces.push({ nombre: em[2].replace(/\s+/g, " ").trim(), url: urlDocumentoCmf(em[1]) });
+    }
+  }
+  return enlaces;
+}
+
+function textoDocumentosBanco(rut: string, periodo: string, tipo: string, norma: string, documentos: Record<string, string>[], enlacesFuente: Record<string, string>[], aviso: string): string {
+  if (documentos.length > 0) {
+    return `EEFF bancarios ${rut} período ${periodo} (${tipo === "C" ? "Consolidado" : "Individual"}, ${norma}): ${documentos.length} documentos disponibles:\n${documentos.map((d) => `- ${d.nombre}: ${d.url}`).join("\n")}\n\n${aviso}`;
+  }
+  const relacionados = enlacesFuente.length
+    ? `\nEnlaces relacionados publicados por la ficha:\n${enlacesFuente.map((d) => `- ${d.nombre}: ${d.url}`).join("\n")}`
+    : "";
+  return `Sin documentos EEFF bancarios para ${rut} período ${periodo} (${tipo}/${norma}). La ficha bancaria no publicó enlaces para esa combinación. Verifique el período y la norma.${relacionados}\n\n${aviso}`;
+}
+
+function textoPlanoHtml(fragmento: string): string {
+  return fragmento
+    .replace(bloqueDe("script"), " ")
+    .replace(bloqueDe("style"), " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+type DocumentoPortalBanco = { nombre: string; url: string; periodo?: string };
+type DocumentoBancoOriginal = { nombre: string; url: string; periodo: string; codigo_sbif: string; segmento: string };
+
+function periodoPortalValido(href: string, nombre: string, contexto: string, anio?: string): string | undefined | null {
+  const periodo = nombre.match(/\b(20\d{2})\b/)?.[1] ?? href.match(/\b(20\d{2})\b/)?.[1];
+  if (anio && ((periodo && periodo !== anio) || (!periodo && !new RegExp(`\\b${anio}\\b`).test(contexto)))) return null;
+  if (!/(?:estado|eeff|financ|banco|cooperativ)/i.test(nombre + " " + contexto)) return null;
+  return periodo;
+}
+
+function documentosBancoDesdePortal(html: string, anio?: string): DocumentoPortalBanco[] {
+  const documentos: DocumentoPortalBanco[] = [];
+  const reAnchor = /<a\b[^>]*href=["']([^"']+\.pdf(?:\?[^"']*)?)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = reAnchor.exec(html)) !== null) {
+    const href = m[1].replace(/&amp;/gi, "&");
+    const contexto = html.slice(Math.max(0, m.index - 900), Math.min(html.length, reAnchor.lastIndex + 900));
+    const etiqueta = textoPlanoHtml(m[2]);
+    const aria = contexto.match(/aria-label=["']([^"']+)["']/i)?.[1] ?? "";
+    const nombre = textoPlanoHtml(`${aria} ${etiqueta}`);
+    const periodo = periodoPortalValido(href, nombre, contexto, anio);
+    if (periodo === null) continue;
+    const url = new URL(href, PORTAL_BANCOS_EEFF_URL).toString();
+    if (!documentos.some((d) => d.url === url)) documentos.push({ nombre: nombre || href, url, ...(periodo ? { periodo } : {}) });
+  }
+  return documentos;
+}
+
+function fragmentosBancoDesdePortal(html: string, anio?: string): string[] {
+  const fragmentos: string[] = [];
+  const reAnchor = /<a\b[^>]*href=["']([^"']+\.pdf(?:\?[^"']*)?)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = reAnchor.exec(html)) !== null) {
+    const contexto = html.slice(Math.max(0, m.index - 700), Math.min(html.length, reAnchor.lastIndex + 700));
+    const etiqueta = textoPlanoHtml(m[2]);
+    const aria = contexto.match(/aria-label=["']([^"']+)["']/i)?.[1] ?? "";
+    const nombre = textoPlanoHtml(`${aria} ${etiqueta}`);
+    const periodo = periodoPortalValido(m[1], nombre, contexto, anio);
+    if (periodo === null) continue;
+    fragmentos.push(contexto);
+  }
+  return fragmentos;
+}
+
+function documentosOriginalesDesdeIndice(bytes: Uint8Array, codUnicoBank?: string): DocumentoBancoOriginal[] {
+  const raw = new TextDecoder("latin1").decode(bytes);
+  const documentos: DocumentoBancoOriginal[] = [];
+  const reUrl = /https:\/\/www\.cmfchile\.cl\/bancos\/estados_anuales\/(\d{4})\/(Bancos|Cooperativas)-\d{4}\/(\d{6})-(\d{3})\.pdf/gi;
+  let m: RegExpExecArray | null;
+  while ((m = reUrl.exec(raw)) !== null) {
+    if (codUnicoBank && m[4] !== codUnicoBank.padStart(3, "0")) continue;
+    const url = m[0];
+    if (documentos.some((d) => d.url === url)) continue;
+    documentos.push({
+      nombre: `${m[2] === "Bancos" ? "Banco" : "Cooperativa"} código SBIF ${m[4]}`,
+      url,
+      periodo: m[3],
+      codigo_sbif: m[4],
+      segmento: m[2].toLowerCase(),
+    });
+  }
+  return documentos;
+}
 
 export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
   // ---------- Normativa ----------
@@ -1001,6 +1119,130 @@ export function registrarToolsOtros(server: McpServer, env: CmfEnv): void {
           unidad: "segmentos",
           notas,
         });
+      } catch (e) {
+        return fromError(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "cmf_bancos_eeff_portal",
+    {
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      title: "Publicaciones PDF de EEFF bancarios",
+      description:
+        "Devuelve los enlaces PDF originales por banco que la sección oficial de publicaciones de estados financieros anuales de bancos y cooperativas de la CMF publica (portal/estadisticas/626/w4-propertyvalue-43326.html). El servidor MCP lee el HTML y el PDF índice publicado allí, extrae sus enlaces completos por código SBIF y conserva la URL original. Opcionalmente filtre por anio (AAAA) y codUnicoBank (001=Banco de Chile). No fabrica una ruta por banco.",
+      inputSchema: z.object({
+        anio: anioSchema.optional().describe("Año publicado que se quiere conservar, en AAAA; sin este campo devuelve todos los años que la página publique"),
+        codUnicoBank: codigoSchema.optional().describe("Código SBIF de un banco/cooperativa, por ejemplo 001=Banco de Chile; sin este campo devuelve todos los enlaces del índice"),
+      }),
+      outputSchema: z.object({
+        documentos: z.array(z.object({ nombre: z.string(), url: z.string(), periodo: z.string().optional() })),
+        documentos_originales: z.array(z.object({ nombre: z.string(), url: z.string(), periodo: z.string(), codigo_sbif: z.string(), segmento: z.string() })),
+        indice_pdf: z.string().nullable(),
+        fuente_portal: z.string(),
+        bytes_html: z.number(),
+        marcadores_html: z.array(z.string()),
+        fragmentos_html_observados: z.array(z.string()),
+        aviso: z.string(),
+      }).passthrough(),
+    },
+    async ({ anio, codUnicoBank }) => {
+      try {
+        const html = await getLegacy(PORTAL_BANCOS_EEFF_PATH, {}, env);
+        const documentos = documentosBancoDesdePortal(html, anio);
+        const fragmentos_html_observados = fragmentosBancoDesdePortal(html, anio);
+        const indice = documentos.find((d) => /\.pdf(?:\?|$)/i.test(d.url));
+        let documentosOriginales: DocumentoBancoOriginal[] = [];
+        if (indice) {
+          const indiceBinario = await fetchCmfBinario(indice.url, env);
+          documentosOriginales = documentosOriginalesDesdeIndice(indiceBinario.bytes, codUnicoBank);
+        }
+        const marcadores_html = [
+          "Estados Financieros",
+          "Bancos",
+          "Cooperativas",
+          "pdf",
+        ].filter((m) => new RegExp(m, "i").test(html));
+        const aviso = documentosOriginales.length
+          ? "Son enlaces PDF originales publicados dentro del índice oficial de la CMF; para conservar el binario use cmf_bancos_eeff_portal_descargar con una URL de documentos_originales."
+          : `La sección oficial no publicó enlaces PDF${anio ? ` para ${anio}` : ""}; no se inventa una URL.`;
+        const texto = `Portal bancario EEFF (${anio ?? "todos los años"}, ${codUnicoBank ?? "todos los códigos"}): ${documentosOriginales.length} PDF originales publicados. Fuente: ${PORTAL_BANCOS_EEFF_URL}\n${documentosOriginales.map((d) => `- ${d.nombre} ${d.periodo}: ${d.url}`).join("\n")}\n\n${aviso}`;
+        return toolOk(texto, { documentos, documentos_originales: documentosOriginales, indice_pdf: indice?.url ?? null, fuente_portal: PORTAL_BANCOS_EEFF_URL, bytes_html: html.length, marcadores_html, fragmentos_html_observados, aviso });
+      } catch (e) {
+        return fromError(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "cmf_bancos_eeff_portal_descargar",
+    {
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      title: "Descargar PDF de EEFF bancarios",
+      description:
+        "Descarga un PDF original que cmf_bancos_eeff_portal acaba de publicar en la sección bancaria de la CMF y entrega sus bytes en base64 por tramos. Acepte únicamente la URL devuelta por esa tool; el servidor rechaza otros hosts o rutas para no convertir esta operación en un proxy arbitrario.",
+      inputSchema: z.object({
+        url: z.string().url().describe("URL PDF devuelta por cmf_bancos_eeff_portal"),
+        ...paginacionBase64,
+      }),
+      outputSchema: z.object({
+        url: z.string(),
+        formato: z.string(),
+        tamano: z.number(),
+        ...paginacionBase64,
+      }).passthrough(),
+    },
+    async ({ url, offset_chars, max_chars }) => {
+      try {
+        const u = new URL(url);
+        const rutaPortal = /^\/portal\/estadisticas\/626\/articles-\d+_recurso_\d+\.pdf$/i.test(u.pathname);
+        const rutaBanco = /^\/bancos\/estados_anuales\/\d{4}\/(?:Bancos|Cooperativas)-\d{4}\/\d{6}-\d{3}\.pdf$/i.test(u.pathname);
+        if (u.protocol !== "https:" || u.hostname !== "www.cmfchile.cl" || (!rutaPortal && !rutaBanco) || !/\.pdf$/i.test(u.pathname)) {
+          throw new Error("La URL debe ser un PDF HTTPS publicado por el portal bancario de la CMF; obténgala primero con cmf_bancos_eeff_portal");
+        }
+        const { bytes, contentType } = await fetchCmfBinario(u.toString(), env);
+        const esPdf = bytes.length >= 5 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46 && bytes[4] === 0x2d;
+        if (!esPdf) return toolErrorFuente("PDF de EEFF bancario", u.toString(), `la respuesta no tiene firma PDF (${bytes.length} bytes; content-type ${contentType})`);
+        const tramo = tramoBase64(bytes, offset_chars, max_chars);
+        return toolOk(`PDF original descargado desde la URL publicada por CMF (${bytes.length} bytes). ${avisoDeTramoBase64(tramo, "cmf_bancos_eeff_portal_descargar")}`, { url: u.toString(), formato: "pdf", tamano: bytes.length, ...tramo });
+      } catch (e) {
+        return fromError(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    "cmf_bancos_eeff_documentos",
+    {
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      title: "Documentos PDF de EEFF bancarios",
+      description:
+        "Lista los documentos originales de estados financieros de un banco en la ficha bancaria de la CMF (mercado B, tipoentidad BANCO), para un período trimestral, balance consolidado o individual y norma IFRS/NCH. Use primero cmf_listar_entidades con tipoentidad=BANCO y mercado=B para obtener el RUT canónico del banco. Los enlaces firmados se conservan completos para pasarlos a cmf_documento_markdown; esta tool solo lista documentos y no sustituye al PDF original.",
+      inputSchema: z.object({
+        rut: rutSchema.describe("RUT del banco, obtenido de cmf_listar_entidades(tipoentidad=BANCO, mercado=B)"),
+        anio: anioSchema,
+        mes: mesCorteSchema.describe("Mes de corte trimestral (03/06/09/12)"),
+        tipo: tipoBalanceSchema,
+        norma: tipoNormaContableSchema,
+      }),
+      outputSchema: z.object({
+        periodo: z.string(),
+        rut: z.string(),
+        documentos: z.array(z.record(z.string(), z.string())),
+        aviso: z.string(),
+      }).passthrough(),
+    },
+    async ({ rut, anio, mes, tipo, norma }) => {
+      try {
+        const html = await postLegacy(fichaBancoUrl(rut, 3), { forma: "F", mm: mes, aa: anio, tipo, tipo_norma: norma }, env);
+        const documentos = documentosBancoDesdeFicha(html);
+        const enlacesFuente = enlacesFuenteBancoDesdeFicha(html);
+        const periodo = `${anio}${mes}`;
+        const fuenteFicha = `https://www.cmfchile.cl${fichaBancoUrl(rut, 3)}`;
+        const aviso = "Los enlaces son documentos originales firmados por la CMF. Para leer un PDF use cmf_documento_markdown con la url completa; para conservar el binario original, use la descarga por MCP disponible para ese documento.";
+        const texto = textoDocumentosBanco(rut, periodo, tipo, norma, documentos, enlacesFuente, aviso);
+        return toolOk(texto, { periodo, rut, documentos, enlaces_fuente: enlacesFuente, fuente_ficha: fuenteFicha, aviso });
       } catch (e) {
         return fromError(e);
       }
