@@ -25,11 +25,14 @@
  * como `../test/x.js`, la ruta `.././src/`, y el import escondido entre 2
  * cadenas con las marcas de un comentario de bloque.
  *
+ * La sexta, la línea del guardia escrita dentro de una plantilla de texto
+ * antes del primer import, se cerró pidiendo más. el guardia tiene que ser la
+ * primera línea de código del archivo.
+ *
  * Lo que la regla no puede ver. una ruta armada en tiempo de ejecución sin
- * que aparezca `src/` en el texto, una prueba que importa el guardia y
- * después repone a mano un fetch real, y la línea del guardia escrita dentro
- * de una plantilla de texto antes del primer import. Es una regla para que
- * nadie se olvide del guardia, no una defensa contra quien quiere saltárselo.
+ * que aparezca `src/` en el texto, y una prueba que importa el guardia y
+ * después repone a mano un fetch real. Es una regla para que nadie se olvide
+ * del guardia, no una defensa contra quien quiere saltárselo.
  */
 import "./sin-red-real.js";
 import { test } from "node:test";
@@ -78,11 +81,13 @@ function loQueFalta(fuente: string, leer: (ruta: string) => string | null = () =
   const lineas = sinComentariosDeBloque(fuente)
     .split(/\r?\n/)
     .map((l) => l.trim());
-  const guardia = lineas.indexOf(GUARDIA);
   const como = porAyudante ? `carga código del servidor por ${porAyudante}` : "carga código del servidor";
-  if (guardia < 0) return `${como} y no importa el guardia`;
-  const primerImport = lineas.findIndex((l) => /^import\b/.test(l));
-  return guardia === primerImport ? null : "importa el guardia, pero no como primer import";
+  if (!lineas.includes(GUARDIA)) return `${como} y no importa el guardia`;
+  // El guardia es la PRIMERA línea de código del archivo, no solo el primer
+  // import. Así no sirve escribir su texto dentro de una plantilla que viene
+  // antes, y nada del archivo corre antes que él.
+  const primeraDeCodigo = lineas.find((l) => l !== "" && !l.startsWith("//"));
+  return primeraDeCodigo === GUARDIA ? null : "importa el guardia, pero no como primera línea de código";
 }
 
 function leerAyudante(ruta: string): string | null {
@@ -121,7 +126,14 @@ test("la comprobación sí puede fallar, se cargue el servidor de la forma que s
   const cliente = formas[0];
   // Un guardia escrito dentro de un comentario no protege a nadie.
   assert.match(loQueFalta(["/*", GUARDIA, "*/", cliente].join("\n")) ?? "", /no importa el guardia/);
-  assert.match(loQueFalta([cliente, GUARDIA].join("\n")) ?? "", /no como primer import/);
+  assert.match(loQueFalta([cliente, GUARDIA].join("\n")) ?? "", /no como primera línea de código/);
+  // El texto del guardia dentro de una plantilla, antes del primer import, no es el guardia.
+  const enPlantilla = ["const texto = `", GUARDIA, "`;", cliente].join("\n");
+  assert.match(loQueFalta(enPlantilla) ?? "", /no como primera línea de código/);
+  // Tampoco sirve que corra algo antes que él.
+  assert.match(loQueFalta(["globalThis.fetch = fetch;", GUARDIA, cliente].join("\n")) ?? "", /no como primera línea de código/);
+  // El encabezado y los comentarios de línea sí pueden ir antes.
+  assert.equal(loQueFalta(["/** Encabezado. */", "// nota", "", GUARDIA, cliente].join("\n")), null);
   assert.equal(loQueFalta([GUARDIA, cliente].join("\n")), null);
   // Por un ayudante local que carga el servidor.
   const conAyudante = 'import { pedir } from "./ayudante.js";';

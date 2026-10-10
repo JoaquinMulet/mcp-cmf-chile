@@ -616,3 +616,25 @@ test("el barrido de quien entra directo tampoco barre si corre atrasado por una 
     },
   );
 });
+
+// Quien llega con la cola llena espera afuera hasta que pase la gracia de los
+// puestos. Si en ese rato el hilo se detiene, su sondeo corre atrasado, y un
+// sondeo atrasado no barrió. Decidir ahí es decidir sin saber si la cola está
+// llena de vivos o de muertos.
+test("tras una detención, quien espera fuera de una cola llena de muertas no se rinde con su sondeo atrasado", async () => {
+  const env = { CMF_RATE_LIMIT_MS: "0" };
+  await conRedLenta(redConMuertas, async () => {
+    lanzarMuertas(
+      ["setInterval", "setTimeout"],
+      Array.from({ length: TOPE + 1000 }, (_, i) => `https://www.cmfchile.cl/muerta${i}`),
+      env,
+    );
+    const afuera = fetchCmf("https://api.sbif.cl/afuera", {}, { ...env, CMF_ESPERA_CUPO_MS: "12000" });
+    // Más larga que la espera de afuera, que es de 2 segundos y medio.
+    const hasta = Date.now() + 3200;
+    while (Date.now() < hasta) {
+      // El hilo no suelta el control.
+    }
+    assert.equal((await afuera).status, 200);
+  });
+});

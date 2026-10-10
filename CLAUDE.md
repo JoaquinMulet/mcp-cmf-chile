@@ -931,7 +931,14 @@ que una primera respuesta. su cuerpo se lee entero dentro de `resolverChallenge`
 quedan en el jar. Regla. **el cupo cubre la respuesta entera, y `fetchCmf` nunca entrega un
 cuerpo sin leer.** Lo que eso cambia para quien llama. un cuerpo que se cuelga tras el desafío
 ya no le revienta en la mano al leerlo; vence dentro de la consulta, con sus 3 intentos, y por
-la salida chilena cuenta como proxy caído. Lo vigila `test/cuerpo-sin-fin.test.ts`. Verificado
+la salida chilena cuenta como proxy caído. **Los 3 intentos de un cuerpo colgado son una
+decisión, no un descuido.** Un cuerpo que deja de llegar suele ser un corte pasajero, y el
+segundo intento casi siempre lo salva. El costo es que la consulta se envía 3 veces, también si
+es un POST, y que el error tarda 3 plazos: 38 segundos con el plazo de fábrica, medidos, y unos
+4 minutos y medio con el de 90 segundos de las tools lentas, calculados. Se acepta porque todo
+POST a la CMF es una búsqueda, y repetirla no cambia nada allá. Si algún día una tool envía
+algo que no se puede repetir, esa tool no puede pasar por este reintento. Lo vigila
+`test/cuerpo-sin-fin.test.ts`. Verificado
 en workerd con el arnés de la revisión
 (`C:\dev\cmf-mcp-plazos-revision3\workerd\abandono.mjs`, que usa miniflare y atiende la
 salida del Worker con una función local). Los 3 escenarios, cupo tomado, puesto en cola y
