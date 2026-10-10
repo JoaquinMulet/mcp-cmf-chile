@@ -132,13 +132,18 @@ const GRACIA_CUPO_MS = 5000;
 const SONDEO_COLA_MS = 50;
 /** Sin señal de vida por este tiempo, quien esperaba en la cola se da por muerto. */
 const GRACIA_COLA_MS = 2000;
-/**
- * Un temporizador que corre con más atraso que este vio el hilo detenido, y no
- * barre. Tiene que ser bastante menor que las 2 gracias. un temporizador que
- * corre a tiempo garantiza que todo temporizador que vencía antes ya corrió,
- * y los que vencían después llevan a lo más este atraso.
- */
+/** Un temporizador que corre con más atraso que este vio el hilo detenido, y corta su racha. */
 const ATRASO_MAXIMO_MS = 1000;
+/**
+ * Cuánto tiempo seguido tiene que haber corrido a tiempo un temporizador para
+ * poder barrer. Tiene que alcanzar para que todo vivo renueve su señal después
+ * de una detención. el latido más lento es de LATIDO_MS, y hay que sumarle lo
+ * que el motor tarda en ponerse al día con los temporizadores atrasados. En
+ * workerd eso fueron unos 15 ms por temporizador de una misma petición
+ * (medido el 10 de octubre de 2026), así que 1500 ms de holgura cubren unos
+ * 100 temporizadores atrasados en una petición.
+ */
+const RACHA_PARA_BARRER_MS = LATIDO_MS + 1500;
 /**
  * Cuántas consultas pueden esperar cupo. Con 4 cupos y el ritmo de fábrica
  * hacia los 13 hosts, en los 120 segundos de espera no alcanzan a pasar más
@@ -147,6 +152,34 @@ const ATRASO_MAXIMO_MS = 1000;
  * de 2026).
  */
 const MAX_COLA = 1000;
+
+/**
+ * Lleva la cuenta de desde cuándo un temporizador periódico corre a tiempo.
+ * Cada corrida atrasada corta la racha y la empieza de nuevo.
+ */
+class Racha {
+  private desde: number;
+  private vence: number;
+  constructor(private periodoMs: number) {
+    this.desde = Date.now();
+    this.vence = this.desde + periodoMs;
+  }
+  /** Anota una corrida, que vuelve a vencer en `proximoMs`. Dice si corrió a tiempo. */
+  anotar(ahora: number, proximoMs = this.periodoMs): boolean {
+    const aTiempo = ahora - this.vence <= ATRASO_MAXIMO_MS;
+    if (!aTiempo) this.desde = ahora;
+    this.vence = ahora + proximoMs;
+    return aTiempo;
+  }
+  /** Cuánto lleva corriendo a tiempo, sin ninguna corrida atrasada. */
+  largo(ahora: number): number {
+    return ahora - this.desde;
+  }
+  /** El atraso de la corrida que se va a anotar, para el aviso del log. */
+  atraso(ahora: number): number {
+    return ahora - this.vence;
+  }
+}
 
 /**
  * Rate limiter por host: cola con plazo y max in-flight. Hay UNO por proceso.
@@ -169,21 +202,26 @@ const MAX_COLA = 1000;
  * muere, sus temporizadores mueren con él y la señal envejece. Cada consulta
  * toma su cupo ella misma, en su propio contexto.
  *
- * SOLO BARRE UN TEMPORIZADOR QUE CORRIÓ A TIEMPO. Una señal vieja puede ser un
- * dueño muerto o un hilo que estuvo detenido, por ejemplo convirtiendo un PDF
- * de 300 páginas. Mientras el hilo está detenido nadie renueva su señal,
- * tampoco los vivos (medido el 10 de octubre de 2026. una detención de 9,5
- * segundos daba por muertas a las 4 consultas en vuelo). Quien puede
- * distinguir los 2 casos es un temporizador, porque sabe a qué hora le tocaba
- * correr. Si corrió a tiempo, el hilo no estuvo detenido, y todo temporizador
- * de un vivo que vencía antes ya corrió. Una consulta que recién llega no
- * sabe nada de eso, así que no barre. deja un temporizador y barre él.
+ * SOLO BARRE QUIEN LLEVA UNA RACHA CORRIENDO A TIEMPO. Una señal vieja puede
+ * ser un dueño muerto o un hilo que estuvo detenido, por ejemplo convirtiendo
+ * un PDF de 300 páginas. Mientras el hilo está detenido nadie renueva su
+ * señal, tampoco los vivos. Para dar a alguien por muerto hay que saber que
+ * tuvo la oportunidad de renovar y no lo hizo. Esa oportunidad la prueba un
+ * temporizador periódico que corrió a tiempo, corrida tras corrida, durante
+ * RACHA_PARA_BARRER_MS. en todo ese rato el hilo estuvo libre, y un vivo
+ * habría renovado.
  *
- * La versión anterior medía el silencio entre 2 eventos cualesquiera, y un
- * silencio largo también es lo que hay cuando no quedó nadie vivo. Con 4
- * cupos y 200 puestos de consultas muertas, cada consulta nueva veía el
- * silencio, no barría, encontraba la cola llena y fallaba al instante, sin
- * fin (medido el 10 de octubre de 2026, por la quinta revisión adversarial).
+ * Esta es la cuarta forma de la regla, y las 3 anteriores fallaron en lo
+ * mismo, creerle a una sola observación. La primera barría en cualquier
+ * momento, y una detención de 9,5 segundos daba por muertas a las consultas
+ * vivas. La segunda tomaba por detención todo silencio largo, y un silencio
+ * largo también es lo que hay cuando no queda nadie vivo. la instancia
+ * rechazaba todo sin fin. La tercera dejaba barrer a cualquier temporizador
+ * que corriera a tiempo una vez, suponiendo que los temporizadores vencidos
+ * corren en el orden en que vencían. No es así. En Node corren por listas, y
+ * en workerd de a uno por petición, así que un temporizador recién creado
+ * corre a tiempo antes que los atrasados de otro (medido el 10 de octubre de
+ * 2026, por la sexta revisión adversarial).
  */
 class RateLimiter {
   private ultimo = new Map<string, number>();
@@ -192,6 +230,8 @@ class RateLimiter {
   private cola: Puesto[] = [];
   private ultimoBarrido = 0;
   private ultimoAvisoDeDetencion = 0;
+  /** Hasta cuándo hay un vigía corriendo. Uno solo a la vez. */
+  private vigiaHasta = 0;
   constructor(private maxInflight = 4) {}
 
   /**
@@ -208,10 +248,7 @@ class RateLimiter {
     let cupo: Cupo;
     if (this.tomados.size < this.maxInflight && this.cola.length === 0) {
       cupo = this.tomar();
-      // Quien entra directo no pasa por la cola, así que deja su propio
-      // barrido. Sin él, los cupos de consultas muertas no volvían mientras
-      // las consultas llegaran de a una.
-      this.barrerDespues();
+      this.vigilar();
     } else {
       cupo = await this.hacerCola(host, esperaCupoMs);
     }
@@ -237,11 +274,11 @@ class RateLimiter {
 
   private tomar(): Cupo {
     const cupo: Cupo = { visto: Date.now() };
+    const racha = new Racha(LATIDO_MS);
     cupo.latido = setInterval(() => {
       const ahora = Date.now();
-      const aTiempo = this.corrioATiempo(ahora, cupo.visto + LATIDO_MS);
+      this.correr(racha, ahora);
       cupo.visto = ahora;
-      if (aTiempo) this.barrer(ahora);
     }, LATIDO_MS);
     // En Node, para que un cupo sin devolver no deje vivo el proceso. En
     // Workers un temporizador es un número y no tiene unref.
@@ -251,32 +288,54 @@ class RateLimiter {
   }
 
   /**
-   * Dice si un temporizador que vencía en `vencia` corrió a tiempo. Si no, el
-   * hilo estuvo detenido, y queda un aviso en el log, uno por detención.
+   * Lo que hace cada temporizador del limitador al correr. Anota la corrida
+   * en su racha, avisa si el hilo estuvo detenido, y barre si la racha ya es
+   * lo bastante larga. Dice si con esta racha ya se pudo barrer.
    */
-  private corrioATiempo(ahora: number, vencia: number): boolean {
-    const atraso = ahora - vencia;
-    if (atraso <= ATRASO_MAXIMO_MS) return true;
-    if (ahora - this.ultimoAvisoDeDetencion > ATRASO_MAXIMO_MS) {
-      this.ultimoAvisoDeDetencion = ahora;
-      console.warn(JSON.stringify({ cmf_hilo_detenido: { ms: atraso, en_vuelo: this.tomados.size, en_cola: this.cola.length } }));
-    }
-    return false;
+  private correr(racha: Racha, ahora: number, proximoMs?: number): boolean {
+    const atraso = racha.atraso(ahora);
+    if (!racha.anotar(ahora, proximoMs)) this.avisarDetencion(ahora, atraso);
+    if (racha.largo(ahora) < RACHA_PARA_BARRER_MS) return false;
+    this.barrer(ahora);
+    return true;
   }
 
-  /** Deja un barrido para dentro de un sondeo, con un temporizador propio. */
-  private barrerDespues(): void {
-    const vence = Date.now() + SONDEO_COLA_MS;
-    const t = setTimeout(() => {
-      const ahora = Date.now();
-      if (this.corrioATiempo(ahora, vence)) this.barrer(ahora);
+  /** Deja una línea en el log por cada detención del hilo, no una por temporizador. */
+  private avisarDetencion(ahora: number, atraso: number): void {
+    if (ahora - this.ultimoAvisoDeDetencion <= ATRASO_MAXIMO_MS) return;
+    this.ultimoAvisoDeDetencion = ahora;
+    console.warn(JSON.stringify({ cmf_hilo_detenido: { ms: atraso, en_vuelo: this.tomados.size, en_cola: this.cola.length } }));
+  }
+
+  /**
+   * Quien entra directo no pasa por la cola, así que no deja a nadie sondeando.
+   * Si hay cupos que parecen de consultas muertas, deja un vigía. un
+   * temporizador que corre lo justo para juntar la racha, barre y se apaga.
+   * Sin él, con las consultas llegando de a una, esos cupos no volvían hasta
+   * que alguien tuviera que hacer cola. Hay uno solo a la vez.
+   */
+  private vigilar(): void {
+    const ahora = Date.now();
+    if (ahora < this.vigiaHasta) return;
+    let haySospechosos = false;
+    for (const cupo of this.tomados) haySospechosos ||= ahora - cupo.visto > GRACIA_CUPO_MS;
+    if (!haySospechosos) return;
+    // Si la petición que lo deja muere antes, el vigía muere con ella, y pasado
+    // este plazo otra consulta puede dejar el suyo.
+    this.vigiaHasta = ahora + 2 * RACHA_PARA_BARRER_MS;
+    const racha = new Racha(SONDEO_COLA_MS);
+    const vigia = setInterval(() => {
+      const instante = Date.now();
+      if (!this.correr(racha, instante) && instante < this.vigiaHasta) return;
+      clearInterval(vigia);
+      this.vigiaHasta = 0;
     }, SONDEO_COLA_MS);
-    (t as { unref?: () => void }).unref?.();
+    (vigia as { unref?: () => void }).unref?.();
   }
 
   /**
    * Saca los cupos y los puestos de la cola cuyo dueño dejó de dar señales de
-   * vida. Solo lo llama un temporizador que corrió a tiempo.
+   * vida. Solo lo llama correr(), con una racha lo bastante larga.
    */
   private barrer(ahora: number): void {
     // Con muchos en cola, todos sondean en el mismo instante. Basta un barrido.
@@ -306,24 +365,20 @@ class RateLimiter {
    */
   private async hacerCola(host: string, esperaCupoMs: number): Promise<Cupo> {
     const limite = Date.now() + esperaCupoMs;
-    // Con la cola llena no entra todavía, pero tampoco se va al instante. La
-    // cola puede estar llena de muertos, y un puesto muerto recién se puede
-    // barrer cuando pasa su gracia. Espera eso y un poco más.
-    const finAntesala = Math.min(limite, Date.now() + GRACIA_COLA_MS + 10 * SONDEO_COLA_MS);
     // Nace afuera. Entra de inmediato si hay lugar.
     const puesto: Puesto = { visto: Date.now(), fuera: true };
-    this.entrar(puesto, true, true, host);
+    this.entrar(puesto, false, host);
+    const racha = new Racha(SONDEO_COLA_MS);
     for (;;) {
       const pausa = Math.max(1, Math.min(SONDEO_COLA_MS, limite - Date.now()));
-      const vence = Date.now() + pausa;
       await new Promise((r) => setTimeout(r, pausa));
       const ahora = Date.now();
-      const aTiempo = this.corrioATiempo(ahora, vence);
+      // La pausa siguiente puede ser más corta que un sondeo, al final del plazo.
+      const yaBarrio = this.correr(racha, ahora, Math.max(1, Math.min(SONDEO_COLA_MS, limite - ahora)));
       puesto.visto = ahora;
-      if (aTiempo) this.barrer(ahora);
       // Afuera está quien todavía no encontró lugar, y también quien fue
       // barrido mientras este hilo estaba detenido, que vuelve al final.
-      if (puesto.fuera) this.entrar(puesto, aTiempo, ahora < finAntesala, host);
+      if (puesto.fuera) this.entrar(puesto, yaBarrio, host);
       if (this.cola[0] === puesto && this.tomados.size < this.maxInflight) {
         this.cola.shift();
         return this.tomar();
@@ -333,18 +388,18 @@ class RateLimiter {
   }
 
   /**
-   * Mete en la cola un puesto que está afuera, si hay lugar. Si la cola sigue
-   * llena cuando ya no queda antesala, lanza.
+   * Mete en la cola un puesto que está afuera, si hay lugar. Si no lo hay,
+   * espera afuera. La cola puede estar llena de muertos, y eso recién se sabe
+   * cuando quien espera ya pudo barrer. Si después de barrer sigue llena,
+   * lanza.
    */
-  private entrar(puesto: Puesto, aTiempo: boolean, quedaAntesala: boolean, host: string): void {
-    // Tras una detención todavía no se barrió, así que no se decide nada.
-    if (!aTiempo) return;
+  private entrar(puesto: Puesto, yaBarrio: boolean, host: string): void {
     if (this.cola.length < MAX_COLA) {
       puesto.fuera = false;
       this.cola.push(puesto);
       return;
     }
-    if (quedaAntesala) return;
+    if (!yaBarrio) return;
     console.warn(JSON.stringify({ cmf_cupo: { motivo: "cola_llena", en_vuelo: this.tomados.size, en_cola: this.cola.length, host } }));
     throw new Error(
       `El servidor tiene ${this.cola.length} consultas esperando su turno hacia la CMF y no recibe más por ahora. Reintente en unos minutos.`,

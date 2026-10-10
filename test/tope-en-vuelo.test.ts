@@ -638,3 +638,36 @@ test("tras una detención, quien espera fuera de una cola llena de muertas no se
     assert.equal((await afuera).status, 200);
   });
 });
+
+// Lo encontró la sexta revisión adversarial el 10 de octubre de 2026. El
+// diseño anterior dejaba barrer a cualquier temporizador que corriera a
+// tiempo, con el argumento de que entonces todos los anteriores ya habían
+// corrido. Es falso. Una consulta que nace justo al terminar una detención
+// crea su temporizador de 50 ms ahí, y ese temporizador corre a tiempo ANTES
+// que las señales de vida vencidas de los dueños de los cupos. En Node quedaban
+// 7 en vuelo con tope de 4, y en workerd 8, sin ninguna consulta muerta.
+test("una consulta que nace al terminar una detención no da por muertos a los vivos", async () => {
+  const env = { CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "20000" };
+  await conRedLenta(
+    redConPegadas(() => undefined),
+    async (avisos) => {
+      const ocupadas = ocuparCupos(11000, env);
+      const enCola = [0, 1].map((i) => fetchCmf(`https://api.sbif.cl/ya-esperaba${i}`, {}, env));
+      await yEsperar(Promise.allSettled([ocupadas, ...enCola]), async () => {
+        await new Promise((r) => setTimeout(r, 1100));
+        const ocupar = (ms: number) => {
+          for (const hasta = Date.now() + ms; Date.now() < hasta; ) {
+            // El hilo no suelta el control.
+          }
+        };
+        ocupar(6000);
+        // Nace en el mismo turno en que termina la detención, y el hilo sigue ocupado un poco más.
+        const recienNacida = fetchCmf("https://datosbanco.cmfchile.cl/recien-nacida", {}, env);
+        ocupar(120);
+        await new Promise((r) => setTimeout(r, 700));
+        assert.ok(!avisos.some((a) => a.includes("cmf_cupo_recuperado")), `dio por muerto a un vivo. ${avisos.join(" | ")}`);
+        await recienNacida;
+      });
+    },
+  );
+});
