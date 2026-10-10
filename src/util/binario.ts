@@ -30,20 +30,30 @@ export interface TramoBase64 {
   base64_completo: boolean;
 }
 
+/** En base64, cada grupo de 3 bytes se escribe con 4 caracteres. */
+const BYTES_POR_GRUPO = 3;
+const CHARS_POR_GRUPO = 4;
+
 /** El tramo pedido del base64 de `bytes`, con lo que hace falta para pedir el resto. */
 export function tramoBase64(bytes: Uint8Array, offsetChars: number, maxChars: number): TramoBase64 {
-  const todo = bytesABase64(bytes);
+  // El base64 completo mide 4 caracteres por cada 3 bytes, con el relleno.
+  const total = Math.ceil(bytes.length / BYTES_POR_GRUPO) * CHARS_POR_GRUPO;
   // Los cortes caen en múltiplos de 4, así que cada tramo se decodifica
   // solo, y un tramo nunca es vacío mientras quede archivo.
-  const paso = Math.max(4, maxChars - (maxChars % 4));
-  const desde = Math.min(Math.max(offsetChars - (offsetChars % 4), 0), todo.length);
-  const hasta = Math.min(desde + paso, todo.length);
+  const paso = Math.max(CHARS_POR_GRUPO, maxChars - (maxChars % CHARS_POR_GRUPO));
+  const desde = Math.min(Math.max(offsetChars - (offsetChars % CHARS_POR_GRUPO), 0), total);
+  const hasta = Math.min(desde + paso, total);
+  // Se codifican SOLO los bytes de este tramo. Antes se codificaba el archivo
+  // entero en cada llamada y se cortaba el texto. Un documento de 10 MB
+  // ocupaba así 105 MB de memoria en workerd, con un tope de 128 para todo el
+  // Worker (medido el 10 de octubre de 2026).
+  const deCaracterAByte = (chars: number) => Math.min((chars / CHARS_POR_GRUPO) * BYTES_POR_GRUPO, bytes.length);
   return {
-    base64: todo.slice(desde, hasta),
+    base64: bytesABase64(bytes.subarray(deCaracterAByte(desde), deCaracterAByte(hasta))),
     offset_chars: desde,
-    siguiente_offset_chars: hasta < todo.length ? hasta : null,
-    total_chars: todo.length,
-    base64_completo: desde === 0 && hasta === todo.length,
+    siguiente_offset_chars: hasta < total ? hasta : null,
+    total_chars: total,
+    base64_completo: desde === 0 && hasta === total,
   };
 }
 

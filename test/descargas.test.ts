@@ -74,6 +74,46 @@ test("cmf_documento_descargar: entrega el binario por tramos y el texto dice có
   }
 });
 
+// Medido el 10 de octubre de 2026 en workerd. tramoBase64 codificaba el
+// archivo entero en cada llamada y después cortaba el texto. Un documento de
+// 10 MB ocupaba 105 MB de memoria, con un tope de 128 para todo el Worker.
+test("tramoBase64: cada tramo es igual al corte del base64 entero, para cualquier largo y cualquier corte", () => {
+  for (const largo of [0, 1, 2, 3, 4, 5, 6, 7, 299, 300, 301, 3000]) {
+    const bytes = Uint8Array.from({ length: largo }, (_, i) => (i * 31 + 7) % 256);
+    const entero = Buffer.from(bytes).toString("base64");
+    for (const max of [1000, 1001, 1003, 4, 5, 8, 400, 100_000]) {
+      for (const offset of [0, 1, 4, 5, 8, 396, 400, 401, entero.length - 4, entero.length, entero.length + 40, -3]) {
+        const t = tramoBase64(bytes, offset, max);
+        const rotulo = `largo ${largo}, offset ${offset}, max ${max}`;
+        assert.equal(t.total_chars, entero.length, rotulo);
+        assert.equal(t.base64, entero.slice(t.offset_chars, t.offset_chars + t.base64.length), rotulo);
+        assert.equal(t.siguiente_offset_chars, t.offset_chars + t.base64.length < entero.length ? t.offset_chars + t.base64.length : null, rotulo);
+        assert.equal(t.base64_completo, t.base64 === entero && t.offset_chars === 0, rotulo);
+        // Mientras quede archivo, un tramo nunca viene vacío.
+        if (t.offset_chars < entero.length) assert.ok(t.base64.length > 0, rotulo);
+      }
+    }
+  }
+});
+
+test("tramoBase64: para entregar un tramo no codifica el archivo entero", () => {
+  const grande = new Uint8Array(3 * 1024 * 1024).fill(65);
+  const original = globalThis.btoa;
+  let mayorEntrada = 0;
+  globalThis.btoa = (texto: string) => {
+    mayorEntrada = Math.max(mayorEntrada, texto.length);
+    return original(texto);
+  };
+  try {
+    const t = tramoBase64(grande, 2_000_000, 10_000);
+    assert.equal(t.base64.length, 10_000);
+    assert.equal(t.total_chars, 4 * 1024 * 1024);
+  } finally {
+    globalThis.btoa = original;
+  }
+  assert.equal(mayorEntrada, 7500, "bytes que pasaron por el codificador");
+});
+
 test("tramoBase64: los cortes caen en múltiplos de 4 y un offset fuera del archivo se dice", () => {
   const t = tramoBase64(PDF, 0, 1001);
   assert.equal(t.base64.length % 4, 0);
