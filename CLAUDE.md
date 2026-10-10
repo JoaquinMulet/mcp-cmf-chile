@@ -821,6 +821,35 @@ CMF guardado en `test/fixtures`, que ahora está fuera del análisis con una pru
 ahí solo haya datos. Regla. una lista de vigilancia nombra lo que se EXCLUYE, con su razón,
 nunca lo que se incluye.
 
+**40. La ficha bancaria trimestral y el portal anual son fuentes distintas (9 de septiembre de
+2026).** Qué falló. `cmf_bancos_eeff_documentos` consultaba `pestania=3` con la forma SAFEC de
+emisores y devolvía cero documentos para Banco de Chile, aunque la CMF sí publicaba sus EEFF.
+Causa raíz. Los bancos exponen la publicación anual en el portal
+`/portal/estadisticas/626/w4-propertyvalue-43326.html`: esa página enlaza un PDF índice y el
+PDF índice contiene las URL originales por código SBIF bajo `/bancos/estados_anuales/`.
+Prescripción. Para EEFF anuales bancarios se llama `cmf_bancos_eeff_portal` (opcionalmente con
+`anio` y `codUnicoBank`) y se entrega el enlace de `documentos_originales` a
+`cmf_bancos_eeff_portal_descargar`. No se construye una URL por nombre ni se interpreta un cero
+de la ficha trimestral como ausencia del documento. El fixture observado y el contrato MCP
+viven en `test/fixtures/bancos-eeff-portal-observed.html` y
+`test/bancos-eeff-portal.test.ts`.
+
+**41. Un despliegue desde master sacó 3 herramientas que solo existían en producción (9 de
+octubre de 2026).** Qué falló. Las 3 herramientas de la lección 40 se desplegaron el 15 de
+septiembre desde el árbol principal con cambios sin commitear, y nunca llegaron al trunk. El 9
+de octubre se desplegó desde master, como manda la sección «Ramas y deploy», y producción bajó
+de 91 herramientas a 88. `npm run verificar-desplegado` pasó en verde, porque solo pedía «82 o
+más». Nadie lo vio hasta que un cliente del MCP avisó que 3 herramientas ya no estaban. Causa
+raíz. Producción y el trunk habían dejado de ser lo mismo, y ninguna comprobación comparaba uno
+con el otro. Un piso no ve lo que se pierde por encima del piso, ni lo que sobra. Cura.
+`test/verify-remote.ts` compara ahora los nombres que publica el servidor vivo con los del
+registro del repositorio, en los 2 sentidos (`test/comparar-herramientas.ts`). Una herramienta
+que falta es un despliegue incompleto, y una que sobra es un despliegue hecho desde un árbol
+sucio. Las 3 herramientas volvieron al trunk con su prueba. Regla. lo desplegado se compara
+con el trunk por IGUALDAD, nunca con un mínimo. Y antes de desplegar desde un árbol limpio
+por primera vez en un repositorio con otros árboles de trabajo, se mira qué publica producción
+que el trunk no tenga.
+
 ## Gotchas
 
 - **La fuente se cae, y eso no es un defecto tuyo.** El servlet BaseDato devuelve a veces el

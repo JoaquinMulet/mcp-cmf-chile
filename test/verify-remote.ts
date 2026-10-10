@@ -3,6 +3,8 @@
  * protocolo Streamable HTTP a mano (fetch + SSE). Sin SDK de por medio.
  * Uso: npx tsx test/verify-remote.ts   → exit 1 si algún check falla.
  */
+import { construirRegistro } from "../src/registro.js";
+import { compararHerramientas } from "./comparar-herramientas.js";
 
 const URL_ = process.env.CMF_MCP_URL || "https://cmf-mcp.kumocloud.cl/mcp";
 const fallos: string[] = [];
@@ -73,8 +75,13 @@ async function main(): Promise<void> {
   const lista = await post({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }, hdrs);
   const tools: any[] = lista.messages.find((m) => m.result?.tools)?.result?.tools ?? [];
   check(lista.status === 200, `tools/list → HTTP ${lista.status}`);
-  check(tools.length >= 82, `tools/list devuelve ${tools.length} tools (esperado >= 82)`);
   const nombres = tools.map((t) => t.name);
+  // Exactamente las del repositorio, no «82 o más». Con el piso, perder 3
+  // herramientas en un despliegue pasó en verde (9 de octubre de 2026).
+  const { faltan, sobran } = compararHerramientas([...construirRegistro().values()].map((o) => o.nombreTool), nombres);
+  check(faltan.length === 0, `el servidor publica todas las herramientas del repositorio (faltan: ${faltan.join(", ") || "ninguna"})`);
+  check(sobran.length === 0, `el servidor no publica herramientas ajenas al repositorio (sobran: ${sobran.join(", ") || "ninguna"})`);
+  console.log(`INFO  tools/list devuelve ${tools.length} tools`);
   check(new Set(nombres).size === nombres.length, "nombres de tools únicos");
   const sinDesc = tools.filter((t) => !t.description || t.description.length < 10);
   check(sinDesc.length === 0, `toda tool tiene description >= 10 chars (${sinDesc.length} sin descripción)`);
