@@ -876,15 +876,33 @@ de las 2 cosas es cierta. Prescripción. **Nadie le entrega nada a otra petició
 se toma lleva una señal de vida.** Cada cupo y cada puesto en la cola tienen un `visto` que
 renueva su propio dueño con sus propios temporizadores (`LATIDO_MS` de 1 segundo para el cupo,
 `SONDEO_COLA_MS` de 50 ms para la cola). Si el dueño muere, sus temporizadores mueren con él, la
-señal envejece, y cualquier consulta que pase barre el cupo a los 10 segundos
+señal envejece, y cualquier consulta que pase barre el cupo a los 5 segundos
 (`GRACIA_CUPO_MS`) o el puesto a los 2 (`GRACIA_COLA_MS`). Cada consulta toma su cupo ella
 misma, en su propio contexto, cuando es la primera de la cola y hay uno libre. `esperar()`
 entrega el cupo y `liberar(cupo)` lo recibe, así que devolver 2 veces el mismo no hace nada. Un
 cupo barrido deja una línea `cmf_cupo_recuperado` en el log. **Esa línea es la señal de una
-consulta abandonada**, y si sale seguido hay una tool que deja consultas sin esperar. El costo
-que hay que conocer. Si el hilo de la instancia se queda detenido más de 10 segundos, por
-ejemplo convirtiendo un PDF enorme, las consultas vivas pierden su señal, se dan por muertas y
-por un momento puede haber más de 4 en vuelo. Verificado en workerd con el arnés de la revisión
+consulta abandonada.** La produce una tool que deja consultas sin esperar, un programa de
+`/codigo` que responde con llamadas pendientes, y también un cliente que corta su petición. El
+costo que hay que conocer. Cada consulta abandonada deja su cupo tomado 5 segundos para toda la
+instancia. **Un hilo detenido no es una consulta muerta**, y esto lo encontró la cuarta
+revisión adversarial el 10 de octubre de 2026, con el diseño ya desplegado. Mientras el hilo
+está detenido nadie renueva su señal, tampoco los vivos. Una detención de 9,5 segundos daba por
+muertas a las 4 consultas en vuelo y dejaba entrar a otras 4, y cada detención siguiente sumaba
+4 más, sin techo (16 en vuelo tras 3 detenciones, medido). Y no hace falta un PDF enorme.
+`processPdf` detuvo el hilo 8 segundos con un PDF de 200 páginas y 0,7 MB. Un programa de
+`/codigo` que gasta su CPU detiene también al Worker principal en workerd local. Por eso el
+limitador lleva un pulso, que marca cada temporizador suyo que corre. Un salto de más de
+`UMBRAL_DETENCION_MS` (1500) en el pulso es una detención, deja una línea `cmf_hilo_detenido`,
+y abre una cuarentena de `CUARENTENA_MS` (2000) en la que no se barre a nadie. En ese rato los
+vivos renuevan su señal y los muertos no. El umbral tiene que ser menor que las 2 gracias, o
+una detención capaz de vencer una señal pasaría sin verse. La cola tiene además un tope de 200
+(`MAX_COLA`). Cada puesto sondea cada 50 ms, y con 10000 en cola el hilo quedaba ocupado más de
+5 segundos seguidos y nadie entraba. La que no cabe falla al instante. Regla. **una señal de
+vida mide 2 cosas a la vez, si el dueño vive y si el reloj corrió**, y hay que separar la
+segunda antes de creerle a la primera. Lo que sigue abierto, y es anterior a todo esto. Cuando
+la CMF responde el desafío anti-bot, `resolverChallenge` entrega la respuesta final sin leer, y
+el cuerpo se baja con el cupo ya devuelto. El revisor midió 12 cuerpos bajando a la vez con
+tope de 4. Verificado en workerd con el arnés de la revisión
 (`C:\dev\cmf-mcp-plazos-revision3\workerd\abandono.mjs`, que usa miniflare y atiende la
 salida del Worker con una función local). Los 3 escenarios, cupo tomado, puesto en cola y
 `Promise.all`, dejaban la instancia sin cupos, y ahora los recupera. En la suite, «morir» se
