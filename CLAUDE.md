@@ -899,10 +899,18 @@ una detención capaz de vencer una señal pasaría sin verse. La cola tiene adem
 (`MAX_COLA`). Cada puesto sondea cada 50 ms, y con 10000 en cola el hilo quedaba ocupado más de
 5 segundos seguidos y nadie entraba. La que no cabe falla al instante. Regla. **una señal de
 vida mide 2 cosas a la vez, si el dueño vive y si el reloj corrió**, y hay que separar la
-segunda antes de creerle a la primera. Lo que sigue abierto, y es anterior a todo esto. Cuando
-la CMF responde el desafío anti-bot, `resolverChallenge` entrega la respuesta final sin leer, y
-el cuerpo se baja con el cupo ya devuelto. El revisor midió 12 cuerpos bajando a la vez con
-tope de 4. Verificado en workerd con el arnés de la revisión
+segunda antes de creerle a la primera. La misma revisión encontró un defecto anterior a todo
+esto, que se cerró ese día. Cuando la CMF respondía el desafío anti-bot, `resolverChallenge`
+entregaba la respuesta de la consulta repetida sin leer. `fetchCmf` devolvía el cupo ahí y el
+cuerpo se bajaba después, fuera del tope (12 cuerpos a la vez con tope de 4, medido). Y las
+cookies de esa respuesta no quedaban en el jar, así que el flujo del captcha perdía su cookie
+de sesión cuando la imagen llegaba tras un desafío. Ahora la respuesta repetida se trata igual
+que una primera respuesta. su cuerpo se lee entero dentro de `resolverChallenge` y sus cookies
+quedan en el jar. Regla. **el cupo cubre la respuesta entera, y `fetchCmf` nunca entrega un
+cuerpo sin leer.** Lo que eso cambia para quien llama. un cuerpo que se cuelga tras el desafío
+ya no le revienta en la mano al leerlo; vence dentro de la consulta, con sus 3 intentos, y por
+la salida chilena cuenta como proxy caído. Lo vigila `test/cuerpo-sin-fin.test.ts`. Verificado
+en workerd con el arnés de la revisión
 (`C:\dev\cmf-mcp-plazos-revision3\workerd\abandono.mjs`, que usa miniflare y atiende la
 salida del Worker con una función local). Los 3 escenarios, cupo tomado, puesto en cola y
 `Promise.all`, dejaban la instancia sin cupos, y ahora los recupera. En la suite, «morir» se
