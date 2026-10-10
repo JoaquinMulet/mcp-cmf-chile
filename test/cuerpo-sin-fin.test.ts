@@ -129,15 +129,21 @@ test(`${TOPE} cuerpos que nunca terminan devuelven su cupo al vencer el plazo, c
 test("un cuerpo que tarda más que el plazo pero sigue llegando se entrega completo", async () => {
   // El plazo es de silencio, no del total. Un documento grande por un enlace
   // lento tarda más que el plazo y tiene que llegar (lección 36).
-  const env = { CMF_RATE_LIMIT_MS: "0", CMF_UPSTREAM_TIMEOUT_MS: "400" };
-  const TRAMOS = 8;
+  //
+  // Con plazo de 1500 ms y un tramo cada 300. Con 400 y 60 esta prueba dio
+  // rojo con la máquina al 100 por ciento, porque la descarga entera pasó de
+  // los 4 segundos del plazo total (10 de octubre de 2026). Ahora el silencio
+  // tolera 5 veces la separación, y el total es de 15 segundos.
+  const PLAZO_MS = 1500;
+  const env = { CMF_RATE_LIMIT_MS: "0", CMF_UPSTREAM_TIMEOUT_MS: String(PLAZO_MS) };
+  const TRAMOS = 6;
   await conRed(
     () => () =>
       new Response(
         new ReadableStream<Uint8Array>({
           async start(c) {
             for (let i = 0; i < TRAMOS; i++) {
-              await tras(60, null);
+              await tras(300, null);
               c.enqueue(new TextEncoder().encode(`tramo${i};`));
             }
             c.close();
@@ -149,7 +155,7 @@ test("un cuerpo que tarda más que el plazo pero sigue llegando se entrega compl
       const res = await fetchCmf("https://www.cmfchile.cl/documento-grande", {}, env);
       const texto = await res.text();
       assert.equal(texto.split(";").length - 1, TRAMOS, texto);
-      assert.ok(Date.now() - inicio > 400, "la descarga tiene que durar más que el plazo para probar algo");
+      assert.ok(Date.now() - inicio > PLAZO_MS, "la descarga tiene que durar más que el plazo para probar algo");
     },
   );
 });
@@ -453,4 +459,46 @@ test(`tras el desafío anti-bot, el cuerpo se baja con el cupo tomado. nunca má
     },
   );
   assert.equal(maximo, TOPE, `máximo de cuerpos bajando a la vez. ${maximo}`);
+});
+
+// Los 2 que siguen los encontró la quinta revisión adversarial, el 10 de
+// octubre de 2026, y son anteriores a todo el trabajo del limitador.
+test("si la consulta repetida vuelve a ser el desafío, es un error y no un dato", async () => {
+  // La CMF no aceptó la cookie. Antes la página del desafío llegaba a la tool
+  // como si fuera la respuesta, y el parser la leía como una página sin datos.
+  const env = { CMF_RATE_LIMIT_MS: "0" };
+  await conRed(
+    () => redConDesafio(conCookie, () => new Response(DESAFIO)),
+    async () => {
+      const fin = await fetchCmf("https://www.cmfchile.cl/insiste.php?token=secreto", {}, env).then(
+        (r) => r.text().then((t) => `devolvió ${r.status} con ${t.length} caracteres`),
+        (e) => `lanzó. ${(e as Error).message}`,
+      );
+      assert.match(fin, /^lanzó\. .*desafío anti-bot.*https:\/\/www\.cmfchile\.cl\/insiste\.php\)/);
+      assert.ok(!fin.includes("secreto"), fin);
+    },
+  );
+});
+
+test("tras el desafío, la consulta repetida conserva las cookies que traía quien llama", async () => {
+  // El envío del código del captcha lleva la cookie de sesión de la imagen.
+  // La consulta repetida la reemplazaba por la del desafío, y la CMF
+  // respondía «captcha incorrecto».
+  const env = { CMF_RATE_LIMIT_MS: "0" };
+  const cookiesQueLlegan: string[] = [];
+  await conRed(
+    () => (url, init) => {
+      cookiesQueLlegan.push(`${init.method ?? "GET"} ${new Headers(init.headers).get("cookie") ?? ""}`);
+      return redConDesafio(conCookie, () => new Response("datos"))(url, init);
+    },
+    async () => {
+      const res = await fetchCmf("https://www.cmfchile.cl/enviar-codigo.php", { headers: { Cookie: "SVS_HE=sesion123" } }, env);
+      assert.equal(await res.text(), "datos");
+    },
+  );
+  assert.deepEqual(cookiesQueLlegan, [
+    "GET SVS_HE=sesion123",
+    "POST SVS_HE=sesion123",
+    "GET SVS_HE=sesion123; cookiesession1=AAAA",
+  ]);
 });

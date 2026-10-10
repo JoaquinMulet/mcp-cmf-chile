@@ -1,4 +1,4 @@
-﻿import { resolverChallenge, crearCookieJar, UA_DEFAULT } from "./anti-bot.js";
+﻿import { resolverChallenge, crearCookieJar, conCookiesDelJar, UA_DEFAULT } from "./anti-bot.js";
 import { cacheHttp, cacheBinario } from "./cache.js";
 
 /** Entorno del servidor (Workers env o vacío en STDIO). */
@@ -534,8 +534,10 @@ export async function fetchCmf(
   // Solo el sitio web: la API (api.sbif.cl) y los demás hosts no reciben un
   // Accept de página que nadie verificó contra ellos.
   if (u.hostname === "www.cmfchile.cl") cabecerasDeNavegador(headers);
-  const cookie = jar.header(u);
-  if (cookie) headers.set("Cookie", cookie);
+  // Se suman a las que trae quien llama, no las reemplazan. Tras una
+  // redirección el jar ya trae la cookie del desafío, y reemplazar acá
+  // borraba la cookie de sesión de la consulta.
+  conCookiesDelJar(headers, jar, u);
 
   // El timeout configurado (env) debe aplicar también a los intentos del anti-bot
   const fetchConCfg = (u: string, i: RequestInit) => fetchConTimeout(u, i, cfg.upstreamTimeoutMs);
