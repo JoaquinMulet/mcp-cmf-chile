@@ -14,6 +14,15 @@ import { fetchCmf } from "../src/client/cmf-client.js";
 
 const LENTA_MS = 120;
 const TOPE = 4;
+/**
+ * Todas las consultas de este archivo dan a su cupo por muerto a los 5
+ * segundos sin señal de vida, y no a los 45 de fábrica. Así las pruebas de
+ * consultas muertas no esperan 45 segundos cada una. Y las de consultas vivas
+ * siguen probando lo que cuidan. con 45 segundos, ninguna detención de estas
+ * pruebas podría dar por muerto a un vivo, tuviera o no tuviera racha. La
+ * gracia de fábrica la prueba test/reloj-de-cloudflare.test.ts.
+ */
+const GRACIA_CORTA = { CMF_GRACIA_CUPO_MS: "5000" };
 
 type Respuesta = (url: string) => Response | undefined;
 
@@ -83,7 +92,7 @@ for (const [nombre, destino] of [
   test(`una redirección a ${nombre} se rechaza y no afloja el tope de ${TOPE} en vuelo`, async () => {
     // Sin espera entre turnos, para que el cupo se revise y se anote en el
     // mismo paso y lo único que pueda aflojar el tope sea la doble liberación.
-    const env = { CMF_RATE_LIMIT_MS: "0" };
+    const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0" };
     const maximo = await conRedLenta(redireccionA(destino), async () => {
       await assert.rejects(
         fetchCmf("https://www.cmfchile.cl/redirige", {}, env),
@@ -99,7 +108,7 @@ for (const [nombre, destino] of [
 // cupo se revisaba antes de esperar el turno y se anotaba después, así que
 // las consultas lanzadas juntas pasaban todas la revisión con el contador en 0.
 test(`10 consultas lanzadas juntas, con espera entre turnos, nunca pasan de ${TOPE} en vuelo`, async () => {
-  const env = { CMF_RATE_LIMIT_MS: "5" };
+  const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "5" };
   const maximo = await conRedLenta(
     () => undefined,
     () => lanzarLentas(10, env).then(() => {}),
@@ -113,7 +122,7 @@ test(`10 consultas lanzadas juntas, con espera entre turnos, nunca pasan de ${TO
 test(`2 ritmos distintos conviviendo comparten el tope de ${TOPE} en vuelo`, async () => {
   const maximo = await conRedLenta(
     () => undefined,
-    () => Promise.all([lanzarLentas(10, { CMF_RATE_LIMIT_MS: "0" }), lanzarLentas(10, { CMF_RATE_LIMIT_MS: "1" })]).then(() => {}),
+    () => Promise.all([lanzarLentas(10, { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0" }), lanzarLentas(10, { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "1" })]).then(() => {}),
   );
   assert.equal(maximo, TOPE, `máximo en vuelo. ${maximo}`);
 });
@@ -121,7 +130,7 @@ test(`2 ritmos distintos conviviendo comparten el tope de ${TOPE} en vuelo`, asy
 // La espera de cupo tenía una cola sin plazo. Un cupo perdido por un defecto
 // dejaba a toda consulta posterior esperando para siempre y en silencio.
 test("una consulta que no alcanza cupo dentro del plazo falla con un error que lo dice, y no toca el contador", async () => {
-  const env = { CMF_RATE_LIMIT_MS: "0" };
+  const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0" };
   await conRedLenta(
     () => undefined,
     async (avisos) => {
@@ -155,7 +164,7 @@ test("una consulta que no alcanza cupo dentro del plazo falla con un error que l
 // adversarial del 9 de octubre de 2026. en 3 segundos se liberaron cupos 12
 // veces y la consulta que esperaba no tomó ninguno.
 test("la cola de cupo respeta el orden de llegada, aunque otras consultas encadenen las suyas", async () => {
-  const env = { CMF_RATE_LIMIT_MS: "0" };
+  const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0" };
   await conRedLenta(
     () => undefined,
     async () => {
@@ -213,7 +222,7 @@ const redConPegadas =
 
 // Si un reintento no alcanza cupo, lo que ya se sabía de la CMF no se pierde.
 test("tras un 500, un reintento sin cupo conserva el 500 en el error", async () => {
-  const env = { CMF_RATE_LIMIT_MS: "0" };
+  const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0" };
   await conRedLenta(
     redConPegadas((url) => (url.includes("/cae") ? new Response("caída", { status: 500 }) : undefined)),
     async () => {
@@ -247,14 +256,14 @@ test("tras un bloqueo directo, un reintento por el proxy sin cupo entrega el blo
     async () => {
       const bloqueada = fetchCmf("https://www.cmfchile.cl/bloqueada", {}, env);
       await new Promise((r) => setTimeout(r, 300));
-      const ocupadas = ocuparCupos(1800, { CMF_RATE_LIMIT_MS: "0" });
+      const ocupadas = ocuparCupos(1800, { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0" });
       await yEsperar(ocupadas, async () => assert.equal((await bloqueada).status, 403));
     },
   );
 });
 
 test("las consultas que esperan cupo salen en el orden en que llegaron", async () => {
-  const env = { CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "15000" };
+  const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "15000" };
   const salidas: string[] = [];
   const anotar: Respuesta = (url) => {
     const m = /\/orden-(\w)/.exec(url);
@@ -288,7 +297,7 @@ test("una redirección no permitida que llega por la salida chilena es un error 
   const maximo = await conRedLenta(red, async (avisos) => {
     await assert.rejects(fetchCmf("https://www.cmfchile.cl/bloqueada", {}, env), /Host no permitido/);
     assert.ok(!avisos.some((a) => a.includes("proxy_fallo")), `no debe anotar un proxy caído. ${avisos.join(" | ")}`);
-    await lanzarLentas(10, { CMF_RATE_LIMIT_MS: "0" });
+    await lanzarLentas(10, { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0" });
   });
   assert.equal(maximo, TOPE, `máximo en vuelo. ${maximo}`);
 });
@@ -296,7 +305,7 @@ test("una redirección no permitida que llega por la salida chilena es un error 
 // La otra mitad de «exactamente una vez». Si la consulta lanza, el cupo se
 // devuelve en el catch. Sin esa devolución el máximo queda bajo el tope.
 test("una consulta que falla en la red devuelve su cupo", async () => {
-  const env = { CMF_RATE_LIMIT_MS: "0" };
+  const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0" };
   const red: Respuesta = (url) => {
     if (url.includes("/sin-red")) throw new TypeError("fetch failed");
     return undefined;
@@ -326,7 +335,7 @@ test("un proxy que falla en la red devuelve su cupo", async () => {
       const res = await fetchCmf(`https://www.cmfchile.cl/bloqueada${i}`, {}, env);
       assert.equal(res.status, 403);
     }
-    await lanzarLentas(10, { CMF_RATE_LIMIT_MS: "0" });
+    await lanzarLentas(10, { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0" });
   });
   assert.equal(maximo, TOPE, `máximo en vuelo. ${maximo}`);
 });
@@ -344,7 +353,7 @@ async function exigirCuposVivos(avisos: string[], env: Record<string, string>): 
 // señal de vida cada segundo, y sin esa renovación el limitador la daría por
 // muerta a los 5 segundos y dejaría pasar una quinta consulta.
 test("una consulta viva que tarda más que la gracia conserva su cupo", async () => {
-  const env = { CMF_RATE_LIMIT_MS: "0" };
+  const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0" };
   await conRedLenta(
     redConPegadas(() => undefined),
     async (avisos) => {
@@ -367,7 +376,7 @@ test("una consulta viva que tarda más que la gracia conserva su cupo", async ()
 // otras 4, y cada detención siguiente sumaba 4 más, sin techo. Convertir un
 // PDF de 200 a 400 páginas detiene el hilo ese tiempo.
 test("un hilo detenido 11 segundos no da por muerta a ninguna consulta viva", async () => {
-  const env = { CMF_RATE_LIMIT_MS: "0" };
+  const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0" };
   await conRedLenta(
     redConPegadas(() => undefined),
     async (avisos) => {
@@ -386,7 +395,7 @@ test("un hilo detenido 11 segundos no da por muerta a ninguna consulta viva", as
 });
 
 test("quien espera en la cola más de 2 segundos conserva su puesto", async () => {
-  const env = { CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "15000" };
+  const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "15000" };
   const salidas: string[] = [];
   const anotar: Respuesta = (url) => {
     const m = /\/paciente-(\w)/.exec(url);
@@ -415,7 +424,7 @@ test("quien espera en la cola más de 2 segundos conserva su puesto", async () =
 // cola puede estar llena de consultas muertas, y eso recién se sabe cuando
 // pasa la gracia de sus puestos.
 test("la cola de cupo tiene un tope de 1000, y la que no cabe falla tras esperar la gracia de la cola", async () => {
-  const env = { CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "15000" };
+  const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "15000" };
   await conRedLenta(redConPegadas(() => undefined), async (avisos) => {
     const ocupadas = ocuparCupos(6000, env);
     // Las 1000 de la cola se rinden solas a los 5 segundos, para no tener que atenderlas.
@@ -459,7 +468,7 @@ function lanzarMuertas(apis: ("setInterval" | "setTimeout")[], urls: string[], e
 }
 
 test("un cupo cuyo dueño murió vuelve solo, y queda un aviso en el log", async () => {
-  const env = { CMF_RATE_LIMIT_MS: "0" };
+  const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0" };
   await conRedLenta(redConMuertas, async (avisos) => {
     lanzarMuertas(
       ["setInterval"],
@@ -490,7 +499,7 @@ test("un cupo cuyo dueño murió vuelve solo, y queda un aviso en el log", async
 });
 
 test("quien murió esperando en la cola no frena a los que vienen detrás, ni se lleva un cupo", async () => {
-  const env = { CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "20000" };
+  const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "20000" };
   const salidas: string[] = [];
   const anotar: Respuesta = (url) => {
     if (url.includes("/muerta-en-cola")) salidas.push("la muerta salió a la red");
@@ -522,7 +531,7 @@ test("quien murió esperando en la cola no frena a los que vienen detrás, ni se
 // no se quedaba a esperar, la siguiente repetía lo mismo, sin fin. Bastaban 4
 // programas de /codigo que respondieran con sus llamadas pendientes.
 test("una cola llena de consultas muertas no deja a la instancia rechazando todo", async () => {
-  const env = { CMF_RATE_LIMIT_MS: "0" };
+  const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0" };
   await conRedLenta(redConMuertas, async () => {
     lanzarMuertas(
       ["setInterval", "setTimeout"],
@@ -547,7 +556,7 @@ test("una cola llena de consultas muertas no deja a la instancia rechazando todo
 // a una, cada una entraba directo por el cupo libre, veía el silencio y no
 // barría. Los 3 muertos no volvían nunca y la instancia quedaba con 1 cupo.
 test("3 cupos muertos vuelven aunque las consultas lleguen de a una y entren directo", async () => {
-  const env = { CMF_RATE_LIMIT_MS: "0" };
+  const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0" };
   await conRedLenta(redConMuertas, async (avisos) => {
     lanzarMuertas(
       ["setInterval"],
@@ -569,7 +578,7 @@ test("3 cupos muertos vuelven aunque las consultas lleguen de a una y entren dir
 // dueños de los cupos, que vencían un poco después. Si ese sondeo barriera,
 // daría por muertos a los 4 vivos.
 test("un sondeo que corre atrasado por una detención no barre a nadie", async () => {
-  const env = { CMF_RATE_LIMIT_MS: "0" };
+  const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0" };
   await conRedLenta(
     redConPegadas(() => undefined),
     async (avisos) => {
@@ -594,7 +603,7 @@ test("un sondeo que corre atrasado por una detención no barre a nadie", async (
 
 // Lo mismo para el barrido que deja quien entra directo, sin pasar por la cola.
 test("el barrido de quien entra directo tampoco barre si corre atrasado por una detención", async () => {
-  const env = { CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "15000", CMF_UPSTREAM_TIMEOUT_MS: "60000" };
+  const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "15000", CMF_UPSTREAM_TIMEOUT_MS: "60000" };
   await conRedLenta(
     redConPegadas(() => undefined),
     async (avisos) => {
@@ -622,7 +631,7 @@ test("el barrido de quien entra directo tampoco barre si corre atrasado por una 
 // sondeo atrasado no barrió. Decidir ahí es decidir sin saber si la cola está
 // llena de vivos o de muertos.
 test("tras una detención, quien espera fuera de una cola llena de muertas no se rinde con su sondeo atrasado", async () => {
-  const env = { CMF_RATE_LIMIT_MS: "0" };
+  const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0" };
   await conRedLenta(redConMuertas, async () => {
     lanzarMuertas(
       ["setInterval", "setTimeout"],
@@ -647,7 +656,7 @@ test("tras una detención, quien espera fuera de una cola llena de muertas no se
 // que las señales de vida vencidas de los dueños de los cupos. En Node quedaban
 // 7 en vuelo con tope de 4, y en workerd 8, sin ninguna consulta muerta.
 test("una consulta que nace al terminar una detención no da por muertos a los vivos", async () => {
-  const env = { CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "20000" };
+  const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "20000" };
   await conRedLenta(
     redConPegadas(() => undefined),
     async (avisos) => {

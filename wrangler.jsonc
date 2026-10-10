@@ -22,6 +22,11 @@
     "CMF_MAX_ROWS": "500",
     "CMF_UPSTREAM_TIMEOUT_MS": "12000",
     "CMF_ESPERA_CUPO_MS": "120000",
+    // Sin senal de vida por este tiempo, una consulta con cupo se da por
+    // muerta y su cupo vuelve. Tiene que ser mas largo que la detencion mas
+    // larga que el reloj de Workers esconde, y el tope de CPU de una
+    // peticion es de 30 segundos. El minimo que se acepta es 5000.
+    "CMF_GRACIA_CUPO_MS": "45000",
     "CMF_REINTENTO_403_MS": "6000",
     // Salida chilena. www.cmfchile.cl rechaza las IP de salida de
     // Cloudflare, asi que tras un 403 o un 520 la consulta se repite por

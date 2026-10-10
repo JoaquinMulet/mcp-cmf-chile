@@ -19,6 +19,8 @@ export interface CmfEnv {
   CMF_UPSTREAM_TIMEOUT_MS?: string;
   /** Cuánto espera una consulta por un cupo del limitador antes de fallar. */
   CMF_ESPERA_CUPO_MS?: string;
+  /** Sin señal de vida por este tiempo, quien tiene un cupo se da por muerto. */
+  CMF_GRACIA_CUPO_MS?: string;
   /** Espera antes del único reintento tras un 403 de la CMF. 0 en pruebas. */
   CMF_REINTENTO_403_MS?: string;
   /** Salida chilena: URL https del proxy propio que consulta a www.cmfchile.cl desde Chile. */
@@ -47,6 +49,29 @@ const HOSTS_ALLOWLIST = new Set([
   "best-sbif-api.azurewebsites.net", // el servicio que alimenta best.cmfchile.cl, el sitio estadístico nuevo de la CMF
 ]);
 
+/**
+ * Sin señal de vida por este tiempo, quien tiene un cupo se da por muerto.
+ *
+ * Tiene que ser más largo que la detención más larga que el reloj esconde. En
+ * Cloudflare Date.now() no avanza mientras el Worker gasta CPU, y un
+ * temporizador atrasado ve la hora para la que estaba programado. Después de
+ * una detención cada petición se pone al día con su propio reloj, a su propio
+ * ritmo, y por un momento una va adelantada de otra en todo lo que duró la
+ * detención. Con 5000 ms, 6 segundos de CPU dieron por muertos a 4 cupos
+ * vivos (medido en producción el 10 de octubre de 2026, 3 corridas de 3).
+ *
+ * El tope de CPU de una petición es de 30 segundos, así que ninguna detención
+ * sola pasa de eso. Con 45000 queda margen. El costo. un cupo de una consulta
+ * muerta de verdad tarda ese tiempo en volver.
+ */
+const GRACIA_CUPO_DE_FABRICA_MS = 45000;
+/**
+ * Lo menos que se le puede poner. Con menos, las consultas vivas se dan por
+ * muertas en workerd local, donde el reloj sí avanza y una señal de vida
+ * tarda hasta 1 segundo.
+ */
+const GRACIA_CUPO_MINIMA_MS = 5000;
+
 const configDefault = {
   rateLimitMs: 1100,
   cacheTtlS: 900,
@@ -59,6 +84,7 @@ const configDefault = {
   // una consulta de 90000 mucho más. Con los 4 cupos así, las demás fallan a
   // los 120 segundos sin que haya ningún cupo perdido.
   esperaCupoMs: 120000,
+  graciaCupoMs: GRACIA_CUPO_DE_FABRICA_MS,
 };
 
 /** Valores ilegibles ya avisados, para no repetir el aviso en cada consulta. */
@@ -110,6 +136,7 @@ function config(env: CmfEnv) {
     cacheTtlS: enteroDeEnv("CMF_CACHE_TTL_S", env.CMF_CACHE_TTL_S, configDefault.cacheTtlS),
     maxRows: enteroDeEnv("CMF_MAX_ROWS", env.CMF_MAX_ROWS, configDefault.maxRows),
     esperaCupoMs: enteroDeEnv("CMF_ESPERA_CUPO_MS", env.CMF_ESPERA_CUPO_MS, configDefault.esperaCupoMs, 1),
+    graciaCupoMs: enteroDeEnv("CMF_GRACIA_CUPO_MS", env.CMF_GRACIA_CUPO_MS, configDefault.graciaCupoMs, GRACIA_CUPO_MINIMA_MS),
     // Un plazo de 0 vence antes de que nada responda, así que parte en 1.
     upstreamTimeoutMs: enteroDeEnv("CMF_UPSTREAM_TIMEOUT_MS", env.CMF_UPSTREAM_TIMEOUT_MS, configDefault.upstreamTimeoutMs, 1),
   };
@@ -118,6 +145,8 @@ function config(env: CmfEnv) {
 /** Un cupo tomado. `visto` es la última señal de vida de su dueño. */
 interface Cupo {
   visto: number;
+  /** Cuánto puede pasar sin señal de vida antes de darlo por muerto. Lo fija su dueño. */
+  gracia: number;
   latido?: ReturnType<typeof setInterval>;
 }
 
@@ -129,8 +158,7 @@ interface Puesto {
 
 /** Cada cuánto renueva su señal de vida quien tiene un cupo. */
 const LATIDO_MS = 1000;
-/** Sin señal de vida por este tiempo, el dueño de un cupo se da por muerto. */
-const GRACIA_CUPO_MS = 5000;
+
 /** Cada cuánto mira la cola quien espera un cupo, y renueva su señal. */
 const SONDEO_COLA_MS = 50;
 /** Sin señal de vida por este tiempo, quien esperaba en la cola se da por muerto. */
@@ -242,7 +270,7 @@ class RateLimiter {
    * Si pasan `esperaCupoMs` sin cupo, lanza. Quien recibe ese error no tomó
    * cupo.
    */
-  async esperar(host: string, minMs: number, esperaCupoMs: number): Promise<Cupo> {
+  async esperar(host: string, minMs: number, esperaCupoMs: number, graciaCupoMs: number): Promise<Cupo> {
     // El cupo se toma en el mismo paso en que se revisa, antes de esperar el
     // turno. Anotarlo después de la espera dejaba pasar la revisión a todas
     // las llamadas lanzadas juntas, con el contador todavía en 0 (10 en vuelo
@@ -250,10 +278,10 @@ class RateLimiter {
     // nadie entra directo, aunque haya un cupo libre.
     let cupo: Cupo;
     if (this.tomados.size < this.maxInflight && this.cola.length === 0) {
-      cupo = this.tomar();
+      cupo = this.tomar(graciaCupoMs);
       this.vigilar();
     } else {
-      cupo = await this.hacerCola(host, esperaCupoMs);
+      cupo = await this.hacerCola(host, esperaCupoMs, graciaCupoMs);
     }
     // El turno se RESERVA antes de esperar. Si se calculara la espera y
     // recién después se anotara la hora, 5 llamadas lanzadas juntas
@@ -275,8 +303,8 @@ class RateLimiter {
     this.tomados.delete(cupo);
   }
 
-  private tomar(): Cupo {
-    const cupo: Cupo = { visto: Date.now() };
+  private tomar(gracia: number): Cupo {
+    const cupo: Cupo = { visto: Date.now(), gracia };
     const racha = new Racha(LATIDO_MS);
     cupo.latido = setInterval(() => {
       const ahora = Date.now();
@@ -321,7 +349,7 @@ class RateLimiter {
     const ahora = Date.now();
     if (ahora < this.vigiaHasta) return;
     let haySospechosos = false;
-    for (const cupo of this.tomados) haySospechosos ||= ahora - cupo.visto > GRACIA_CUPO_MS;
+    for (const cupo of this.tomados) haySospechosos ||= ahora - cupo.visto > cupo.gracia;
     if (!haySospechosos) return;
     // Si la petición que lo deja muere antes, el vigía muere con ella, y pasado
     // este plazo otra consulta puede dejar el suyo.
@@ -345,7 +373,7 @@ class RateLimiter {
     if (ahora - this.ultimoBarrido < SONDEO_COLA_MS / 2) return;
     this.ultimoBarrido = ahora;
     for (const cupo of this.tomados) {
-      if (ahora - cupo.visto <= GRACIA_CUPO_MS) continue;
+      if (ahora - cupo.visto <= cupo.gracia) continue;
       this.liberar(cupo);
       console.warn(JSON.stringify({ cmf_cupo_recuperado: { sin_senal_ms: ahora - cupo.visto, en_vuelo: this.tomados.size } }));
     }
@@ -366,7 +394,7 @@ class RateLimiter {
    * El plazo existe porque sin él una instancia sin cupos dejaba a toda
    * consulta esperando para siempre y sin rastro.
    */
-  private async hacerCola(host: string, esperaCupoMs: number): Promise<Cupo> {
+  private async hacerCola(host: string, esperaCupoMs: number, graciaCupoMs: number): Promise<Cupo> {
     const limite = Date.now() + esperaCupoMs;
     // Nace afuera. Entra de inmediato si hay lugar.
     const puesto: Puesto = { visto: Date.now(), fuera: true };
@@ -384,7 +412,7 @@ class RateLimiter {
       if (puesto.fuera) this.entrar(puesto, yaBarrio, host);
       if (this.cola[0] === puesto && this.tomados.size < this.maxInflight) {
         this.cola.shift();
-        return this.tomar();
+        return this.tomar(graciaCupoMs);
       }
       if (ahora >= limite) this.rendirse(puesto, host, esperaCupoMs);
     }
@@ -633,7 +661,7 @@ export async function fetchCmf(
     trasEspera403 = false;
     let cupo: Cupo;
     try {
-      cupo = await limitador.esperar(u.hostname, cfg.rateLimitMs, cfg.esperaCupoMs);
+      cupo = await limitador.esperar(u.hostname, cfg.rateLimitMs, cfg.esperaCupoMs, cfg.graciaCupoMs);
     } catch (sinCupo) {
       // Un reintento que no alcanza cupo no borra lo que ya se sabía de la
       // CMF. El bloqueo directo se entrega, y el error anterior viaja en el
