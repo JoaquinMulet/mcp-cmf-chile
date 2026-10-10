@@ -103,14 +103,20 @@ for (const valor of ["-5", "0.5", " ", "0", "3000000000", "1e2", "0x40", "12000m
 // esperar 60 segundos. El efecto del valor enorme lo mira la prueba de abajo.
 for (const variable of ["CMF_RATE_LIMIT_MS", "CMF_REINTENTO_403_MS"]) {
   test(`${variable} acepta 60000 y no acepta 60001`, async () => {
-    const consultar = (valor: string) =>
+    // Cada valor va a un host propio. Un ritmo de 60000 que sí vale reserva el
+    // turno siguiente de su host a 60 segundos. Con los 2 valores en el mismo
+    // host, esta prueba esperaba ese minuto entero (10 de octubre de 2026).
+    const consultar = (valor: string, host: string) =>
       conRedLenta(1, async () => {
-        const res = await fetchCmf(`https://www.best-cmf.cl/tope-${variable}-${valor}`, {}, { CMF_RATE_LIMIT_MS: "0", [variable]: valor });
+        const res = await fetchCmf(`https://${host}/tope-${variable}-${valor}`, {}, { CMF_RATE_LIMIT_MS: "0", [variable]: valor });
         assert.equal(await res.text(), "ok");
       });
-    const avisosDe = async (valor: string) => (await consultar(valor)).avisos.filter((a) => a.includes(variable)).length;
-    assert.equal(await avisosDe("60001"), 1, "60001 tiene que dejar aviso");
-    assert.equal(await avisosDe("60000"), 0, "60000 no deja aviso");
+    const avisosDe = async (valor: string, host: string) =>
+      (await consultar(valor, host)).avisos.filter((a) => a.includes(variable)).length;
+    const inicio = Date.now();
+    assert.equal(await avisosDe("60001", "www.best-cmf.cl"), 1, "60001 tiene que dejar aviso");
+    assert.equal(await avisosDe("60000", "conocetudeuda.cmfchile.cl"), 0, "60000 no deja aviso");
+    assert.ok(Date.now() - inicio < 5000, `la prueba esperó un turno. tardó ${Date.now() - inicio} ms`);
   });
 }
 

@@ -164,6 +164,36 @@ const goteo = (sigue: () => boolean, alCancelar?: () => void) =>
     cancel: alCancelar,
   });
 
+test("un TimeoutError ajeno que viene del proxy sigue contando como proxy caído", async () => {
+  // El plazo total del cuerpo sube tal cual, y se reconoce por una marca
+  // propia. Si se reconociera por su nombre, cualquier TimeoutError que
+  // lanzara la red hacia el proxy se saltaría el manejo del proxy caído.
+  const env = {
+    CMF_RATE_LIMIT_MS: "0",
+    CMF_REINTENTO_403_MS: "0",
+    CMF_PROXY_URL: "https://salida-ajeno.example.cl/",
+    CMF_PROXY_TOKEN: "token-de-prueba",
+  };
+  const avisos: string[] = [];
+  const avisoOriginal = console.warn;
+  console.warn = (linea: unknown) => void avisos.push(String(linea));
+  try {
+    await conRed(
+      () => (url) => {
+        if (new URL(url).hostname.endsWith(".example.cl")) throw new DOMException("The operation timed out", "TimeoutError");
+        return new Response("<html><title>403 Forbidden</title></html>", { status: 403 });
+      },
+      async () => {
+        const res = await fetchCmf("https://www.cmfchile.cl/ajeno.php", {}, env);
+        assert.equal(res.status, 403);
+        assert.ok(avisos.some((a) => a.includes("proxy_fallo")), `no anotó el proxy caído. ${avisos.join(" | ")}`);
+      },
+    );
+  } finally {
+    console.warn = avisoOriginal;
+  }
+});
+
 test("un goteo por la salida chilena sale como plazo total, y el proxy no se da por caído", async () => {
   // El proxy está sano y es la CMF la que no termina. Tratarlo como proxy
   // caído entregaba un 403 y mandaba las consultas siguientes a la CMF
