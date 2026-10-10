@@ -112,31 +112,64 @@ function config(env: CmfEnv) {
   };
 }
 
+/** Un cupo tomado. `visto` es la última señal de vida de su dueño. */
+interface Cupo {
+  visto: number;
+  latido?: ReturnType<typeof setInterval>;
+}
+
+/** Cada cuánto renueva su señal de vida quien tiene un cupo. */
+const LATIDO_MS = 1000;
+/** Sin señal de vida por este tiempo, el dueño de un cupo se da por muerto. */
+const GRACIA_CUPO_MS = 10000;
+/** Cada cuánto mira la cola quien espera un cupo, y renueva su señal. */
+const SONDEO_COLA_MS = 50;
+/** Sin señal de vida por este tiempo, quien esperaba en la cola se da por muerto. */
+const GRACIA_COLA_MS = 2000;
+
 /**
  * Rate limiter por host: cola con plazo y max in-flight. Hay UNO por proceso.
  * El ritmo llega en cada espera, porque el tope en vuelo es de la instancia y
  * no de un valor de configuración. Con un limitador por ritmo, 2 valores de
  * CMF_RATE_LIMIT_MS conviviendo dejaban 8 consultas en vuelo (medido el 9 de
  * octubre de 2026).
+ *
+ * NADIE LE ENTREGA NADA A OTRA PETICIÓN. En Cloudflare Workers este objeto lo
+ * comparten todas las peticiones de la instancia, y cuando una petición
+ * termina, sus promesas y sus temporizadores pendientes se abandonan. Una
+ * consulta abandonada no llega nunca a liberar(). Medido en workerd el 9 de
+ * octubre de 2026. con un contador simple, una consulta abandonada con el
+ * cupo tomado lo perdía para siempre. Y con una cola que entregaba el cupo al
+ * primero, el cupo iba a parar a consultas ya muertas. 4 cupos así dejaban la
+ * instancia sin poder consultar a la CMF hasta que Cloudflare la reciclara.
+ *
+ * Por eso cada cupo y cada puesto en la cola llevan una señal de vida, `visto`,
+ * que renueva su propio dueño con sus propios temporizadores. Si el dueño
+ * muere, sus temporizadores mueren con él, la señal envejece, y cualquier otra
+ * consulta que pase barre el cupo o el puesto. Cada consulta toma su cupo ella
+ * misma, en su propio contexto.
  */
 class RateLimiter {
   private ultimo = new Map<string, number>();
-  private inflight = 0;
-  /** Quienes esperan cupo, en orden de llegada. Cada uno es la función que se lo entrega. */
-  private cola: Array<() => void> = [];
+  private tomados = new Set<Cupo>();
+  /** Quienes esperan cupo, en orden de llegada. */
+  private cola: Array<{ visto: number }> = [];
   constructor(private maxInflight = 4) {}
 
   /**
-   * Espera cupo y turno. Si pasan `esperaCupoMs` sin cupo, lanza. Quien recibe
-   * ese error no tomó cupo, así que no llama a liberar().
+   * Espera cupo y turno, y entrega el cupo, que después se pasa a liberar().
+   * Si pasan `esperaCupoMs` sin cupo, lanza. Quien recibe ese error no tomó
+   * cupo.
    */
-  async esperar(host: string, minMs: number, esperaCupoMs: number): Promise<void> {
+  async esperar(host: string, minMs: number, esperaCupoMs: number): Promise<Cupo> {
+    this.barrer();
     // El cupo se toma en el mismo paso en que se revisa, antes de esperar el
     // turno. Anotarlo después de la espera dejaba pasar la revisión a todas
     // las llamadas lanzadas juntas, con el contador todavía en 0 (10 en vuelo
-    // con tope de 4, medido el 9 de octubre de 2026).
-    if (this.inflight < this.maxInflight) this.inflight++;
-    else await this.hacerCola(host, esperaCupoMs);
+    // con tope de 4, medido el 9 de octubre de 2026). Y con gente en la cola
+    // nadie entra directo, aunque haya un cupo libre.
+    const cupo =
+      this.tomados.size < this.maxInflight && this.cola.length === 0 ? this.tomar() : await this.hacerCola(host, esperaCupoMs);
     // El turno se RESERVA antes de esperar. Si se calculara la espera y
     // recién después se anotara la hora, 5 llamadas lanzadas juntas
     // leerían la misma hora vieja, esperarían lo mismo y saldrían en
@@ -148,44 +181,75 @@ class RateLimiter {
     this.ultimo.set(host, turno);
     const falta = turno - Date.now();
     if (falta > 0) await new Promise((r) => setTimeout(r, falta));
+    return cupo;
+  }
+
+  /** Devuelve un cupo. Devolver 2 veces el mismo, o uno que ya se barrió, no hace nada. */
+  liberar(cupo: Cupo): void {
+    clearInterval(cupo.latido);
+    this.tomados.delete(cupo);
+  }
+
+  private tomar(): Cupo {
+    const cupo: Cupo = { visto: Date.now() };
+    cupo.latido = setInterval(() => {
+      cupo.visto = Date.now();
+    }, LATIDO_MS);
+    // En Node, para que un cupo sin devolver no deje vivo el proceso. En
+    // Workers un temporizador es un número y no tiene unref.
+    (cupo.latido as { unref?: () => void }).unref?.();
+    this.tomados.add(cupo);
+    return cupo;
+  }
+
+  /** Saca los cupos y los puestos de la cola cuyo dueño dejó de dar señales de vida. */
+  private barrer(): void {
+    const ahora = Date.now();
+    for (const cupo of this.tomados) {
+      if (ahora - cupo.visto <= GRACIA_CUPO_MS) continue;
+      this.liberar(cupo);
+      console.warn(JSON.stringify({ cmf_cupo_recuperado: { sin_senal_ms: ahora - cupo.visto, en_vuelo: this.tomados.size } }));
+    }
+    if (this.cola.some((puesto) => ahora - puesto.visto > GRACIA_COLA_MS)) {
+      this.cola = this.cola.filter((puesto) => ahora - puesto.visto <= GRACIA_COLA_MS);
+    }
   }
 
   /**
-   * Espera en la cola hasta que liberar() le entregue un cupo. La cola va en
-   * orden de llegada. Antes era un sondeo cada 100 ms, y una cadena de
-   * consultas seguidas devolvía su cupo y lo volvía a tomar en el mismo paso,
-   * así que quien sondeaba podía no entrar nunca.
+   * Espera en la cola, en orden de llegada, y toma el cupo cuando es el
+   * primero y hay uno libre. Quien espera mira la cola cada SONDEO_COLA_MS con
+   * su propio temporizador. Antes de la cola el sondeo no tenía orden, y una
+   * cadena de consultas seguidas devolvía su cupo y lo volvía a tomar en el
+   * mismo paso, así que quien sondeaba podía no entrar nunca.
    *
-   * El plazo existe porque un cupo perdido por un defecto dejaba a toda
-   * consulta posterior esperando para siempre y sin rastro.
+   * El plazo existe porque sin él una instancia sin cupos dejaba a toda
+   * consulta esperando para siempre y sin rastro.
    */
-  private hacerCola(host: string, esperaCupoMs: number): Promise<void> {
-    return new Promise<void>((resolver, rechazar) => {
-      const recibir = () => {
-        clearTimeout(plazo);
-        resolver();
-      };
-      const plazo = setTimeout(() => {
-        this.cola.splice(this.cola.indexOf(recibir), 1);
-        console.warn(
-          JSON.stringify({ cmf_cupo: { en_vuelo: this.inflight, en_cola: this.cola.length, espera_ms: esperaCupoMs, host } }),
-        );
-        rechazar(
-          new Error(
-            `El servidor tiene sus ${this.maxInflight} consultas a la CMF ocupadas y esta no alcanzó cupo en ${esperaCupoMs} ms. Reintente en unos minutos.`,
-          ),
-        );
-      }, esperaCupoMs);
-      this.cola.push(recibir);
-    });
-  }
-
-  liberar(): void {
-    // Si alguien espera, el cupo pasa directo a sus manos y el contador no se
-    // mueve. Así nadie que llegue después se lo lleva antes.
-    const siguiente = this.cola.shift();
-    if (siguiente) siguiente();
-    else this.inflight--;
+  private async hacerCola(host: string, esperaCupoMs: number): Promise<Cupo> {
+    const limite = Date.now() + esperaCupoMs;
+    const puesto = { visto: Date.now() };
+    this.cola.push(puesto);
+    for (;;) {
+      await new Promise((r) => setTimeout(r, Math.max(1, Math.min(SONDEO_COLA_MS, limite - Date.now()))));
+      const ahora = Date.now();
+      puesto.visto = ahora;
+      this.barrer();
+      // Si este hilo estuvo detenido más que la gracia, otro barrió el puesto.
+      // Vuelve al final de la cola.
+      if (!this.cola.includes(puesto)) this.cola.push(puesto);
+      if (this.cola[0] === puesto && this.tomados.size < this.maxInflight) {
+        this.cola.shift();
+        return this.tomar();
+      }
+      if (ahora < limite) continue;
+      this.cola = this.cola.filter((otro) => otro !== puesto);
+      console.warn(
+        JSON.stringify({ cmf_cupo: { en_vuelo: this.tomados.size, en_cola: this.cola.length, espera_ms: esperaCupoMs, host } }),
+      );
+      throw new Error(
+        `El servidor tiene sus ${this.maxInflight} consultas a la CMF ocupadas y esta no alcanzó cupo en ${esperaCupoMs} ms. Reintente en unos minutos.`,
+      );
+    }
   }
 }
 
@@ -241,6 +305,9 @@ async function fetchConTimeout(
  * se detiene, así que quien recibe una respuesta la lee de corrido.
  */
 const PLAZOS_POR_CUERPO = 10;
+/** Los errores de plazo total que creó este cliente. fetchCmf los reconoce por acá. */
+const plazosTotalesVencidos = new WeakSet<object>();
+
 function conPlazoDeCuerpo(res: Response, url: string, ctrl: AbortController, timeoutMs: number): Response {
   // La red entrega estados que `new Response` rechaza con RangeError. Esas
   // respuestas pasan sin envolver.
@@ -262,12 +329,14 @@ function conPlazoDeCuerpo(res: Response, url: string, ctrl: AbortController, tim
               // Sin la query, que puede llevar una clave.
               const u = new URL(url);
               const pagina = `${u.origin}${u.pathname}`;
-              rechazar(
-                venceElTotal
-                  ? // No es AbortError a propósito, para que fetchCmf no lo reintente.
-                    new DOMException(`La CMF no terminó de enviar el cuerpo de la respuesta en ${totalMs} ms (${pagina})`, "TimeoutError")
-                  : new DOMException(`La CMF dejó de enviar el cuerpo de la respuesta por más de ${timeoutMs} ms (${pagina})`, "AbortError"),
-              );
+              if (!venceElTotal) {
+                rechazar(new DOMException(`La CMF dejó de enviar el cuerpo de la respuesta por más de ${timeoutMs} ms (${pagina})`, "AbortError"));
+                return;
+              }
+              // No es AbortError a propósito, para que fetchCmf no lo reintente.
+              const total = new DOMException(`La CMF no terminó de enviar el cuerpo de la respuesta en ${totalMs} ms (${pagina})`, "TimeoutError");
+              plazosTotalesVencidos.add(total);
+              rechazar(total);
             },
             venceElTotal ? restoTotal : timeoutMs,
           );
@@ -386,8 +455,9 @@ export async function fetchCmf(
   for (let intento = 0; intento < 3; intento++) {
     if (intento > 0 && !trasEspera403) await new Promise((r) => setTimeout(r, 500 * 2 ** (intento - 1)));
     trasEspera403 = false;
+    let cupo: Cupo;
     try {
-      await limitador.esperar(u.hostname, cfg.rateLimitMs, cfg.esperaCupoMs);
+      cupo = await limitador.esperar(u.hostname, cfg.rateLimitMs, cfg.esperaCupoMs);
     } catch (sinCupo) {
       // Un reintento que no alcanza cupo no borra lo que ya se sabía de la
       // CMF. El bloqueo directo se entrega, y el error anterior viaja en el
@@ -405,11 +475,13 @@ export async function fetchCmf(
     try {
       res = await resolverChallenge(porProxy && salida ? salida.fetchFn : fetchConCfg, url, { ...init, headers }, jar);
     } catch (e) {
-      limitador.liberar();
+      limitador.liberar(cupo);
       // El plazo total del cuerpo. Quien no terminó es la CMF, venga directa o
       // por el proxy, que seguía entregando tramos. No se reintenta y el proxy
-      // no se da por caído.
-      if (e instanceof DOMException && e.name === "TimeoutError") throw e;
+      // no se da por caído. Se reconoce por su marca y no por su nombre, para
+      // que un TimeoutError ajeno que venga del proxy siga contando como proxy
+      // caído.
+      if (plazosTotalesVencidos.has(e as object)) throw e;
       if (porProxy && salida) {
         // Un proxy colgado o sin red es un proxy caído. No se le insiste.
         registrarSalida("proxy_fallo", 0, u);
@@ -425,7 +497,7 @@ export async function fetchCmf(
       if (intento < 2 && e instanceof DOMException && e.name === "AbortError") continue;
       throw e;
     }
-    limitador.liberar();
+    limitador.liberar(cupo);
     if (porProxy && salida && res.headers.has(MARCA_COLA) && intento < 2) {
       // El proxy está sano y pide esperar. Mandar esto a la CMF directa
       // sería sumar consultas justo cuando hay que bajar el ritmo.

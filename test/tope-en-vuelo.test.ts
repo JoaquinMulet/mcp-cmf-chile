@@ -8,7 +8,7 @@
  * pasaba a 5 para toda la instancia, sin ningún aviso.
  */
 import "./sin-red-real.js";
-import { test } from "node:test";
+import { mock, test } from "node:test";
 import assert from "node:assert/strict";
 import { fetchCmf } from "../src/client/cmf-client.js";
 
@@ -316,5 +316,99 @@ test("un proxy que falla en la red devuelve su cupo", async () => {
     }
     await lanzarLentas(10, { CMF_RATE_LIMIT_MS: "0" });
   });
+  assert.equal(maximo, TOPE, `máximo en vuelo. ${maximo}`);
+});
+
+// Una consulta viva y lenta conserva su cupo. Quien tiene un cupo renueva su
+// señal de vida cada segundo, y sin esa renovación el limitador la daría por
+// muerta a los 10 segundos y dejaría pasar una quinta consulta.
+test("una consulta viva que tarda más de 10 segundos conserva su cupo", async () => {
+  const env = { CMF_RATE_LIMIT_MS: "0" };
+  await conRedLenta(
+    redConPegadas(() => undefined),
+    async (avisos) => {
+      const ocupadas = ocuparCupos(11500, env);
+      await yEsperar(ocupadas, async () => {
+        await new Promise((r) => setTimeout(r, 10700));
+        await assert.rejects(
+          fetchCmf("https://api.sbif.cl/quinta", {}, { ...env, CMF_ESPERA_CUPO_MS: "200" }),
+          /no alcanz. cupo en 200 ms/,
+        );
+        assert.ok(!avisos.some((a) => a.includes("cmf_cupo_recuperado")), `avisos. ${avisos.join(" | ")}`);
+      });
+    },
+  );
+});
+
+// Las 2 pruebas que siguen van al final a propósito. Dejan consultas que no
+// terminan nunca, y eso es lo que simulan.
+//
+// En Cloudflare Workers el limitador es de módulo y lo comparten todas las
+// peticiones de la instancia. Cuando una petición termina, sus promesas y sus
+// temporizadores pendientes se abandonan. Medido en workerd por la revisión
+// adversarial del 9 de octubre de 2026. una consulta abandonada con un cupo
+// tomado, o con un puesto en la cola, lo perdía para siempre, y con 4 así la
+// instancia quedaba sin cupos hasta que Cloudflare la reciclara.
+//
+// Acá «morir» es eso mismo. los temporizadores que la consulta creó dejan de
+// correr (se crean con el reloj simulado de node:test y se descartan), y su
+// consulta a la red no responde nunca.
+const NUNCA = new Promise<Response>(() => {}) as unknown as Response;
+const redConMuertas: Respuesta = (url) => (url.includes("/muerta") ? NUNCA : undefined);
+
+/** Lanza consultas cuyos temporizadores no van a correr nunca. */
+function lanzarMuertas(apis: ("setInterval" | "setTimeout")[], urls: string[], env: Record<string, string>): void {
+  mock.timers.enable({ apis });
+  try {
+    for (const url of urls) void fetchCmf(url, {}, env).catch(() => {});
+  } finally {
+    mock.timers.reset();
+  }
+}
+
+test("un cupo cuyo dueño murió vuelve solo, y queda un aviso en el log", async () => {
+  const env = { CMF_RATE_LIMIT_MS: "0" };
+  await conRedLenta(redConMuertas, async (avisos) => {
+    lanzarMuertas(
+      ["setInterval"],
+      Array.from({ length: TOPE }, (_, i) => `https://www.cmfchile.cl/muerta${i}`),
+      env,
+    );
+    // Los 4 cupos están tomados por consultas muertas. Una consulta viva
+    // tiene que entrar cuando su señal de vida se da por perdida.
+    const res = await fetchCmf("https://api.sbif.cl/viva", {}, { ...env, CMF_ESPERA_CUPO_MS: "20000" });
+    assert.equal(res.status, 200);
+    const recuperados = avisos.filter((a) => a.includes("cmf_cupo_recuperado"));
+    assert.equal(recuperados.length, TOPE, `avisos. ${avisos.join(" | ")}`);
+  });
+  // Se recuperaron los 4, ni uno más ni uno menos.
+  const maximo = await conRedLenta(
+    () => undefined,
+    () => lanzarLentas(10, env).then(() => {}),
+  );
+  assert.equal(maximo, TOPE, `máximo en vuelo. ${maximo}`);
+});
+
+test("quien murió esperando en la cola no frena a los que vienen detrás, ni se lleva un cupo", async () => {
+  const env = { CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "20000" };
+  const salidas: string[] = [];
+  const anotar: Respuesta = (url) => {
+    if (url.includes("/muerta-en-cola")) salidas.push("la muerta salió a la red");
+    return undefined;
+  };
+  await conRedLenta(anotar, async () => {
+    const ocupadas = lanzarLentas(TOPE, env);
+    // Entra a la cola primero y muere ahí. Su sondeo no corre nunca más.
+    lanzarMuertas(["setTimeout"], ["https://www.cmfchile.cl/muerta-en-cola"], env);
+    await yEsperar(ocupadas, async () => {
+      const res = await fetchCmf("https://api.sbif.cl/detras-de-la-muerta", {}, { ...env, CMF_ESPERA_CUPO_MS: "8000" });
+      assert.equal(res.status, 200);
+    });
+    assert.deepEqual(salidas, []);
+  });
+  const maximo = await conRedLenta(
+    () => undefined,
+    () => lanzarLentas(10, env).then(() => {}),
+  );
   assert.equal(maximo, TOPE, `máximo en vuelo. ${maximo}`);
 });
