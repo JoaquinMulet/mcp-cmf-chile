@@ -98,6 +98,22 @@ for (const valor of ["-5", "0.5", " ", "0", "3000000000", "1e2", "0x40", "12000m
   });
 }
 
+// La frontera del tope de las pausas. 60000 vale y 60001 no. Acá se mira el
+// aviso y no el efecto, porque el efecto de una pausa de 60 segundos es
+// esperar 60 segundos. El efecto del valor enorme lo mira la prueba de abajo.
+for (const variable of ["CMF_RATE_LIMIT_MS", "CMF_REINTENTO_403_MS"]) {
+  test(`${variable} acepta 60000 y no acepta 60001`, async () => {
+    const consultar = (valor: string) =>
+      conRedLenta(1, async () => {
+        const res = await fetchCmf(`https://www.best-cmf.cl/tope-${variable}-${valor}`, {}, { CMF_RATE_LIMIT_MS: "0", [variable]: valor });
+        assert.equal(await res.text(), "ok");
+      });
+    const avisosDe = async (valor: string) => (await consultar(valor)).avisos.filter((a) => a.includes(variable)).length;
+    assert.equal(await avisosDe("60001"), 1, "60001 tiene que dejar aviso");
+    assert.equal(await avisosDe("60000"), 0, "60000 no deja aviso");
+  });
+}
+
 test("un ritmo enorme no se usa. no deja al host esperando un turno a 24 días", async () => {
   // 2147483647 cabe en un temporizador, pero como ritmo reserva el turno
   // siguiente del host 24,8 días adelante, con un cupo tomado mientras espera.

@@ -217,7 +217,8 @@ test("un cuerpo que gotea sin terminar nunca se corta al plazo total, sin reinte
   let gotea = true;
   try {
     await conRed(
-      () => () => {
+      () => (url) => {
+        if (url.includes("/sana")) return new Response("ok");
         consultas++;
         return new Response(goteo(() => gotea, () => void (cancelado = true)));
       },
@@ -234,6 +235,13 @@ test("un cuerpo que gotea sin terminar nunca se corta al plazo total, sin reinte
         assert.ok(Date.now() - inicio >= 1495, `cortó antes del plazo total, a los ${Date.now() - inicio} ms`);
         assert.equal(consultas, 1, "un goteo no se reintenta. cada intento ocuparía el cupo otro plazo total");
         assert.ok(cancelado, "el cuerpo que goteaba quedó abierto");
+        // El plazo total devuelve su cupo. Con 4 goteos a la vez, si cada uno
+        // se lo quedara, la consulta siguiente no encontraría ninguno.
+        await Promise.all(
+          Array.from({ length: TOPE }, (_, i) => fetchCmf(`https://www.cmfchile.cl/gotea${i}.php`, {}, env).catch(() => {})),
+        );
+        const sana = await fetchCmf("https://api.sbif.cl/sana", {}, { ...env, CMF_ESPERA_CUPO_MS: "300" });
+        assert.equal(await sana.text(), "ok");
       },
     );
   } finally {
