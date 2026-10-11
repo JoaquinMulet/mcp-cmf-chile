@@ -173,3 +173,37 @@ test("un puesto vivo que otra petición barrió por error vuelve a la cola, y su
     devolver();
   }
 });
+
+// La línea de cola llena sale 1 segundo después del primer rechazo, cuando la
+// ráfaga se cierra. Tiene que contar cómo estaba el limitador en ese primer
+// rechazo. Con la máquina cargada la cola ya se había vaciado al salir la
+// línea, y decía «en_cola 0» para una cola que estuvo llena (10 de octubre de
+// 2026, 1 corrida roja de 3 con la CPU ocupada).
+test("la línea de cola llena cuenta la cola del momento del primer rechazo, aunque después se vacíe", async () => {
+  const cliente = await clienteNuevo("linea-de-cola-llena");
+  const { devolver } = redSimulada();
+  try {
+    await conAvisos((avisos) =>
+      conRelojDeCloudflare(async (m) => {
+        // 4 con cupo y 1000 en la cola, que se rinden a los 3 segundos.
+        m.peticion("llena", () => {
+          for (let i = 0; i < TOPE; i++) lanzar(cliente, `ocupa${i}`, 600_000);
+          for (let i = 0; i < 1000; i++) lanzar(cliente, `en-cola${i}`, 100, { ...ENV, CMF_ESPERA_CUPO_MS: "3000" });
+        });
+        await m.avanzar(100);
+        // 3 que no caben. Las rechazan a los 2,6 segundos, con la cola todavía llena.
+        const rechazadas = m.peticion("no-caben", () => [0, 1, 2].map((i) => lanzar(cliente, `no-cabe${i}`, 100)));
+        await m.avanzar(2800);
+        for (const r of rechazadas) assert.match(r.fin ?? "sigue esperando", /1000 consultas esperando/);
+        assert.deepEqual(avisos.filter((a) => a.includes("cola_llena")), [], "la línea no sale antes de que cierre la ráfaga");
+        // A los 3 segundos la cola se vacía. La línea sale a los 3,6.
+        await m.avanzar(1200);
+        const lineas = avisos.filter((a) => a.includes("cola_llena"));
+        assert.equal(lineas.length, 1, lineas.join(" | "));
+        assert.deepEqual(JSON.parse(lineas[0]), { cmf_cupo: { motivo: "cola_llena", rechazadas: 3, en_vuelo: TOPE, en_cola: 1000, host: "api.sbif.cl" } });
+      }),
+    );
+  } finally {
+    devolver();
+  }
+});

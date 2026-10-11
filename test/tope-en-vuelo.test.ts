@@ -426,11 +426,14 @@ test("quien espera en la cola más de 2 segundos conserva su puesto", async () =
 test("la cola de cupo tiene un tope de 1000, y la que no cabe falla tras esperar la gracia de la cola", async () => {
   const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "15000" };
   await conRedLenta(redConPegadas(() => undefined), async (avisos) => {
-    // Los cupos quedan ocupados durante las 2 ráfagas, para que la cola no se mueva.
-    const ocupadas = ocuparCupos(9500, env);
-    // Las 1000 de la cola se rinden solas a los 5 segundos, para no tener que atenderlas.
+    // Los cupos quedan ocupados y la cola llena durante las 2 ráfagas. Con la
+    // CPU ocupada una ráfaga tarda varios segundos en ser rechazada, y con
+    // menos margen la segunda encontraba lugar y entraba (10 de octubre de
+    // 2026, 1 corrida roja de 6).
+    const ocupadas = ocuparCupos(16500, env);
+    // Las 1000 de la cola se rinden solas a los 14 segundos, para no tener que atenderlas.
     const enCola = Array.from({ length: 1000 }, (_, i) =>
-      fetchCmf(`https://www.cmfchile.cl/en-cola${i}`, {}, { ...env, CMF_ESPERA_CUPO_MS: "5000" }),
+      fetchCmf(`https://www.cmfchile.cl/en-cola${i}`, {}, { ...env, CMF_ESPERA_CUPO_MS: "14000" }),
     );
     await yEsperar(Promise.allSettled([ocupadas, ...enCola]), async () => {
       const inicio = Date.now();
@@ -447,21 +450,15 @@ test("la cola de cupo tiene un tope de 1000, y la que no cabe falla tras esperar
       const lineas = avisos.filter((a) => a.includes("cola_llena"));
       assert.equal(lineas.length, 1, `líneas de cola llena. ${lineas.join(" | ")}`);
       assert.deepEqual(JSON.parse(lineas[0]), { cmf_cupo: { motivo: "cola_llena", rechazadas: 25, en_vuelo: TOPE, en_cola: 1000, host: "api.sbif.cl" } });
-      // La ráfaga siguiente cuenta desde cero. Las 1000 de la cola ya se
-      // rindieron, así que se vuelve a llenar con otras tantas.
-      const otraVez = Array.from({ length: 1000 }, (_, i) =>
-        fetchCmf(`https://www.cmfchile.cl/otra-vez${i}`, {}, { ...env, CMF_ESPERA_CUPO_MS: "4000" }).catch(() => {}),
+      // La ráfaga siguiente cuenta desde cero. La cola sigue llena con las mismas 1000.
+      const segundos = await Promise.all(
+        Array.from({ length: 5 }, (_, i) => fetchCmf(`https://api.sbif.cl/tampoco-cabe${i}`, {}, env).then(() => "entró", (e) => (e as Error).message)),
       );
-      await yEsperar(Promise.all(otraVez), async () => {
-        const segundos = await Promise.all(
-          Array.from({ length: 5 }, (_, i) => fetchCmf(`https://api.sbif.cl/tampoco-cabe${i}`, {}, env).then(() => "entró", (e) => (e as Error).message)),
-        );
-        for (const r of segundos) assert.match(r, /1000 consultas esperando/);
-        await new Promise((r) => setTimeout(r, 1300));
-        const todas = avisos.filter((a) => a.includes("cola_llena"));
-        assert.equal(todas.length, 2, `líneas de cola llena. ${todas.join(" | ")}`);
-        assert.equal(JSON.parse(todas[1]).cmf_cupo.rechazadas, 5);
-      });
+      for (const r of segundos) assert.match(r, /1000 consultas esperando/);
+      await new Promise((r) => setTimeout(r, 1300));
+      const todas = avisos.filter((a) => a.includes("cola_llena"));
+      assert.equal(todas.length, 2, `líneas de cola llena. ${todas.join(" | ")}`);
+      assert.equal(JSON.parse(todas[1]).cmf_cupo.rechazadas, 5);
     });
   });
 });

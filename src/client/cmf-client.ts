@@ -498,6 +498,9 @@ class RateLimiter {
     const ahora = Date.now();
     if (ahora < this.rafagaHasta) return;
     this.rafagaHasta = ahora + RAFAGA_COLA_LLENA_MS;
+    // La línea cuenta cómo estaba el limitador en el primer rechazo, que es
+    // cuando la cola estaba llena. 1 segundo después puede haberse vaciado.
+    const alEmpezar = { en_vuelo: this.tomados.size, en_cola: this.cola.length };
     // El temporizador es de la petición del primer rechazo, que termina apenas
     // recibe su error. En Workers se la mantiene viva hasta que la línea salga.
     // Si muere igual, la cuenta no se pierde. sale con la línea de la ráfaga
@@ -507,7 +510,7 @@ class RateLimiter {
         const cierre = setTimeout(() => {
           const rechazadas = this.rechazadas;
           this.rechazadas = 0;
-          console.warn(JSON.stringify({ cmf_cupo: { motivo: "cola_llena", rechazadas, en_vuelo: this.tomados.size, en_cola: this.cola.length, host } }));
+          console.warn(JSON.stringify({ cmf_cupo: { motivo: "cola_llena", rechazadas, ...alEmpezar, host } }));
           listo();
         }, RAFAGA_COLA_LLENA_MS);
         (cierre as { unref?: () => void }).unref?.();
