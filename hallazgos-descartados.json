@@ -1,9 +1,9 @@
 {
- "8ba86d714709": {
+ "ed8d6d2509d8": {
   "estado": "deuda",
-  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy.",
-  "fecha": "2026-08-21",
-  "donde": "src/client/cmf-client.ts:106"
+  "razon": "Complejidad heredada, vigilada por el trinquete, que impide que suba. Se paga por partes, empezando por las 2 funciones de paquete.ts que suman 174 puntos. No es falso positivo, es un defecto que elegimos no arreglar hoy. Es la misma funcion que estaba aceptada con el id 8ba86d714709 desde el 21 de agosto de 2026, cuando se llamaba fetchCmf. El 10 de octubre de 2026 paso a llamarse consultarCmf, porque fetchCmf quedo como un envoltorio de 6 lineas que registra la consulta en waitUntil, y el id sale del texto de la linea donde empieza la funcion. Su complejidad no cambio. 66 antes y 66 despues, medida con Biome sobre 3cc4660 y sobre el arbol de ese dia.",
+  "fecha": "2026-10-10",
+  "donde": "src/client/cmf-client.ts:719"
  },
  "b683c9b20152": {
   "estado": "deuda",
