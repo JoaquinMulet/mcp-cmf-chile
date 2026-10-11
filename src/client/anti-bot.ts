@@ -190,12 +190,30 @@ async function leerCuerpoUnaVez(res: Response, topeBytes: number, pagina: string
     void res.body.cancel().catch(() => {});
     throw new RespuestaDemasiadoGrande(declarado, topeBytes, pagina, true);
   }
-  // Con el largo declarado, los tramos se copian a un solo bloque a medida que
-  // llegan, y el documento está en memoria una sola vez. Con arrayBuffer() el
-  // motor junta primero todos los tramos y después los copia a un bloque
-  // nuevo. Lo que no cabe en el bloque se guarda aparte. pasa cuando no hay
-  // largo declarado, o cuando el declarado es el del cuerpo comprimido.
-  const lector = res.body.getReader();
+  const bytes = await juntarTramos(res.body.getReader(), declarado, topeBytes, pagina);
+  // El cuerpo de la respuesta nueva entrega ese mismo bloque, sin copiarlo,
+  // recién cuando alguien lo lee.
+  const cuerpo = new ReadableStream<Uint8Array>({
+    pull(salida) {
+      salida.enqueue(bytes);
+      salida.close();
+    },
+  });
+  const respuesta = new Response(cuerpo, { status: res.status, statusText: res.statusText, headers: res.headers });
+  cuerposLeidos.set(respuesta, bytes);
+  return { respuesta, bytes };
+}
+
+/**
+ * Lee un cuerpo hasta el final y lo entrega en un solo bloque del largo justo.
+ *
+ * Con el largo declarado, los tramos se copian a ese bloque a medida que
+ * llegan, y el documento está en memoria una sola vez. Con arrayBuffer() el
+ * motor junta primero todos los tramos y después los copia a un bloque nuevo.
+ * Lo que no cabe en el bloque se guarda aparte. pasa cuando no hay largo
+ * declarado, o cuando el declarado es el del cuerpo comprimido.
+ */
+async function juntarTramos(lector: ReadableStreamDefaultReader<Uint8Array>, declarado: number, topeBytes: number, pagina: string): Promise<Uint8Array> {
   const bloque = new Uint8Array(declarado > 0 ? declarado : 0);
   const sobrantes: Uint8Array[] = [];
   let enBloque = 0;
@@ -218,27 +236,15 @@ async function leerCuerpoUnaVez(res: Response, topeBytes: number, pagina: string
   }
   // Un bloque del largo justo, para que `bytes.buffer` sea el cuerpo y nada
   // más. Si el largo declarado era el real, es el mismo bloque, sin copia.
-  let bytes = bloque;
-  if (largo !== bloque.byteLength) {
-    bytes = new Uint8Array(largo);
-    bytes.set(bloque.subarray(0, enBloque));
-    let desde = enBloque;
-    for (const tramo of sobrantes) {
-      bytes.set(tramo, desde);
-      desde += tramo.byteLength;
-    }
+  if (largo === bloque.byteLength) return bloque;
+  const bytes = new Uint8Array(largo);
+  bytes.set(bloque.subarray(0, enBloque));
+  let desde = enBloque;
+  for (const tramo of sobrantes) {
+    bytes.set(tramo, desde);
+    desde += tramo.byteLength;
   }
-  // El cuerpo de la respuesta nueva entrega ese mismo bloque, sin copiarlo,
-  // recién cuando alguien lo lee.
-  const cuerpo = new ReadableStream<Uint8Array>({
-    pull(salida) {
-      salida.enqueue(bytes);
-      salida.close();
-    },
-  });
-  const respuesta = new Response(cuerpo, { status: res.status, statusText: res.statusText, headers: res.headers });
-  cuerposLeidos.set(respuesta, bytes);
-  return { respuesta, bytes };
+  return bytes;
 }
 
 /** Los cuerpos que este cliente ya leyó enteros, por respuesta. */
@@ -290,7 +296,11 @@ function trozosDeCookie(cabecera: string): string[] {
     }
   }
   trozos.push(actual.trim());
-  return trozos.filter((trozo) => trozo !== "");
+  // Una comilla que no se cierra no encierra nada. Sin esto, todo lo que venía
+  // después de ella quedaba como un solo valor. la cookie del mismo nombre que
+  // la del jar no se quitaba, y la del jar se agregaba otra vez en cada pasada.
+  const partes = entreComillas ? cabecera.split(";").map((trozo) => trozo.trim()) : trozos;
+  return partes.filter((trozo) => trozo !== "");
 }
 
 export const UA_DEFAULT =
