@@ -63,9 +63,10 @@ test("cada cupo se da por muerto con la gracia de quien lo tomó", async () => {
         m.terminar("corta");
         m.terminar("de-fabrica");
         m.peticion("viva", () => void lanzar(cliente, "viva", 600_000));
-        await m.avanzar(9000);
-        assert.equal(recuperados(avisos).length, 1, `a los 9 segundos. ${avisos.join(" | ")}`);
-        await m.avanzar(40_000);
+        // A los 5100 ms corre el primer latido que la ve vencida. Con 6500 queda margen, y un barrido que corriera cada 5 segundos no llega.
+        await m.avanzar(6500);
+        assert.equal(recuperados(avisos).length, 1, `a los 6,5 segundos. ${avisos.join(" | ")}`);
+        await m.avanzar(42_500);
         assert.equal(recuperados(avisos).length, 2, `a los 49 segundos. ${avisos.join(" | ")}`);
       }),
     );
@@ -147,3 +148,28 @@ for (const detencionMs of [6000, 30_000]) {
     }
   });
 }
+
+// Un mutante que la sexta revisión dejó vivo. el barrido que saca un puesto de
+// la cola sin marcarlo. Su dueño, si estaba vivo, cree que sigue en la cola, no
+// vuelve a entrar y no recibe cupo nunca.
+test("un puesto vivo que otra petición barrió por error vuelve a la cola, y su consulta termina", async () => {
+  const cliente = await clienteNuevo("puesto-barrido-por-error");
+  const { red, devolver } = redSimulada();
+  try {
+    await conRelojDeCloudflare(async (m) => {
+      // 4 consultas con cupo y 6 en la cola, de una sola petición. Y otra
+      // petición con una consulta en la cola, que tras la detención se
+      // adelanta más de 2 segundos y barre los 6 puestos, que están vivos.
+      const deDiez = m.peticion("de-10", () => Array.from({ length: 10 }, (_, i) => lanzar(cliente, `corta${i}`, 2000)));
+      await m.avanzar(500);
+      const sola = m.peticion("sola", () => lanzar(cliente, "sola", 2000));
+      await m.avanzar(500);
+      m.detener(3000);
+      await m.avanzar(20_000);
+      assert.deepEqual([...deDiez, sola].map((c) => c.fin), Array.from({ length: 11 }, () => "ok"));
+      assert.equal(red.maximo, TOPE);
+    });
+  } finally {
+    devolver();
+  }
+});

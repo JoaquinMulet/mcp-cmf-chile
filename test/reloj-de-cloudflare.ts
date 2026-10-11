@@ -71,6 +71,136 @@ export interface Mundo {
   ahora(): number;
 }
 
+/** Deja correr todas las continuaciones pendientes antes de despachar el temporizador siguiente. */
+async function drenar(): Promise<void> {
+  for (let i = 0; i < 3; i++) await new Promise<void>((r) => setImmediate(r));
+}
+
+/** El temporizador más antiguo de una petición que ya venció a la hora `real`, o undefined. */
+function vencidoDe(p: Peticion, real: number): Temporizador | undefined {
+  let primero: Temporizador | undefined;
+  for (const t of p.temporizadores.values()) {
+    if (t.cuando > real) continue;
+    if (!primero || t.cuando < primero.cuando || (t.cuando === primero.cuando && t.id < primero.id)) primero = t;
+  }
+  return primero;
+}
+
+function morirSiCorresponde(p: Peticion): void {
+  if (!p.respondio || p.pendientes > 0) return;
+  p.viva = false;
+  p.temporizadores.clear();
+}
+
+class RelojDeCloudflare implements Mundo {
+  private enCurso = new AsyncLocalStorage<Peticion>();
+  private peticiones = new Map<string, Peticion>();
+  private siguienteId = 1;
+  private turno = 0;
+  constructor(private real: number) {}
+
+  /** Lo que Date.now() dice. dentro de una petición, su reloj. Afuera, la hora de verdad. */
+  reloj = (): number => this.enCurso.getStore()?.reloj ?? this.real;
+
+  programar(correr: () => void, ms: number | undefined, periodo: number): number {
+    const dueno = this.enCurso.getStore();
+    if (!dueno) throw new Error("modelo. un temporizador creado fuera de toda petición");
+    const id = this.siguienteId++;
+    dueno.temporizadores.set(id, { id, cuando: dueno.reloj + Math.max(0, ms ?? 0), periodo, correr });
+    return id;
+  }
+
+  cancelar = (id: unknown): void => {
+    for (const p of this.peticiones.values()) p.temporizadores.delete(id as number);
+  };
+
+  /** Corre el temporizador vencido más antiguo de una petición, si lo tiene. */
+  private async despacharUno(p: Peticion): Promise<void> {
+    const t = p.viva ? vencidoDe(p, this.real) : undefined;
+    if (!t) return;
+    const programado = t.cuando;
+    if (t.periodo > 0) t.cuando += t.periodo;
+    else p.temporizadores.delete(t.id);
+    // Dentro del temporizador, el reloj dice la hora para la que estaba programado.
+    p.reloj = Math.max(p.reloj, programado);
+    this.enCurso.run(p, t.correr);
+    await drenar();
+  }
+
+  /** Un temporizador vencido por petición y por turno, hasta que no quede ninguno. */
+  private async despachar(): Promise<void> {
+    for (;;) {
+      const vivas = [...this.peticiones.values()].filter((p) => p.viva && vencidoDe(p, this.real));
+      if (vivas.length === 0) return;
+      // El primero de cada vuelta rota, para que ninguna petición vaya siempre adelante.
+      this.turno++;
+      for (let i = 0; i < vivas.length; i++) await this.despacharUno(vivas[(i + this.turno) % vivas.length]);
+    }
+  }
+
+  /** La hora del próximo temporizador de alguna petición viva. */
+  private proximo(): number {
+    let minimo = Number.POSITIVE_INFINITY;
+    for (const p of this.peticiones.values()) {
+      if (!p.viva) continue;
+      for (const t of p.temporizadores.values()) minimo = Math.min(minimo, t.cuando);
+    }
+    return minimo;
+  }
+
+  peticion<T>(nombre: string, cuerpo: () => T): T {
+    // La llegada de una petición es una entrada real. su reloj parte en la hora de verdad.
+    const p: Peticion = { nombre, reloj: this.real, viva: true, respondio: false, pendientes: 0, temporizadores: new Map() };
+    this.peticiones.set(nombre, p);
+    return this.enCurso.run(p, cuerpo);
+  }
+
+  async avanzar(ms: number): Promise<void> {
+    const hasta = this.real + ms;
+    await drenar();
+    await this.despachar();
+    for (let cuando = this.proximo(); cuando <= hasta; cuando = this.proximo()) {
+      this.real = Math.max(this.real, cuando);
+      await this.despachar();
+    }
+    this.real = hasta;
+  }
+
+  detener(ms: number): void {
+    this.real += ms;
+  }
+
+  terminar(nombre: string): void {
+    const p = this.peticiones.get(nombre);
+    if (!p) throw new Error(`modelo. no existe la petición ${nombre}`);
+    p.respondio = true;
+    morirSiCorresponde(p);
+  }
+
+  esperarHasta = (promesa: Promise<unknown>): void => {
+    const p = this.enCurso.getStore();
+    if (!p) throw new Error("modelo. waitUntil fuera de toda petición");
+    p.pendientes++;
+    const listo = () => {
+      p.pendientes--;
+      morirSiCorresponde(p);
+    };
+    promesa.then(listo, listo);
+  };
+
+  viva(nombre: string): boolean {
+    return this.peticiones.get(nombre)?.viva ?? false;
+  }
+
+  temporizadores(nombre: string): number {
+    return this.peticiones.get(nombre)?.temporizadores.size ?? 0;
+  }
+
+  ahora(): number {
+    return this.real;
+  }
+}
+
 /** Corre `fn` con el reloj y los temporizadores de Cloudflare, y después devuelve los de Node. */
 export async function conRelojDeCloudflare<T>(fn: (mundo: Mundo) => Promise<T>): Promise<T> {
   const originales = {
@@ -80,123 +210,12 @@ export async function conRelojDeCloudflare<T>(fn: (mundo: Mundo) => Promise<T>):
     clearInterval: globalThis.clearInterval,
     ahora: Date.now,
   };
-  const inmediato = globalThis.setImmediate;
-  const enCurso = new AsyncLocalStorage<Peticion>();
-  const peticiones = new Map<string, Peticion>();
-  let real = originales.ahora.call(Date);
-  let siguienteId = 1;
-  let turno = 0;
-
-  /** Deja correr todas las continuaciones pendientes antes de despachar el temporizador siguiente. */
-  const drenar = async () => {
-    for (let i = 0; i < 3; i++) await new Promise<void>((r) => inmediato(r));
-  };
-
-  const programar = (correr: () => void, ms: number | undefined, periodo: number): number => {
-    const dueno = enCurso.getStore();
-    if (!dueno) throw new Error("modelo. un temporizador creado fuera de toda petición");
-    const id = siguienteId++;
-    dueno.temporizadores.set(id, { id, cuando: dueno.reloj + Math.max(0, ms ?? 0), periodo, correr });
-    return id;
-  };
-  const cancelar = (id: unknown): void => {
-    for (const p of peticiones.values()) p.temporizadores.delete(id as number);
-  };
-
-  /** El temporizador más antiguo de una petición que ya venció, o undefined. */
-  const vencidoDe = (p: Peticion): Temporizador | undefined => {
-    let primero: Temporizador | undefined;
-    for (const t of p.temporizadores.values()) {
-      if (t.cuando > real) continue;
-      if (!primero || t.cuando < primero.cuando || (t.cuando === primero.cuando && t.id < primero.id)) primero = t;
-    }
-    return primero;
-  };
-
-  /** Un temporizador vencido por petición y por turno, hasta que no quede ninguno. */
-  const despachar = async (): Promise<void> => {
-    for (;;) {
-      const vivas = [...peticiones.values()].filter((p) => p.viva && vencidoDe(p));
-      if (vivas.length === 0) return;
-      // El primero de cada vuelta rota, para que ninguna petición vaya siempre adelante.
-      turno++;
-      for (let i = 0; i < vivas.length; i++) {
-        const p = vivas[(i + turno) % vivas.length];
-        const t = p.viva ? vencidoDe(p) : undefined;
-        if (!t) continue;
-        if (t.periodo > 0) t.cuando += t.periodo;
-        else p.temporizadores.delete(t.id);
-        // Dentro del temporizador, el reloj dice la hora para la que estaba programado.
-        p.reloj = Math.max(p.reloj, t.periodo > 0 ? t.cuando - t.periodo : t.cuando);
-        enCurso.run(p, t.correr);
-        await drenar();
-      }
-    }
-  };
-
-  const morirSiCorresponde = (p: Peticion): void => {
-    if (!p.respondio || p.pendientes > 0) return;
-    p.viva = false;
-    p.temporizadores.clear();
-  };
-
-  const proximo = (): number => {
-    let minimo = Number.POSITIVE_INFINITY;
-    for (const p of peticiones.values()) {
-      if (!p.viva) continue;
-      for (const t of p.temporizadores.values()) minimo = Math.min(minimo, t.cuando);
-    }
-    return minimo;
-  };
-
-  const mundo: Mundo = {
-    peticion(nombre, cuerpo) {
-      // La llegada de una petición es una entrada real. su reloj parte en la hora de verdad.
-      const p: Peticion = { nombre, reloj: real, viva: true, respondio: false, pendientes: 0, temporizadores: new Map() };
-      peticiones.set(nombre, p);
-      return enCurso.run(p, cuerpo);
-    },
-    async avanzar(ms) {
-      const hasta = real + ms;
-      await drenar();
-      await despachar();
-      for (;;) {
-        const cuando = proximo();
-        if (cuando > hasta) break;
-        real = Math.max(real, cuando);
-        await despachar();
-      }
-      real = hasta;
-    },
-    detener(ms) {
-      real += ms;
-    },
-    terminar(nombre) {
-      const p = peticiones.get(nombre);
-      if (!p) throw new Error(`modelo. no existe la petición ${nombre}`);
-      p.respondio = true;
-      morirSiCorresponde(p);
-    },
-    esperarHasta(promesa) {
-      const p = enCurso.getStore();
-      if (!p) throw new Error("modelo. waitUntil fuera de toda petición");
-      p.pendientes++;
-      const listo = () => {
-        p.pendientes--;
-        morirSiCorresponde(p);
-      };
-      promesa.then(listo, listo);
-    },
-    viva: (nombre) => peticiones.get(nombre)?.viva ?? false,
-    temporizadores: (nombre) => peticiones.get(nombre)?.temporizadores.size ?? 0,
-    ahora: () => real,
-  };
-
-  globalThis.setTimeout = ((correr: () => void, ms?: number) => programar(correr, ms, 0)) as unknown as typeof setTimeout;
-  globalThis.setInterval = ((correr: () => void, ms?: number) => programar(correr, ms, Math.max(1, ms ?? 1))) as unknown as typeof setInterval;
-  globalThis.clearTimeout = cancelar as typeof clearTimeout;
-  globalThis.clearInterval = cancelar as typeof clearInterval;
-  Date.now = () => enCurso.getStore()?.reloj ?? real;
+  const mundo = new RelojDeCloudflare(Date.now());
+  globalThis.setTimeout = ((correr: () => void, ms?: number) => mundo.programar(correr, ms, 0)) as unknown as typeof setTimeout;
+  globalThis.setInterval = ((correr: () => void, ms?: number) => mundo.programar(correr, ms, Math.max(1, ms ?? 1))) as unknown as typeof setInterval;
+  globalThis.clearTimeout = mundo.cancelar as typeof clearTimeout;
+  globalThis.clearInterval = mundo.cancelar as typeof clearInterval;
+  Date.now = mundo.reloj;
   try {
     return await fn(mundo);
   } finally {
