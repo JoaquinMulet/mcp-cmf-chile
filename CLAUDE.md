@@ -105,7 +105,8 @@ del dueño. Si molesta, se hace más rápido, no más corto.
   sus 2 unidades de systemd. Corre en el servidor Floki, no en Cloudflare. Ver la lección 36.
 - `src/client/peticion.ts` — el `waitUntil` de la petición del Worker en curso, al alcance del
   cliente. Sin él, lo que una petición deja pendiente al responder se abandona. Ver la lección 44.
-- `src/client/cache.ts` — caché LRU con TTL por clave.
+- `src/client/cache.ts` — caché LRU con TTL por clave y con presupuesto de bytes. Ver la
+  lección 47.
 - `src/client/parsers.ts` — **el corazón frágil.** HTML, XLS y CSV a filas. Un cambio acá es
   un cambio en decenas de tools a la vez. Cuenta cuántas antes de tocarlo, con
   `grep -rhoE "(htmlTablaAJson|xlsAJson|txtCsvAJson)\(" src/ | wc -l`.
@@ -250,7 +251,11 @@ antes de desplegarse.**
 
 La memoria se mide con `npm run workerd:memoria`. Levanta un workerd por medición y entrega
 cuánto subió la memoria del proceso sobre su base. `--por=fetch`, `--por=binario` o
-`--por=descargar` eligen el camino, y `--sin-largo` quita el largo declarado.
+`--por=descargar` eligen el camino, y `--sin-largo` quita el largo declarado. Con
+`--previos=N --mb-previos=M` pasan antes N documentos de M megabytes por la caché de
+binarios. Entrega 2 números. `sobre_la_base_mb` es el máximo, que cuenta también la memoria
+suelta sin recoger. `retenido_mb` es lo que sigue ocupado después de pedirle al motor que
+recoja, y es el que sirve para saber cuánto guarda una caché (lección 47).
 
 ## Patterns to Follow
 
@@ -1147,12 +1152,9 @@ por eso quien baja algo grande usa `bytesDe`. La medida es la memoria del proces
 es más que la del aislado, así que el margen real es mayor que el que muestra la tabla. Con la
 sonda original de `C:\dev\cmf-mcp-memoria`, que lee con `arrayBuffer()`, 10 MB pasaron de 56
 a 52, 20 MB de 112 a 102, y los 40 MB, que ocupaban 174, ahora se rechazan. Lo vigilan
-`test/memoria-del-documento.test.ts` y `test/descargas.test.ts`. Lo que queda abierto.
-`cacheBinario` guarda hasta 100 documentos por 15 minutos sin tope de bytes, así que varios
-documentos grandes seguidos por `cmf_empresa_paquete_documentos` pueden llenar la memoria
-aunque cada uno quepa. Regla. **un arreglo de memoria se mide con la misma sonda antes y
-después, por cada camino que usa el dato, y el camino completo de la tool cuenta más que el
-del cliente.**
+`test/memoria-del-documento.test.ts` y `test/descargas.test.ts`. Regla. **un arreglo de memoria
+se mide con la misma sonda antes y después, por cada camino que usa el dato, y el camino
+completo de la tool cuenta más que el del cliente.**
 
 **46. Lo que dejó la séptima revisión adversarial, y lo que se acepta sin arreglar (10 de
 octubre de 2026).** Arreglado, cada cosa con su prueba. Quien esperaba fuera de la cola llena
@@ -1193,12 +1195,52 @@ mutante se corre contra la prueba recién escrita antes de darla por buena.** La
 detención de 4,9 segundos partía 1100 ms después de una señal de vida, la señal quedaba en 5,0
 segundos justos, y el mutante sobrevivía. Con 1900 ms queda en 5,8.
 
+**47. Una caché sin presupuesto de bytes retiene todo lo que pasa por ella, y el máximo de
+memoria no lo muestra (11 de octubre de 2026).** Qué falló. `cacheBinario` guardaba hasta 100
+documentos por 15 minutos contando solo entradas. Cada respuesta sola no pasa de 20 MB, pero
+los documentos de un paquete quedaban todos guardados. Prescripción. `CacheLRU` de
+`src/client/cache.ts` acepta un presupuesto. cuánto pesa un valor, cuánto pueden pesar todos
+juntos, y sobre qué peso un valor no se guarda. Al pasarse salen primero las entradas que
+hace más tiempo nadie usa. `cacheBinario` guarda a lo más 16 MB y no guarda un documento de
+más de 8. `cacheHttp` guarda a lo más 16 millones de caracteres y no guarda una página de más
+de 4 millones. Lo vigila `test/cache.test.ts`. Los números, medidos con
+`npm run workerd:memoria -- directo 10 --por=binario --previos=N --mb-previos=M`, en MB que
+quedan retenidos después de pedirle al motor que recoja la memoria suelta.
+
+| lo que pasó antes por la caché | retenido antes | retenido ahora |
+|---|---|---|
+| nada | 4 | 4 |
+| 12 documentos de 3 MB | 43 | 28 |
+| 10 documentos de 7 MB | 86 | 33 |
+| 5 documentos de 18 MB | 111 | 17 |
+
+Y el peor caso, la caché llena y además un documento de 20 MB. el proceso llega a 118 MB con
+el largo declarado y a 129 sin él. Antes llegaba a 158 y a 177. El costo que hay que conocer.
+Un documento de más de 8 MB se vuelve a bajar de la CMF en cada pedido, y un paquete de más
+de 16 MB no queda entero en la caché, así que cada tramo de su ZIP vuelve a bajar lo que no
+quedó. Lo que sigue abierto. `cmf_empresa_paquete_documentos` acepta `max_mb` hasta 50 y junta
+en memoria todos los documentos de la llamada antes de armar el ZIP, así que un paquete
+grande puede no caber aunque la caché ya no lo retenga. La lección de medición. La primera
+vez medí con el máximo de memoria del proceso, y con el presupuesto puesto casi no se movió
+(102 contra 100). **El máximo cuenta también la memoria suelta que el motor todavía no
+recoge, y workerd local no la recoge porque no tiene tope.** Para saber cuánto RETIENE algo
+hay que pedir la recolección y leer la memoria de después. La sonda levanta workerd con
+`--expose-gc` (variable `MINIFLARE_WORKERD_V8_FLAGS`) y entrega eso en `retenido_mb`. Regla.
+**antes de creerle a una medición que no se mueve, pregúntate si el instrumento mide lo que
+cambiaste.**
+
 ## Gotchas
 
 - **Un reemplazo de texto por script va con calce exacto y sin barras invertidas.** El hook de
   los heredoc no cubre `node -e`. El 10 de octubre de 2026 pasaron 2 textos con `\n` por
   `node -e`, y no hubo daño solo porque el reemplazo exigía que el texto buscado apareciera
   exactamente 1 vez. Si el texto lleva una barra, va con Edit.
+- **Renombrar una función con deuda aceptada cambia su identificador en la bandeja de
+  hallazgos.** El identificador sale del texto de la línea donde empieza la función. El 10 de
+  octubre de 2026 `fetchCmf` pasó a ser un envoltorio y su cuerpo quedó en `consultarCmf`. El
+  pre-push rechazó el envío con 1 hallazgo sin triar, después de 20 minutos de portón. Antes de
+  empujar un cambio que renombra o parte una función grande, corre `npm run hallazgos`. Y al
+  mover la entrada en `hallazgos-descartados.json`, mide que la complejidad no subió.
 - **La sonda recién desplegada responde «error code: 1042» unos segundos.** Es la dirección
   workers.dev que todavía no se propaga. Se espera a que `/id` responda 200.
 - **En un bucle que gasta CPU, un contador sobre mil millones cuesta 3 veces más por vuelta.**
