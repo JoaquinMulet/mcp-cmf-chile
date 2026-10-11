@@ -62,6 +62,12 @@ El servidor expone 2 modos, que son 2 servidores MCP distintos armados por el mi
     trinquete, las alertas y la bandeja de hallazgos. **Es exactamente lo que corre el CI.**
 - higiene a mano: `npm run trinquete`, `npm run limpieza`, `npm run lint`, `npm run hallazgos`,
   `npm run semgrep`.
+- el limitador en workerd de verdad: `npm run workerd`. Corre los escenarios de
+  `herramientas/workerd/escenarios.mjs` en miniflare y sale con 1 si alguno queda ROTO. Tarda
+  unos 5 minutos. Un solo escenario: `npm run workerd -- hilo-detenido`.
+- memoria de un documento en workerd: `npm run workerd:memoria`.
+- la sonda en Cloudflare de verdad: `npm run sonda -- desplegar`, `npm run sonda -- medir <url>`
+  y `npm run sonda -- borrar`. Ver la sección «Pruebas en workerd y en Cloudflare».
 
 **NUNCA recortes un portón porque tarda.** Está escrito adentro de los 2 hooks y es una regla
 del dueño. Si molesta, se hace más rápido, no más corto.
@@ -97,6 +103,8 @@ del dueño. Si molesta, se hace más rápido, no más corto.
 - `src/client/anti-bot.ts` — resuelve el desafío anti-bot F5 de los sistemas legacy.
 - `infra/salida-chilena/` — el proxy que consulta a `www.cmfchile.cl` desde una IP chilena, con
   sus 2 unidades de systemd. Corre en el servidor Floki, no en Cloudflare. Ver la lección 36.
+- `src/client/peticion.ts` — el `waitUntil` de la petición del Worker en curso, al alcance del
+  cliente. Sin él, lo que una petición deja pendiente al responder se abandona. Ver la lección 44.
 - `src/client/cache.ts` — caché LRU con TTL por clave.
 - `src/client/parsers.ts` — **el corazón frágil.** HTML, XLS y CSV a filas. Un cambio acá es
   un cambio en decenas de tools a la vez. Cuenta cuántas antes de tocarlo, con
@@ -165,6 +173,11 @@ Los 6 pasos del estándar, con los comandos de acá.
 6. **VERIFY-REAL, y acá es OBLIGATORIO.** `npm run verify`, o un script propio que llame la
    tool contra la CMF. **Nunca despliegues sin haber confrontado la fuente real.** Un servidor
    que traduce una fuente ajena no se puede validar solo con fixtures.
+7. **Si el cambio toca el limitador, los temporizadores o la lectura del cuerpo, el motor
+   también es una fuente real.** Antes de desplegar pasa por los 3 instrumentos de la sección
+   «Pruebas en workerd y en Cloudflare». el modelo en la suite, `npm run workerd`, y la sonda
+   con `npm run sonda`. Una frase sobre cómo se comporta el motor se mide en el motor de
+   producción, no solo en el local (lección 43).
 
 Para medir un antes y un después con el MISMO instrumento, copia el archivo arreglado fuera del
 repo, escribe el viejo con `git show HEAD:<archivo> > <archivo>`, mide, y devuelve la copia
@@ -177,9 +190,12 @@ la comparación no vale.
 Los tests viven en `test/` y terminan en `.test.ts`. Todo lo demás en esa carpeta es un
 script, no una prueba, y `npm test` no lo levanta.
 
-Hay 3 clases y conviene saber cuál estás escribiendo.
+Hay 4 clases y conviene saber cuál estás escribiendo.
 
 - **De caso.** Ejercitan una función con un fixture. `parsers.test.ts`, `fondos-mutuos.test.ts`.
+- **Con el modelo de un motor.** Corren el cliente con el reloj y los temporizadores de
+  Cloudflare, que Node no tiene. `reloj-de-cloudflare.test.ts`, `peticion-del-worker.test.ts`.
+  Cada una carga un cliente nuevo con `clienteNuevo`, para partir con el limitador limpio.
 - **De clase.** Leen el código fuente entero como texto y fallan si aparece un patrón que ya
   causó daño una vez. `sin-recortes.test.ts`, `sin-codigo-muerto.test.ts`, `tdqs.test.ts`. Son
   las que atrapan el defecto que nadie ha escrito todavía.
@@ -194,6 +210,47 @@ Reglas.
   exacto que prohíbe. Copia el estilo de `sin-recortes.test.ts`.
 - Los fixtures son datos REALES de la CMF. Un fixture inventado hereda el mismo error de
   memoria que causó el defecto.
+- Una prueba nueva se corre contra el mutante de su cláusula antes de darla por buena, y con
+  el mutante puesto tiene que dar rojo, no colgarse. Los cuerpos de prueba son finitos, y 2
+  bloques grandes de bytes no se comparan con `deepEqual` (lección 46).
+- Una prueba de tiempos se corre 6 veces con la CPU ocupada antes de integrarla. La de la cola
+  llena dio rojo 2 veces así, por 2 razones distintas, con la suite normal siempre en verde.
+
+## Pruebas en workerd y en Cloudflare
+
+La suite corre en Node, y hay 3 cosas del cliente HTTP que Node no puede mostrar. En Workers
+una petición que termina abandona sus promesas y sus temporizadores. workerd despacha los
+temporizadores atrasados en otro orden. Y en Cloudflare de verdad el reloj no avanza durante
+la CPU. Para cada una hay un instrumento, y todos viven en `herramientas/workerd/`.
+
+**Todo cambio en el limitador, en los temporizadores o en la lectura del cuerpo pasa por los 3
+antes de desplegarse.**
+
+1. **El modelo del reloj de Cloudflare, dentro de la suite.** `test/reloj-de-cloudflare.ts`
+   reemplaza `Date.now()` y los temporizadores por los de Cloudflare. cada petición lleva su
+   reloj, un temporizador atrasado ve la hora para la que estaba programado, y se despacha uno
+   por petición y por turno. Lo usan `test/reloj-de-cloudflare.test.ts` y
+   `test/peticion-del-worker.test.ts`. Corre con `npm test`, en milisegundos.
+2. **workerd local.** `npm run workerd`. `arnes.mjs` empaqueta `entrada.ts` con el cliente del
+   árbol de trabajo y lo levanta en miniflare. Toda salida del Worker la atiende una función
+   local, que además cuenta desde afuera cuántas consultas hay en vuelo. Cada escenario termina
+   con RESISTE o ROTO. Los que hay. peticiones abandonadas con cupo y en la cola, consulta viva
+   y lenta, hilo detenido (una detención, varias seguidas, ráfagas de CPU, una petición de 10
+   consultas, consultas que nacen al terminar la detención), cola llena de consultas muertas,
+   cupos muertos con poco tráfico, petición cortada, y la gracia de fábrica. Una consulta
+   «muerta» se fabrica con `sin_wu=1`, que le quita el waitUntil a su petición.
+3. **La sonda en Cloudflare.** `npm run sonda -- desplegar` publica `entrada.ts` como un Worker
+   APARTE, `sonda-limitador-cmf`, sin rutas ni dominio. No consulta a la CMF. su red es una
+   función del propio Worker (variable `RED_INTERNA`), y el escenario `la-sonda-no-sale-a-la-red`
+   lo comprueba desde afuera. `npm run sonda -- medir https://sonda-limitador-cmf.<cuenta>.workers.dev`
+   corre los experimentos, y `npm run sonda -- borrar` la quita. **Se borra al terminar.** Un
+   experimento vale solo si todas sus peticiones cayeron en un mismo aislado, y la sonda lo
+   dice. Cloudflare reparte las peticiones entre aislados, así que las que tienen que
+   encontrarse se piden por la ruta `/yo`, que usa un binding del Worker hacia sí mismo.
+
+La memoria se mide con `npm run workerd:memoria`. Levanta un workerd por medición y entrega
+cuánto subió la memoria del proceso sobre su base. `--por=fetch`, `--por=binario` o
+`--por=descargar` eligen el camino, y `--sin-largo` quita el largo declarado.
 
 ## Patterns to Follow
 
@@ -876,15 +933,17 @@ de las 2 cosas es cierta. Prescripción. **Nadie le entrega nada a otra petició
 se toma lleva una señal de vida.** Cada cupo y cada puesto en la cola tienen un `visto` que
 renueva su propio dueño con sus propios temporizadores (`LATIDO_MS` de 1 segundo para el cupo,
 `SONDEO_COLA_MS` de 50 ms para la cola). Si el dueño muere, sus temporizadores mueren con él, la
-señal envejece, y cualquier consulta que pase barre el cupo a los 5 segundos
-(`GRACIA_CUPO_MS`) o el puesto a los 2 (`GRACIA_COLA_MS`). Cada consulta toma su cupo ella
+señal envejece, y cualquier consulta que pase barre el cupo a los 45 segundos
+(`GRACIA_CUPO_DE_FABRICA_MS`, que era de 5 hasta la lección 43) o el puesto a los 2
+(`GRACIA_COLA_MS`). Cada consulta toma su cupo ella
 misma, en su propio contexto, cuando es la primera de la cola y hay uno libre. `esperar()`
 entrega el cupo y `liberar(cupo)` lo recibe, así que devolver 2 veces el mismo no hace nada. Un
 cupo barrido deja una línea `cmf_cupo_recuperado` en el log. **Esa línea es la señal de una
 consulta abandonada.** La produce una tool que deja consultas sin esperar, un programa de
 `/codigo` que responde con llamadas pendientes, y también un cliente que corta su petición. El
-costo que hay que conocer. Cada consulta abandonada deja su cupo tomado 5 segundos para toda la
-instancia. **Un hilo detenido no es una consulta muerta**, y esto lo encontró la cuarta
+costo que hay que conocer. Cada consulta abandonada de verdad deja su cupo tomado 45 segundos
+para toda la instancia. Desde la lección 44 casi ninguna queda abandonada, porque sigue sola
+hasta terminar. **Un hilo detenido no es una consulta muerta**, y esto lo encontró la cuarta
 revisión adversarial el 10 de octubre de 2026, con el diseño ya desplegado. Mientras el hilo
 está detenido nadie renueva su señal, tampoco los vivos. Una detención de 9,5 segundos daba por
 muertas a las 4 consultas en vuelo y dejaba entrar a otras 4, y cada detención siguiente sumaba
@@ -940,13 +999,9 @@ del código del captcha perdía su cookie de sesión si le tocaba un desafío; a
 (`conCookiesDelJar`, también en `fetchCmf`). Y cada respuesta se convertía entera a texto solo
 para mirar si era un desafío, que mide menos de 4000 caracteres; ahora se lee como bytes y se
 convierte solo si es chica. Un documento de 40 MB ocupaba 124 MB y ahora ocupa 84, medido en
-Node. El Worker tiene 128. **Medido después en workerd, y sigue abierto.** La memoria del
-proceso workerd subió 56 MB con un documento de 10 MB, y 175 MB con uno de 40 (224 antes de este
-arreglo). O sea, un documento cuesta más de 4 veces su tamaño. workerd local no aplica el tope
-de 128 MB, así que la prueba pasa, pero en producción un documento de 40 MB muy probablemente
-falla. El tamaño seguro anda por los 15 a 20 MB. La causa es que `resolverChallenge` lee el
-cuerpo sobre un `clone()`, que guarda todo el cuerpo una segunda vez para quien llama. Leerlo
-una sola vez y entregar una respuesta armada con esos bytes ahorraría una copia. La sexta
+Node. El Worker tiene 128. Medido después en workerd, la memoria del proceso subía 56 MB con
+un documento de 10 MB y 175 con uno de 40, más de 4 veces su tamaño. Eso quedó cerrado en la
+lección 45, que además muestra que el `clone()` no era el costo mayor. La sexta
 revisión cerró además 3 detalles de estos arreglos. El desafío repetido por la salida chilena
 contaba como proxy caído y mandaba consultas a la CMF directa; ahora es su propio error
 (`DesafioRepetido`) y sube tal cual. Una página chica y legítima con un script empaquetado, si
@@ -971,10 +1026,9 @@ es un POST, y que el error tarda 3 plazos: 38 segundos con el plazo de fábrica,
 POST a la CMF es una búsqueda, y repetirla no cambia nada allá. Si algún día una tool envía
 algo que no se puede repetir, esa tool no puede pasar por este reintento. Lo vigila
 `test/cuerpo-sin-fin.test.ts`. Verificado
-en workerd con el arnés de la revisión
-(`C:\dev\cmf-mcp-plazos-revision3\workerd\abandono.mjs`, que usa miniflare y atiende la
-salida del Worker con una función local). Los 3 escenarios, cupo tomado, puesto en cola y
-`Promise.all`, dejaban la instancia sin cupos, y ahora los recupera. En la suite, «morir» se
+en workerd, con miniflare y la salida del Worker atendida por una función local. Hoy ese arnés
+vive en el repositorio y corre con `npm run workerd`. Los 3 escenarios, cupo tomado, puesto en
+cola y `Promise.all`, dejaban la instancia sin cupos, y ahora los recupera. En la suite, «morir» se
 simula creando los temporizadores de la consulta con el reloj de `node:test` y descartándolos
 (`lanzarMuertas` de `test/tope-en-vuelo.test.ts`). Regla. **lo que corre en Workers se prueba
 también contra la muerte de la petición**, y eso solo se ve en workerd. Y la regla de proceso
@@ -988,7 +1042,168 @@ nombre y uno ajeno que viniera del proxy se saltaba el manejo de proxy caído; a
 por una marca propia. Y 6 mutantes pasaban en verde, entre ellos el del plazo total que no
 devolvía su cupo.
 
+**43. En Cloudflare el reloj esconde la CPU, y el limitador no puede ver una detención (10 de
+octubre de 2026).** Qué falló. El cuarto diseño del limitador (lección 42) se apoyaba en que
+un temporizador que corre atrasado lo nota, corta su racha y no barre. Eso es cierto en Node y
+en workerd local. En Cloudflare no. Lo midió un Worker de sonda desplegado aparte
+(`npm run sonda`), y todo lo que sigue es medición, con cuántas corridas.
+
+- `Date.now()` y `performance.now()` no avanzan mientras el Worker gasta CPU. 0 ms dentro de un
+  bucle de 6 segundos.
+- Un temporizador atrasado ve la hora para la que estaba programado. Tras 6 segundos de CPU en
+  otra petición del mismo aislado, una cadena de temporizadores de 50 ms vio huecos de 50, y un
+  intervalo de 1000 vio huecos de 1000 (3 de 3). O sea, **`cmf_hilo_detenido` no puede salir en
+  producción por CPU. Que haya 0 en Workers Logs no dice que no hubo detenciones.**
+- La detención es real. Una petición que lee el reloj con una entrada real (una lectura del
+  caché) vio huecos de 7,3 y 7,7 segundos con 5 de CPU en otra petición.
+- Un programa de `/codigo` que gasta CPU detiene al Worker principal. 4,9 y 4,2 segundos de
+  hueco con 5 de CPU en la caja aislada.
+- Los temporizadores atrasados corren apenas el hilo queda libre y se ponen al día en
+  milisegundos. Una cadena que pedía 9000 ms terminó a los 9000 de reloj real con 5 segundos
+  de CPU en medio (3 de 3).
+- Cloudflare reparte las peticiones entre varios aislados. 9 juntas cayeron en 3. **El
+  limitador es uno por aislado, así que el tope de 4 en vuelo es por aislado, no del servidor.**
+- Una sola petición recibe 20000 temporizadores por segundo sin atraso (1000 cadenas, 80000
+  corridas en 4014 ms). El tope de unos 70 por segundo de workerd local es de Windows.
+
+La falla, 3 corridas de 3. Una petición con 10 consultas (4 con cupo y 6 en la cola), otras 2
+haciendo cola, y 6 segundos de CPU en otra petición. 4 o 5 cupos vivos dados por muertos, con
+`sin_senal_ms` de 5050, y 8 en vuelo con tope de 4. Con 4 peticiones de 1 consulta, nada (5 de
+5). Causa raíz. Tras la detención cada petición se pone al día con su propio reloj, un
+temporizador por turno. Una petición con un solo sondeo de 50 ms avanza 50 ms por turno, y la
+de 10 consultas necesita 124 turnos por cada segundo. A los 101 turnos el sondeo va 5050 ms
+adelante de un latido que todavía no corre. Como ningún temporizador se ve atrasado, la racha
+no corta nada. La séptima revisión adversarial llegó a lo mismo en workerd local por otro
+camino, una detención de 6 segundos y 4 ráfagas de CPU de 900 ms, 17 rotas de 17. Prescripción.
+**La gracia de un cupo tiene que ser más larga que la detención más larga que el reloj
+esconde.** El tope de CPU de una petición es de 30 segundos, y `GRACIA_CUPO_DE_FABRICA_MS`
+quedó en 45000. Se cambia con `CMF_GRACIA_CUPO_MS`, con un mínimo de 5000, y cada cupo lleva
+la gracia de quien lo tomó. La racha sigue protegiendo donde el reloj sí avanza. Lo vigila
+`test/reloj-de-cloudflare.test.ts`, con el modelo de `test/reloj-de-cloudflare.ts`, que con el
+código anterior da lo mismo que producción cifra por cifra (4 recuperados con 5050, y 0 con
+peticiones sueltas). En workerd lo vigilan los escenarios `rafagas-de-cpu` y su control, que
+con la gracia de 5 segundos tiene que romperse. **Verificado en Cloudflare con la sonda y el
+cliente nuevo.** el mismo experimento que fallaba 3 de 3 dio 0 vivos dados por muertos y
+máximo 4 en vuelo, en 3 corridas válidas de 3. Los límites que quedan, aceptados. Una
+detención escondida de más de 44 segundos todavía puede dar por muerto a un vivo. Y la gracia
+larga tiene su costo. el cupo de una consulta muerta de verdad tarda 45 segundos en volver.
+Las reglas. **Una frase sobre el motor se mide en el motor de producción, no solo en el local.**
+Los 4 diseños anteriores se midieron en Node y en workerd, y los 2 tienen un reloj que
+producción no tiene. **Y lo que solo pasa en producción se lleva a la suite con un modelo, y
+el modelo se valida contra la medición antes de creerle.** Para leer Workers Logs. el filtro
+`$metadata.message` con `includes` no encuentra los mensajes que son JSON, y da 0 con líneas
+que sí existen. Se filtra por `$metadata.level` igual a `warn` y se clasifica en local por el
+campo `source`. Una ventana de 1 día viene completa y una de 7 viene muestreada.
+
+**44. Lo que una petición deja pendiente al responder se abandona, salvo que esté en su
+waitUntil (10 de octubre de 2026).** Qué falló, medido con la sonda. Un cliente que corta la
+conexión mata la petición. La consulta que esperaba a la red no había terminado 26 segundos
+después (2 de 2), y su cupo siguió tomado hasta que otra petición lo barrió. Y el vigía de la
+lección 42 moría con su petición. con 3 cupos muertos y 8 consultas cortas de a una, en
+workerd volvían 0 cupos. Prescripción. `src/client/peticion.ts` guarda el `ctx.waitUntil` de la
+petición en curso en un `AsyncLocalStorage`. `src/worker.ts` lo deja en sus 2 entradas, la
+petición HTTP y cada llamada del puente de `/codigo`. `fetchCmf` mantiene viva a su petición
+hasta que la consulta termina, y el vigía hasta que barre o vence, a lo más 5 segundos.
+Workers da hasta 30 segundos después de la respuesta. Fuera de un Worker no hay petición en
+curso y nada cambia. Lo vigila `test/peticion-del-worker.test.ts`, que además falla si alguna
+de las 2 entradas del Worker deja de pasar por `peticionEnCurso.run`. En workerd, los
+escenarios `cupos-muertos-con-poco-trafico` y `peticion-cortada-termina-sola`. **Verificado en
+Cloudflare con la sonda.** una consulta de 20 segundos cuya petición se cortó a los 1500 ms
+terminó sola y devolvió su cupo, sin ninguna línea `cmf_cupo_recuperado` (3 de 3, 2 de ellas
+con el cliente de afuera cerrando la conexión). El costo que hay que conocer. Una consulta
+cuyo cliente ya se fue sigue consultando a la CMF hasta terminar, a lo más 30 segundos. Y una
+que estaba en la cola cuando su cliente se fue ya no muere ahí. toma su cupo y sale a la red. Regla. **en Workers, todo trabajo que tiene que terminar aunque la
+petición responda se registra en waitUntil en el momento en que nace.**
+
+**45. La memoria se mide antes de arreglarla, porque la causa que uno trae escrita puede no
+ser la mayor (10 de octubre de 2026).** Qué pasó. La lección 42 dejó escrito que un documento
+ocupaba más de 4 veces su tamaño porque `resolverChallenge` lo leía sobre un `clone()`. El
+primer arreglo hizo exactamente eso, leerlo una vez con `arrayBuffer()` y rearmar la
+respuesta, y la medición salió PEOR. 256 MB sobre la base para un documento de 40, contra 174.
+El costo no era el `clone()`. eran las copias. Y al medir el camino completo de la tool
+apareció algo que nadie había mirado. `tramoBase64` pasaba el archivo ENTERO a base64 en cada
+llamada para entregar un tramo de 200.000 caracteres, y un documento de 10 MB por
+`cmf_documento_descargar` subía la memoria en 105 MB, con 128 en total para el Worker.
+Prescripción, las 3 partes. `leerCuerpoUnaVez` de `src/client/anti-bot.ts` copia los tramos a
+un solo bloque del largo declarado a medida que llegan, y entrega una respuesta cuyo cuerpo es
+ese mismo bloque. `bytesDe(res)` lo devuelve sin otra copia, y lo usan los ayudantes del
+cliente y `cmf_documento_descargar`. `tramoBase64` codifica solo los bytes del tramo. Y hay un
+tope, `MAX_BYTES_DE_UNA_RESPUESTA`, de 20 MB. sobre eso el cliente lanza
+`RespuestaDemasiadoGrande`, que dice el peso y el tope, antes de bajar un byte si el largo
+venía declarado. No se reintenta y no cuenta como proxy caído. Los números, en MB que sube la
+memoria del proceso workerd sobre su base de unos 57, medidos con `npm run workerd:memoria`.
+
+| camino | 10 MB | 20 MB |
+|---|---|---|
+| antes, cualquier camino del cliente | 56 | 112 |
+| antes, `cmf_documento_descargar` con su base64 | 105 | 206 |
+| ahora, tools que bajan documentos, con largo declarado | 25 | 49 |
+| ahora, lo mismo sin largo declarado | 34 | 65 |
+| ahora, `fetchCmf` directo con `arrayBuffer()` | 52 | 102 |
+
+**El tamaño seguro medido es 20 MB**, por los caminos de las tools. 110 MB de proceso con el
+largo declarado y 125 sin él. Por `fetchCmf` directo con `arrayBuffer()` el seguro es 10 MB, y
+por eso quien baja algo grande usa `bytesDe`. La medida es la memoria del proceso entero, que
+es más que la del aislado, así que el margen real es mayor que el que muestra la tabla. Con la
+sonda original de `C:\dev\cmf-mcp-memoria`, que lee con `arrayBuffer()`, 10 MB pasaron de 56
+a 52, 20 MB de 112 a 102, y los 40 MB, que ocupaban 174, ahora se rechazan. Lo vigilan
+`test/memoria-del-documento.test.ts` y `test/descargas.test.ts`. Lo que queda abierto.
+`cacheBinario` guarda hasta 100 documentos por 15 minutos sin tope de bytes, así que varios
+documentos grandes seguidos por `cmf_empresa_paquete_documentos` pueden llenar la memoria
+aunque cada uno quepa. Regla. **un arreglo de memoria se mide con la misma sonda antes y
+después, por cada camino que usa el dato, y el camino completo de la tool cuenta más que el
+del cliente.**
+
+**46. Lo que dejó la séptima revisión adversarial, y lo que se acepta sin arreglar (10 de
+octubre de 2026).** Arreglado, cada cosa con su prueba. Quien esperaba fuera de la cola llena
+perdía su lugar frente a quien llegaba después, y ahora las de afuera tienen su fila en orden
+de llegada (`afuera` en el limitador). Cada rechazo por cola llena dejaba su línea, y ahora
+sale una por ráfaga con la cuenta en `rechazadas`. La línea sale 1 segundo después del primer
+rechazo y cuenta la cola de ESE momento. la primera versión la leía al salir, y con la máquina
+cargada decía «en_cola 0» para una cola que estuvo llena (1 corrida roja de 3 con la CPU
+ocupada). Una comilla sin cerrar en la cabecera
+Cookie de quien llama dejaba la cookie vieja y repetía la del jar en cada pasada. Y las
+pruebas de `test/cuerpo-sin-fin.test.ts` pasan un plazo de cupo de 5 segundos. con un cupo
+perdido, el archivo tardaba más de media hora en dar rojo y ahora tarda 82 segundos.
+
+Lo que se acepta, con el número que lo midió.
+
+- **En workerd local sobre Windows una petición recibe unos 70 temporizadores por segundo.**
+  Una petición con 400 consultas atrasa sus propios latidos a uno cada 6,9 segundos, y con la
+  gracia de 5 segundos otra petición le barría cupos vivos (4 de 4). En Cloudflare no pasa. una
+  petición recibió 20000 por segundo. Un escenario de workerd con cientos de consultas en una
+  sola petición mide el reloj de Windows, no el limitador.
+- **Con el hilo detenido 1,1 segundos cada 2,4 a 3,5, nadie junta la racha de 2,5 segundos**, y
+  los cupos muertos no vuelven mientras dure ese ritmo (4 de 4, en Node). Se cura sola cuando
+  el ritmo termina.
+- **Un latido que corre con casi 1 segundo de atraso todavía cuenta como a tiempo y barre.** Si
+  la detención cae en una fase de decenas de milisegundos, saca de la cola a puestos vivos, que
+  vuelven al final (5 de 5 con la fase armada). Pierden su lugar. No se pierde ningún cupo.
+
+Los mutantes que quedan vivos, con su razón. El atraso tolerado en 2500 o en 4000 ms no cambia
+nada para los cupos, porque una detención más corta que eso, más 1 segundo de latido, no llega
+a la gracia mínima de 5. Rechazar por cola llena aunque haya lugar necesita una ventana de 50
+ms entre 2 sondeos. Dejar a una consulta rechazada o rendida en la fila de afuera se cura a
+los 2 segundos con el barrido de esa fila. El vigía que no vence por tiempo y el que no libera
+su turno al terminar solo cuestan tiempo. Las reglas de prueba que dejó el día. **Una prueba
+que con el mutante puesto se cuelga no es una prueba.** Los cuerpos de una prueba son
+finitos, para que si nadie los corta la prueba dé rojo. Y 2 bloques grandes no se comparan
+con `deepEqual`, que con 300.000 bytes distintos tarda minutos en armar el mensaje. **Y el
+mutante se corre contra la prueba recién escrita antes de darla por buena.** La prueba de la
+detención de 4,9 segundos partía 1100 ms después de una señal de vida, la señal quedaba en 5,0
+segundos justos, y el mutante sobrevivía. Con 1900 ms queda en 5,8.
+
 ## Gotchas
+
+- **Un reemplazo de texto por script va con calce exacto y sin barras invertidas.** El hook de
+  los heredoc no cubre `node -e`. El 10 de octubre de 2026 pasaron 2 textos con `\n` por
+  `node -e`, y no hubo daño solo porque el reemplazo exigía que el texto buscado apareciera
+  exactamente 1 vez. Si el texto lleva una barra, va con Edit.
+- **La sonda recién desplegada responde «error code: 1042» unos segundos.** Es la dirección
+  workers.dev que todavía no se propaga. Se espera a que `/id` responda 200.
+- **En un bucle que gasta CPU, un contador sobre mil millones cuesta 3 veces más por vuelta.**
+  Deja de ser un entero chico para el motor. 6 segundos pedidos fueron 18. La sonda quema CPU
+  en 2 bucles anidados por eso.
 
 - **La fuente se cae, y eso no es un defecto tuyo.** El servlet BaseDato devuelve a veces el
   desafío anti-bot en vez de la tabla. Un plazo agotado es evidencia sobre la CMF, no sobre el
