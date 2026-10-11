@@ -3,12 +3,15 @@
   "entry": [
     "test/**/*.test.ts",
     "test/verify-*.ts",
-    "herramientas/*.mjs"
+    "herramientas/*.mjs",
+    "herramientas/workerd/*.mjs",
+    "herramientas/workerd/entrada*.ts"
   ],
   "project": [
     "src/**/*.ts",
     "test/**/*.ts",
-    "herramientas/*.mjs"
+    "herramientas/*.mjs",
+    "herramientas/workerd/*.{mjs,ts}"
   ],
   "ignoreDependencies": [
     "cloudflare"

@@ -29,7 +29,10 @@
     "lint": "biome lint src test",
     "alertas": "node herramientas/alertas.mjs",
     "hallazgos": "node herramientas/hallazgos.mjs",
-    "semgrep": "uvx semgrep scan --config .semgrep/reglas-propias.yml src test"
+    "semgrep": "uvx semgrep scan --config .semgrep/reglas-propias.yml src test",
+    "workerd": "node herramientas/workerd/escenarios.mjs",
+    "workerd:memoria": "node herramientas/workerd/memoria.mjs",
+    "sonda": "node herramientas/workerd/sonda-produccion.mjs"
   },
   "engines": {
     "node": ">=20"

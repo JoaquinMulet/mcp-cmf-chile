@@ -5,3 +5,4 @@ dist/
 dev.vars
 *.log
 .DS_Store
+herramientas/workerd/.sonda-sin-yo.wrangler.json

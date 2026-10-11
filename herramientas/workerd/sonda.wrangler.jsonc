@@ -1,0 +1,23 @@
+{
+  // Worker de SONDA. Sirve para medir en Cloudflare de verdad lo que workerd
+  // local no reproduce (el reloj durante la CPU, el corte del cliente, la
+  // caja aislada). No tiene rutas ni dominio, no consulta a la CMF y se borra
+  // al terminar. Lo despliega y lo borra herramientas/workerd/sonda-produccion.mjs.
+  "name": "sonda-limitador-cmf",
+  "main": "entrada.ts",
+  "compatibility_date": "2026-07-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  "vars": {
+    // Con esta variable la red es una función del propio Worker. Sin ella, la
+    // sonda desplegada no atiende nada.
+    "RED_INTERNA": "1"
+  },
+  "worker_loaders": [{ "binding": "CAJA" }],
+  // La sonda se llama a sí misma, para que varias peticiones caigan en el
+  // mismo aislado. El primer despliegue va sin este binding, porque el
+  // Worker todavía no existe. sonda-produccion.mjs lo hace en 2 pasos.
+  "services": [{ "binding": "YO", "service": "sonda-limitador-cmf" }]
+}
