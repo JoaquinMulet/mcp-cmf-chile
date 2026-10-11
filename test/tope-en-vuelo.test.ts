@@ -426,17 +426,84 @@ test("quien espera en la cola más de 2 segundos conserva su puesto", async () =
 test("la cola de cupo tiene un tope de 1000, y la que no cabe falla tras esperar la gracia de la cola", async () => {
   const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "15000" };
   await conRedLenta(redConPegadas(() => undefined), async (avisos) => {
-    const ocupadas = ocuparCupos(6000, env);
+    // Los cupos quedan ocupados durante las 2 ráfagas, para que la cola no se mueva.
+    const ocupadas = ocuparCupos(9500, env);
     // Las 1000 de la cola se rinden solas a los 5 segundos, para no tener que atenderlas.
     const enCola = Array.from({ length: 1000 }, (_, i) =>
       fetchCmf(`https://www.cmfchile.cl/en-cola${i}`, {}, { ...env, CMF_ESPERA_CUPO_MS: "5000" }),
     );
     await yEsperar(Promise.allSettled([ocupadas, ...enCola]), async () => {
       const inicio = Date.now();
-      await assert.rejects(fetchCmf("https://api.sbif.cl/no-cabe", {}, env), /1000 consultas esperando/);
+      // 25 que no caben, todas juntas. Cada rechazo dejaba su propia línea en
+      // el log, y una ráfaga lo inundaba.
+      const rechazos = await Promise.all(
+        Array.from({ length: 25 }, (_, i) => fetchCmf(`https://api.sbif.cl/no-cabe${i}`, {}, env).then(() => "entró", (e) => (e as Error).message)),
+      );
+      for (const r of rechazos) assert.match(r, /1000 consultas esperando/);
       const tardo = Date.now() - inicio;
-      assert.ok(tardo >= 2400 && tardo < 4500, `tardó ${tardo} ms en rechazarla`);
-      assert.ok(avisos.some((a) => a.includes("cola_llena")), `sin aviso. ${avisos.join(" | ")}`);
+      assert.ok(tardo >= 2400 && tardo < 4500, `tardó ${tardo} ms en rechazarlas`);
+      // La línea sale cuando la ráfaga se cierra, 1 segundo después del primer rechazo.
+      await new Promise((r) => setTimeout(r, 1300));
+      const lineas = avisos.filter((a) => a.includes("cola_llena"));
+      assert.equal(lineas.length, 1, `líneas de cola llena. ${lineas.join(" | ")}`);
+      assert.deepEqual(JSON.parse(lineas[0]), { cmf_cupo: { motivo: "cola_llena", rechazadas: 25, en_vuelo: TOPE, en_cola: 1000, host: "api.sbif.cl" } });
+      // La ráfaga siguiente cuenta desde cero. Las 1000 de la cola ya se
+      // rindieron, así que se vuelve a llenar con otras tantas.
+      const otraVez = Array.from({ length: 1000 }, (_, i) =>
+        fetchCmf(`https://www.cmfchile.cl/otra-vez${i}`, {}, { ...env, CMF_ESPERA_CUPO_MS: "4000" }).catch(() => {}),
+      );
+      await yEsperar(Promise.all(otraVez), async () => {
+        const segundos = await Promise.all(
+          Array.from({ length: 5 }, (_, i) => fetchCmf(`https://api.sbif.cl/tampoco-cabe${i}`, {}, env).then(() => "entró", (e) => (e as Error).message)),
+        );
+        for (const r of segundos) assert.match(r, /1000 consultas esperando/);
+        await new Promise((r) => setTimeout(r, 1300));
+        const todas = avisos.filter((a) => a.includes("cola_llena"));
+        assert.equal(todas.length, 2, `líneas de cola llena. ${todas.join(" | ")}`);
+        assert.equal(JSON.parse(todas[1]).cmf_cupo.rechazadas, 5);
+      });
+    });
+  });
+});
+
+test("si la primera de las que esperan afuera murió, la que sigue entra cuando la barren", async () => {
+  const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "12000" };
+  await conRedLenta(redConPegadas(() => undefined), async () => {
+    const ocupadas = ocuparCupos(7000, env);
+    const enCola = Array.from({ length: 999 }, (_, i) => fetchCmf(`https://www.cmfchile.cl/repleta${i}`, {}, { ...env, CMF_ESPERA_CUPO_MS: "6000" }));
+    // La número 1000 se rinde a los 1500 ms y deja 1 lugar.
+    const seVa = fetchCmf("https://www.cmfchile.cl/se-rinde", {}, { ...env, CMF_ESPERA_CUPO_MS: "1500" }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 100));
+    // Llega con la cola llena, queda primera en la fila de afuera, y muere ahí.
+    lanzarMuertas(["setTimeout"], ["https://tasas.cmfchile.cl/muerta-afuera"], env);
+    const finDeN = fetchCmf("https://datosbanco.cmfchile.cl/detras-de-la-muerta-de-afuera", {}, env).then((r) => `entró con ${r.status}`, (e) => (e as Error).message);
+    await yEsperar(Promise.allSettled([ocupadas, ...enCola, seVa]), async () => {
+      assert.equal(await finDeN, "entró con 200");
+    });
+  });
+});
+
+// Lo midió la séptima revisión adversarial el 10 de octubre de 2026. Quien
+// llegaba con la cola llena esperaba afuera y miraba cada 50 ms, y quien
+// llegaba después probaba entrar al instante. Cuando se abría un lugar se lo
+// llevaba la recién llegada, y la que esperaba recibía «cola llena».
+test("quien espera fuera de la cola llena entra antes que quien llega después", async () => {
+  const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "12000" };
+  await conRedLenta(redConPegadas(() => undefined), async () => {
+    const ocupadas = ocuparCupos(7000, env);
+    const enCola = Array.from({ length: 999 }, (_, i) => fetchCmf(`https://www.cmfchile.cl/llena${i}`, {}, { ...env, CMF_ESPERA_CUPO_MS: "6000" }));
+    // La número 1000 se rinde a los 1500 ms y deja 1 lugar. En ese instante llega N.
+    let llegoN: (fin: Promise<string>) => void = () => {};
+    const finDeN = new Promise<Promise<string>>((r) => (llegoN = r));
+    const seVa = fetchCmf("https://www.cmfchile.cl/se-va", {}, { ...env, CMF_ESPERA_CUPO_MS: "1500" }).catch(() => {
+      llegoN(fetchCmf("https://datosbanco.cmfchile.cl/N", {}, env).then((r) => `entró con ${r.status}`, (e) => (e as Error).message));
+    });
+    await new Promise((r) => setTimeout(r, 100));
+    // E llega con la cola llena y espera afuera, 1400 ms antes que N.
+    const finDeE = fetchCmf("https://tasas.cmfchile.cl/E", {}, env).then((r) => `entró con ${r.status}`, (e) => (e as Error).message);
+    await yEsperar(Promise.allSettled([ocupadas, ...enCola, seVa]), async () => {
+      assert.match(await (await finDeN), /1000 consultas esperando/, "N llegó después y no había lugar para ella");
+      assert.equal(await finDeE, "entró con 200", "E esperaba desde antes y el lugar era suyo");
     });
   });
 });
@@ -673,6 +740,35 @@ test("una consulta que nace al terminar una detención no da por muertos a los v
         // Nace en el mismo turno en que termina la detención, y el hilo sigue ocupado un poco más.
         const recienNacida = fetchCmf("https://datosbanco.cmfchile.cl/recien-nacida", {}, env);
         ocupar(120);
+        await new Promise((r) => setTimeout(r, 700));
+        assert.ok(!avisos.some((a) => a.includes("cmf_cupo_recuperado")), `dio por muerto a un vivo. ${avisos.join(" | ")}`);
+        await recienNacida;
+      });
+    },
+  );
+});
+
+// Un mutante que la séptima revisión adversarial encontró vivo. Con el atraso
+// tolerado en 5000 ms en vez de 1000, todas las pruebas pasaban, y una
+// detención de 4,9 segundos daba por muertos a 4 vivos. Las demás pruebas usan
+// detenciones de 6 y de 11 segundos, que cortan la racha con cualquiera de los
+// 2 valores.
+test("una detención de 4,9 segundos, más corta que la gracia, tampoco da por muertos a los vivos", async () => {
+  const env = { ...GRACIA_CORTA, CMF_RATE_LIMIT_MS: "0", CMF_ESPERA_CUPO_MS: "20000" };
+  await conRedLenta(
+    redConPegadas(() => undefined),
+    async (avisos) => {
+      const ocupadas = ocuparCupos(9000, env);
+      const enCola = [0, 1].map((i) => fetchCmf(`https://api.sbif.cl/esperaba${i}`, {}, env));
+      await yEsperar(Promise.allSettled([ocupadas, ...enCola]), async () => {
+        // 900 ms después de una señal de vida y antes de la siguiente. Al
+        // terminar la detención la señal tiene 5,8 segundos, más que la gracia
+        // de 5. Con 1100 ms quedaba en 5,0 justos, y el mutante sobrevivía.
+        await new Promise((r) => setTimeout(r, 1900));
+        for (const hasta = Date.now() + 4900; Date.now() < hasta; ) {
+          // El hilo no suelta el control.
+        }
+        const recienNacida = fetchCmf("https://datosbanco.cmfchile.cl/nace-tras-4900", {}, env);
         await new Promise((r) => setTimeout(r, 700));
         assert.ok(!avisos.some((a) => a.includes("cmf_cupo_recuperado")), `dio por muerto a un vivo. ${avisos.join(" | ")}`);
         await recienNacida;

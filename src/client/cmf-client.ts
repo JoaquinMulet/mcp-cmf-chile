@@ -156,6 +156,8 @@ interface Cupo {
 interface Puesto {
   visto: number;
   fuera: boolean;
+  /** Está en la fila de quienes esperan fuera de la cola llena. */
+  afuera: boolean;
 }
 
 /** Cada cuánto renueva su señal de vida quien tiene un cupo. */
@@ -185,6 +187,8 @@ const RACHA_PARA_BARRER_MS = LATIDO_MS + 1500;
  * de 2026).
  */
 const MAX_COLA = 1000;
+/** Cuánto dura una ráfaga de rechazos por cola llena. Sale una línea en el log por ráfaga. */
+const RAFAGA_COLA_LLENA_MS = 1000;
 
 /**
  * Lleva la cuenta de desde cuándo un temporizador periódico corre a tiempo.
@@ -261,6 +265,12 @@ class RateLimiter {
   private tomados = new Set<Cupo>();
   /** Quienes esperan cupo, en orden de llegada. */
   private cola: Puesto[] = [];
+  /** Quienes llegaron con la cola llena y esperan afuera, en orden de llegada. */
+  private afuera: Puesto[] = [];
+  /** Rechazos por cola llena que todavía no salen en el log. */
+  private rechazadas = 0;
+  /** Hasta cuándo dura la ráfaga de rechazos en curso. */
+  private rafagaHasta = 0;
   private ultimoBarrido = 0;
   private ultimoAvisoDeDetencion = 0;
   /** Hasta cuándo hay un vigía corriendo. Uno solo a la vez. */
@@ -387,6 +397,14 @@ class RateLimiter {
       this.liberar(cupo);
       console.warn(JSON.stringify({ cmf_cupo_recuperado: { sin_senal_ms: ahora - cupo.visto, en_vuelo: this.tomados.size } }));
     }
+    // Quien espera afuera también puede morir, y el primero de esa fila la
+    // frena entera. Si lo barrieron estando vivo, vuelve al final.
+    if (this.afuera.some((puesto) => ahora - puesto.visto > GRACIA_COLA_MS)) {
+      this.afuera = this.afuera.filter((puesto) => {
+        puesto.afuera = ahora - puesto.visto <= GRACIA_COLA_MS;
+        return puesto.afuera;
+      });
+    }
     if (!this.cola.some((puesto) => ahora - puesto.visto > GRACIA_COLA_MS)) return;
     this.cola = this.cola.filter((puesto) => {
       puesto.fuera = ahora - puesto.visto > GRACIA_COLA_MS;
@@ -407,7 +425,7 @@ class RateLimiter {
   private async hacerCola(host: string, esperaCupoMs: number, graciaCupoMs: number): Promise<Cupo> {
     const limite = Date.now() + esperaCupoMs;
     // Nace afuera. Entra de inmediato si hay lugar.
-    const puesto: Puesto = { visto: Date.now(), fuera: true };
+    const puesto: Puesto = { visto: Date.now(), fuera: true, afuera: false };
     this.entrar(puesto, false, host);
     const racha = new Racha(SONDEO_COLA_MS);
     for (;;) {
@@ -435,21 +453,71 @@ class RateLimiter {
    * lanza.
    */
   private entrar(puesto: Puesto, yaBarrio: boolean, host: string): void {
-    if (this.cola.length < MAX_COLA) {
+    // Afuera también hay orden de llegada. Entra quien lleva más tiempo
+    // esperando, y quien llega después se pone detrás. Antes la recién llegada
+    // probaba entrar al instante y la que esperaba miraba cada 50 ms, así que
+    // el lugar que se abría se lo llevaba la que llegó última (medido por la
+    // séptima revisión adversarial el 10 de octubre de 2026).
+    const leToca = this.afuera.length === 0 || this.afuera[0] === puesto;
+    if (leToca && this.cola.length < MAX_COLA) {
+      if (puesto.afuera) this.afuera.shift();
+      puesto.afuera = false;
       puesto.fuera = false;
       this.cola.push(puesto);
       return;
     }
-    if (!yaBarrio) return;
-    console.warn(JSON.stringify({ cmf_cupo: { motivo: "cola_llena", en_vuelo: this.tomados.size, en_cola: this.cola.length, host } }));
+    if (!puesto.afuera) {
+      puesto.afuera = true;
+      this.afuera.push(puesto);
+    }
+    // Con lugar en la cola no se rechaza a nadie. le toca a otra antes, y entra en su próximo sondeo.
+    if (!yaBarrio || this.cola.length < MAX_COLA) return;
+    this.salir(puesto);
+    this.avisarColaLlena(host);
     throw new Error(
       `El servidor tiene ${this.cola.length} consultas esperando su turno hacia la CMF y no recibe más por ahora. Reintente en unos minutos.`,
     );
   }
 
+  /** Saca el puesto de donde esté, la cola o la espera de afuera. */
+  private salir(puesto: Puesto): void {
+    this.cola = this.cola.filter((otro) => otro !== puesto);
+    if (!puesto.afuera) return;
+    puesto.afuera = false;
+    this.afuera = this.afuera.filter((otro) => otro !== puesto);
+  }
+
+  /**
+   * Deja UNA línea en el log por cada ráfaga de rechazos por cola llena, con
+   * la cuenta. La línea sale cuando la ráfaga se cierra, RAFAGA_COLA_LLENA_MS
+   * después de su primer rechazo. Antes salía una línea por rechazo, y una
+   * ráfaga inundaba el log.
+   */
+  private avisarColaLlena(host: string): void {
+    this.rechazadas++;
+    const ahora = Date.now();
+    if (ahora < this.rafagaHasta) return;
+    this.rafagaHasta = ahora + RAFAGA_COLA_LLENA_MS;
+    // El temporizador es de la petición del primer rechazo, que termina apenas
+    // recibe su error. En Workers se la mantiene viva hasta que la línea salga.
+    // Si muere igual, la cuenta no se pierde. sale con la línea de la ráfaga
+    // siguiente.
+    mantenerViva(
+      new Promise<void>((listo) => {
+        const cierre = setTimeout(() => {
+          const rechazadas = this.rechazadas;
+          this.rechazadas = 0;
+          console.warn(JSON.stringify({ cmf_cupo: { motivo: "cola_llena", rechazadas, en_vuelo: this.tomados.size, en_cola: this.cola.length, host } }));
+          listo();
+        }, RAFAGA_COLA_LLENA_MS);
+        (cierre as { unref?: () => void }).unref?.();
+      }),
+    );
+  }
+
   /** Saca el puesto de la cola y lanza el error de quien no alcanzó cupo en su plazo. */
   private rendirse(puesto: Puesto, host: string, esperaCupoMs: number): never {
-    this.cola = this.cola.filter((otro) => otro !== puesto);
+    this.salir(puesto);
     console.warn(JSON.stringify({ cmf_cupo: { en_vuelo: this.tomados.size, en_cola: this.cola.length, espera_ms: esperaCupoMs, host } }));
     throw new Error(
       `El servidor tiene sus ${this.maxInflight} consultas a la CMF ocupadas y esta no alcanzó cupo en ${esperaCupoMs} ms. Reintente en unos minutos.`,
