@@ -140,6 +140,37 @@ test("el bloqueo se recuerda: la consulta siguiente va directo al proxy", () =>
     assert.equal(alProxy(llamadas).length, 2);
   }));
 
+// Lo encontró la revisión adversarial del 25 de octubre de 2026. La memoria del
+// bloqueo era por URL de proxy, y con 9 hosts con salida un 403 de www mandaba
+// api.sbif.cl, con su API key en la query, por el proxy sin probar el directo.
+test("el bloqueo de un host no manda a los demás hosts al proxy", () =>
+  conRed(
+    () => bloqueo403(),
+    delProxy(PAGINA),
+    async (llamadas) => {
+      const env = entorno(300);
+      await getLegacy(RUTA, { rut: "90749000", pestania: 1 }, env);
+      const original = globalThis.fetch;
+      globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+        const u = String(url);
+        if (new URL(u).hostname === "api.sbif.cl") {
+          llamadas.push({ url: u, method: init?.method ?? "GET", headers: new Headers(init?.headers), body: "" });
+          return new Response('{"UFs":[]}', { status: 200, headers: { "content-type": "application/json" } });
+        }
+        return original(url, init);
+      }) as typeof fetch;
+      try {
+        const res = await fetchCmf("https://api.sbif.cl/api-sbifv3/recursos_api/uf?apikey=SECRETA&formato=json", {}, env);
+        assert.equal(res.status, 200);
+      } finally {
+        globalThis.fetch = original;
+      }
+      const haciaApi = llamadas.filter((l) => l.url.startsWith("https://api.sbif.cl/"));
+      assert.equal(haciaApi.length, 1, "api.sbif.cl se consulta directo");
+      assert.ok(!alProxy(llamadas).some((l) => (l.headers.get("x-cmf-destino") ?? "").includes("api.sbif.cl")), "api.sbif.cl no pasa por el proxy");
+    },
+  ));
+
 test("sin proxy configurado, el 403 sigue subiendo como bloqueo", () =>
   conRed(bloqueo403, delProxy(PAGINA), async (llamadas) => {
     const env = { CMF_RATE_LIMIT_MS: "0", CMF_REINTENTO_403_MS: "0" };

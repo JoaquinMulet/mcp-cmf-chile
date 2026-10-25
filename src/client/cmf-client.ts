@@ -669,7 +669,11 @@ const MARCA_COLA = "x-cmf-salida-cola";
 const ESPERA_COLA_MS = 1500;
 const MEMORIA_BLOQUEO_MS = 10 * 60 * 1000;
 
-/** Hasta cuándo se da por bloqueado el camino directo, por URL de proxy. */
+/**
+ * Hasta cuándo se da por bloqueado el camino directo, por URL de proxy Y por host.
+ * Con un solo host daba lo mismo. Con 9, un 403 de www mandaba al proxy a los otros
+ * 8 sin probar el directo, api.sbif.cl con su API key incluido.
+ */
 const directoBloqueadoHasta = new Map<string, number>();
 
 /**
@@ -702,7 +706,7 @@ function salidaChilena(env: CmfEnv, destino: URL, timeoutMs: number): { clave: s
   if (proxy.protocol !== "https:") return null;
   const token = env.CMF_PROXY_TOKEN;
   return {
-    clave: proxy.toString(),
+    clave: `${proxy.toString()} ${destino.hostname}`,
     fetchFn: (url, init) => {
       const headers = new Headers(init.headers ?? {});
       // Normalizada: una cabecera no admite caracteres fuera de latin1.
