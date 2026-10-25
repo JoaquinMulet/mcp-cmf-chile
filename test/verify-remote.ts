@@ -20,6 +20,23 @@ interface Incoming {
   error?: any;
 }
 
+/**
+ * Un 520 a 526 o un 530 lo escribe Cloudflare, nunca la CMF, que no está detrás
+ * de Cloudflare (lección 36). Que llegue al texto de una tool quiere decir que el
+ * Worker no llegó al origen y que la salida chilena tampoco lo salvó. El 25 de
+ * octubre de 2026 eso duró al menos 3 días con este archivo en PASS (lección 48).
+ */
+const ERROR_DE_CLOUDFLARE = /HTTP 52[0-6]\b|HTTP 530\b|error code: 1\d{3}\b/;
+const DESPUES_DE_DESPLEGAR = process.env.CMF_ANTES_DE_DESPLEGAR !== "1";
+function sinErrorDeCloudflare(nombre: string, texto: string): void {
+  const roto = ERROR_DE_CLOUDFLARE.test(texto);
+  if (DESPUES_DE_DESPLEGAR) {
+    check(!roto, `${nombre} no trae un 52x o 530 de Cloudflare (salida chilena caída o mal cubierta)`);
+  } else if (roto) {
+    console.log(`INFO  antes de desplegar. ${nombre} trae un error de Cloudflare: ${texto.slice(0, 80)}`);
+  }
+}
+
 async function post(body: unknown, headers: Record<string, string>): Promise<{ status: number; contentType: string; sessionId: string | null; messages: Incoming[]; raw: string }> {
   const res = await fetch(URL_, {
     method: "POST",
@@ -134,15 +151,18 @@ async function main(): Promise<void> {
   check(empDatos || empFuente, `cmf_empresa_info(61808000) → datos reales, o error de fuente declarado (${empTexto.slice(0, 60)})`);
   if (empFuente) console.log(`FUENTE  cmf_empresa_info: la CMF no respondió a la instancia publicada (bloqueo o caída), reportado honestamente`);
   console.log(`INFO  cmf_empresa_info texto: ${empTexto.slice(0, 160)}`);
+  sinErrorDeCloudflare("cmf_empresa_info", empTexto);
 
   const indicador = await call("cmf_api_indicador_valor", { serie: "uf", anio: "2025", mes: "12", dia: "31" });
   const indTexto: string = indicador.resultado?.content?.[0]?.text ?? "";
   console.log(`INFO  cmf_api_indicador_valor(uf 2025-12-31): isError=${indicador.resultado?.isError} ${indTexto.slice(0, 120)}`);
+  sinErrorDeCloudflare("cmf_api_indicador_valor", indTexto);
 
   const hechos = await call("cmf_hechos_globales", { mercado: "V", desde: "2026-08-01", hasta: "2026-08-12" });
   const hechosTexto: string = hechos.resultado?.content?.[0]?.text ?? "";
   check(!hechos.error && (!hechos.resultado?.isError || /captcha/i.test(hechosTexto)), `cmf_hechos_globales → datos o solicitud de captcha (MRTR) (${hechosTexto.slice(0, 90)})`);
   console.log(`INFO  cmf_hechos_globales: ${hechosTexto.slice(0, 140)}`);
+  sinErrorDeCloudflare("cmf_hechos_globales", hechosTexto);
 
   const malRut = await call("cmf_empresa_hechos", { rut: "abc", desde: "2026-01-01", hasta: "2026-01-31" });
   check(malRut.resultado?.isError === true, `input inválido (rut=abc) → isError=true (SEP-1303)`);
