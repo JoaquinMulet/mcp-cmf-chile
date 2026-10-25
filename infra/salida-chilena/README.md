@@ -1,8 +1,9 @@
 # Salida chilena
 
-Proxy mínimo que consulta a `www.cmfchile.cl` desde una IP chilena. El Worker lo usa solo
-cuando la CMF rechaza su consulta directa con 403 o 520. El porqué y la evidencia están en
-la lección 36 del `CLAUDE.md` de la raíz.
+Proxy mínimo que consulta a los hosts de la CMF desde una IP chilena. El Worker lo usa solo
+cuando su consulta directa vuelve con 403, o con un 520 a 526 o 530 de Cloudflare (no llegó
+al origen). El porqué y la evidencia están en las lecciones 36 y 48 del `CLAUDE.md` de la
+raíz.
 
 ## Piezas
 
@@ -18,7 +19,9 @@ El archivo `token` es el secreto compartido con el Worker. Se generó en la máq
 ## Los 3 cerrojos
 
 1. Secreto. Sin la cabecera `X-Cmf-Token` correcta responde 401.
-2. Destino. Solo acepta `https://www.cmfchile.cl/...` en `X-Cmf-Destino`. Lo demás es 400.
+2. Destino. Solo acepta `https://` hacia uno de los 9 hosts de `HOSTS_PERMITIDOS`, los que
+   tienen el DNS de la CMF, en `X-Cmf-Destino`. Lo demás es 400. La lista es la misma que
+   `HOSTS_CON_SALIDA` del Worker, y `test/salida-proxy.test.ts` exige que sean iguales.
 3. Ritmo. Una consulta a la CMF cada 600 ms como máximo, y 12 en curso. Con la cola llena
    responde 429.
 

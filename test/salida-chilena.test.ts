@@ -11,7 +11,9 @@
 import "./sin-red-real.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CmfUpstreamError, fetchCmf, getLegacy } from "../src/client/cmf-client.js";
+import { CmfUpstreamError, fetchCmf, getLegacy, HOSTS_CON_SALIDA } from "../src/client/cmf-client.js";
+// @ts-expect-error el proxy es JavaScript sin tipos, a propósito: corre sin compilar.
+import { HOSTS_PERMITIDOS } from "../infra/salida-chilena/proxy.mjs";
 
 const RUTA = "/institucional/mercados/entidad.php";
 const DESTINO = `https://www.cmfchile.cl${RUTA}?rut=90749000&pestania=1`;
@@ -148,12 +150,44 @@ test("sin proxy configurado, el 403 sigue subiendo como bloqueo", () =>
     assert.equal(alProxy(llamadas).length, 0);
   }));
 
-test("la salida chilena solo sirve a www.cmfchile.cl", () =>
-  conRed(bloqueo403, delProxy(PAGINA), async (llamadas) => {
-    const res = await fetchCmf("https://api.sbif.cl/api-sbifv3/recursos_api/uf?formato=json", {}, entorno(5));
-    assert.equal(res.status, 403);
-    assert.equal(alProxy(llamadas).length, 0);
-  }));
+// El 25 de octubre de 2026 el 530 con "error code: 1016" salía en todos los
+// hosts cuyo DNS administra la CMF (araucaria), no solo en www.cmfchile.cl.
+// BEST vive en Azure y respondía bien. Medido con 1 tool de cada host.
+const sin1016 = () => new Response("error code: 1016\n", { status: 530, headers: { server: "cloudflare" } });
+const HOSTS_DE_LA_CMF = [
+  "api.sbif.cl",
+  "tasas.cmfchile.cl",
+  "datosbanco.cmfchile.cl",
+  "cronologiabancaria.cmfchile.cl",
+  "conocetudeuda.cmfchile.cl",
+  "acreencias.cmfchile.cl",
+  "conocetuseguro.cl",
+  "www.conocetuseguro.cl",
+];
+HOSTS_DE_LA_CMF.forEach((host, i) => {
+  test(`${host} también sale por la salida chilena cuando Cloudflare no llega`, () =>
+    conRed(sin1016, delProxy(PAGINA), async (llamadas) => {
+      const destino = `https://${host}/ruta?x=1`;
+      const res = await fetchCmf(destino, {}, entorno(200 + i));
+      assert.equal(await res.text(), PAGINA);
+      const [p] = alProxy(llamadas);
+      assert.equal(p.headers.get("x-cmf-destino"), destino);
+    }));
+});
+
+test("el proxy y el Worker usan la misma lista de hosts con salida chilena", () => {
+  // Son 2 programas que se despliegan por separado, así que la lista vive en
+  // los 2. Esta prueba es la que impide que diverjan.
+  assert.deepEqual([...(HOSTS_PERMITIDOS as Set<string>)].sort(), [...HOSTS_CON_SALIDA].sort());
+});
+
+for (const host of ["best-sbif-api.azurewebsites.net", "raw.githubusercontent.com", "best-cmf.cl"]) {
+  test(`${host} no tiene el DNS de la CMF y nunca sale por la salida chilena`, () =>
+    conRed(sin1016, delProxy(PAGINA), async (llamadas) => {
+      await fetchCmf(`https://${host}/x`, {}, entorno(5)).catch(() => {});
+      assert.equal(alProxy(llamadas).length, 0);
+    }));
+}
 
 test("si el proxy no responde como proxy, sube el bloqueo original y no se recuerda", () =>
   // Un 502 sin la marca x-cmf-salida es del túnel o de Cloudflare, no de la CMF.

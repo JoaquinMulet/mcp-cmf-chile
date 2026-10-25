@@ -644,8 +644,23 @@ function conPlazoDeCuerpo(res: Response, url: string, ctrl: AbortController, tim
  * 2026 con placement azure:chilecentral). El respaldo es un proxy propio en
  * Chile, que recibe el destino en una cabecera y marca lo que reenvía con
  * x-cmf-salida. Una respuesta sin esa marca es del túnel, no de la CMF.
+ *
+ * Desde el 25 de octubre de 2026 cubre todos los hosts cuyo DNS administra la
+ * CMF (araucaria), porque ese día Cloudflare respondía 530 con "error code:
+ * 1016" en todos ellos. Los que viven en Azure o en GitHub quedan fuera. El
+ * proxy tiene la misma lista, y test/salida-proxy.test.ts exige que sean iguales.
  */
-const HOST_CON_SALIDA = "www.cmfchile.cl";
+export const HOSTS_CON_SALIDA: ReadonlySet<string> = new Set([
+  "www.cmfchile.cl",
+  "api.sbif.cl",
+  "tasas.cmfchile.cl",
+  "datosbanco.cmfchile.cl",
+  "cronologiabancaria.cmfchile.cl",
+  "conocetudeuda.cmfchile.cl",
+  "acreencias.cmfchile.cl",
+  "conocetuseguro.cl",
+  "www.conocetuseguro.cl",
+]);
 const CABECERA_DESTINO = "X-Cmf-Destino";
 const CABECERA_TOKEN = "X-Cmf-Token";
 const MARCA_SALIDA = "x-cmf-salida";
@@ -680,7 +695,7 @@ type FetchFn = (url: string, init: RequestInit) => Promise<Response>;
 
 /** El fetch que sale por el proxy, o null si no aplica a este host o no está configurado. */
 function salidaChilena(env: CmfEnv, destino: URL, timeoutMs: number): { clave: string; fetchFn: FetchFn } | null {
-  if (destino.hostname !== HOST_CON_SALIDA || !env.CMF_PROXY_URL || !env.CMF_PROXY_TOKEN) return null;
+  if (!HOSTS_CON_SALIDA.has(destino.hostname) || !env.CMF_PROXY_URL || !env.CMF_PROXY_TOKEN) return null;
   // Una URL mal escrita apaga la salida, no el camino directo.
   if (!URL.canParse(env.CMF_PROXY_URL)) return null;
   const proxy = new URL(env.CMF_PROXY_URL);

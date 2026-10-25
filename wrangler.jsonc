@@ -29,7 +29,9 @@
     "CMF_GRACIA_CUPO_MS": "45000",
     "CMF_REINTENTO_403_MS": "6000",
     // Salida chilena. www.cmfchile.cl rechaza las IP de salida de
-    // Cloudflare, asi que tras un 403 o un 520 la consulta se repite por
+    // Cloudflare, y desde el 25 de octubre de 2026 Cloudflare no resuelve el
+    // DNS de ningun host de la CMF (530, error 1016). Tras un 403, o un 520 a
+    // 526 o 530 de Cloudflare, la consulta se repite por
     // este proxy propio (infra/salida-chilena). Necesita ademas el secreto
     // CMF_PROXY_TOKEN, que se pone con wrangler secret put. Para apagarla
     // basta borrar esta linea y desplegar.

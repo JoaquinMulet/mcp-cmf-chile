@@ -94,6 +94,30 @@ test("solo acepta destinos https de www.cmfchile.cl", () => {
   assert.equal(destinoPermitido(DESTINO)?.hostname, "www.cmfchile.cl");
 });
 
+test("acepta los 9 hosts con DNS de la CMF y rechaza sus imitaciones", () => {
+  const buenos = [
+    "www.cmfchile.cl",
+    "api.sbif.cl",
+    "tasas.cmfchile.cl",
+    "datosbanco.cmfchile.cl",
+    "cronologiabancaria.cmfchile.cl",
+    "conocetudeuda.cmfchile.cl",
+    "acreencias.cmfchile.cl",
+    "conocetuseguro.cl",
+    "www.conocetuseguro.cl",
+  ];
+  for (const host of buenos) assert.equal(destinoPermitido(`https://${host}/x?y=1`)?.hostname, host, host);
+  const malos = [
+    "https://api.sbif.cl.evil.cl/x",
+    "https://evil.api.sbif.cl/x",
+    "http://api.sbif.cl/x",
+    "https://best-sbif-api.azurewebsites.net/x",
+    "https://raw.githubusercontent.com/x",
+    "https://cmfchile.cl.evil.cl/x",
+  ];
+  for (const malo of malos) assert.equal(destinoPermitido(malo), null, malo);
+});
+
 test("un destino ajeno responde 400 y no sale ninguna consulta", () =>
   conProxy({}, async (base, pedidos) => {
     const res = await fetch(base, { headers: cabeceras({ "X-Cmf-Destino": "https://192.168.0.1/admin" }) });

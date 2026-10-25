@@ -6,9 +6,9 @@
  * recibe del Worker el destino en la cabecera X-Cmf-Destino y hace la
  * consulta desde acá. Sin dependencias: Node 20 o más.
  *
- * Lo que NO es. No es un proxy abierto. Solo consulta a www.cmfchile.cl por
- * https, solo con el secreto compartido, y con un ritmo máximo propio, porque
- * la IP que se expone es la de una casa.
+ * Lo que NO es. No es un proxy abierto. Solo consulta a los hosts de la CMF de
+ * HOSTS_PERMITIDOS por https, solo con el secreto compartido, y con un ritmo
+ * máximo propio, porque la IP que se expone es la de una casa.
  *
  * Toda respuesta reenviada lleva x-cmf-salida: 1. El Worker usa esa marca
  * para separar «la CMF respondió esto» de «el túnel o el proxy fallaron».
@@ -20,7 +20,22 @@ import { timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const HOST_PERMITIDO = "www.cmfchile.cl";
+/**
+ * Los hosts cuyo DNS administra la CMF. Desde el 25 de octubre de 2026 Cloudflare
+ * no los resuelve (530, "error code: 1016"), así que todos necesitan esta salida.
+ * El Worker tiene la misma lista (HOSTS_CON_SALIDA de src/client/cmf-client.ts).
+ */
+export const HOSTS_PERMITIDOS = new Set([
+  "www.cmfchile.cl",
+  "api.sbif.cl",
+  "tasas.cmfchile.cl",
+  "datosbanco.cmfchile.cl",
+  "cronologiabancaria.cmfchile.cl",
+  "conocetudeuda.cmfchile.cl",
+  "acreencias.cmfchile.cl",
+  "conocetuseguro.cl",
+  "www.conocetuseguro.cl",
+]);
 const CABECERAS_DE_IDA = ["user-agent", "accept", "accept-language", "cookie", "content-type"];
 const CABECERAS_DE_VUELTA = ["content-type", "content-disposition", "location"];
 const CUERPO_MAXIMO = 1024 * 1024;
@@ -39,7 +54,7 @@ export function destinoPermitido(valor) {
   } catch {
     return null;
   }
-  if (u.protocol !== "https:" || u.hostname !== HOST_PERMITIDO || u.port !== "" || u.username !== "" || u.password !== "") return null;
+  if (u.protocol !== "https:" || !HOSTS_PERMITIDOS.has(u.hostname) || u.port !== "" || u.username !== "" || u.password !== "") return null;
   return u;
 }
 
