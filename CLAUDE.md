@@ -1229,6 +1229,34 @@ hay que pedir la recolección y leer la memoria de después. La sonda levanta wo
 **antes de creerle a una medición que no se mueve, pregúntate si el instrumento mide lo que
 cambiaste.**
 
+**48. Cloudflare dejó de resolver el DNS de la CMF, y la salida chilena no se enteró (25 de
+octubre de 2026).** Qué falló. Desde al menos el 22 de octubre toda tool de un host de la CMF
+respondía «HTTP 530, error code: 1016». Workers Logs lo mostró en `cmf_upstream` con
+`status: 530`, `server: cloudflare` y cuerpo «error code: 1016», y sin ninguna línea
+`cmf_salida`. El 1016 es Cloudflare sin poder resolver el nombre del origen. Los resolvedores
+públicos (1.1.1.1 y dns.google) sí resolvían los 4 nombres probados, así que el problema está
+en el camino interno de Cloudflare hacia el DNS de la CMF (araucaria), no en el DNS público.
+Cayeron todos los hosts con ese DNS (`www`, `api.sbif.cl`, `datosbanco`, `cronologiabancaria`;
+la respuesta de 17 bytes de BaseDato era justo «error code: 1016»). BEST vive en Azure y
+respondía. Causa raíz. Doble. `esBloqueoDeOrigen` solo conocía el 403 y el 520, y el 530 no
+era bloqueo para el cliente, así que nunca probaba el proxy. Y la salida servía solo a `www`.
+Prescripción. Todo 520 a 526 y 530 es bloqueo de origen, porque la CMF no está detrás de
+Cloudflare y esos estados los escribe Cloudflare (`test/salida-chilena.test.ts`, con un 503
+de la CMF como control que NO va al proxy). La salida cubre los 9 hosts con DNS de la CMF,
+`HOSTS_CON_SALIDA` en el Worker y `HOSTS_PERMITIDOS` en el proxy, y una prueba exige que las 2
+listas sean iguales. La revisión adversarial encontró que la memoria del bloqueo tenía como
+clave solo la URL del proxy, así que un 403 de `www` mandaba a `api.sbif.cl`, con su API key,
+por la casa sin probar el directo; ahora la clave es proxy más host. **Se despliega primero el
+proxy de Floki y después el Worker**: un proxy viejo responde 400 a los hosts nuevos sin la
+marca `x-cmf-salida`, el Worker lo lee como `proxy_fallo` y la memoria rebota. Y por qué nadie
+lo vio en 3 días. `verify-remote.ts` aceptaba como «error de fuente honesto» cualquier HTTP en
+el texto de la tool, así que daba PASS con todo en 530. Ahora, después de desplegar, un 52x o
+530 de Cloudflare en el texto es FAIL; antes de desplegar (`CMF_ANTES_DE_DESPLEGAR=1`) solo se
+informa. Regla. **un estado HTTP que escribe el intermediario no es un error de la fuente**, y
+un verificador que los mezcla convierte una caída nuestra en «la CMF está mal». Lo que sigue
+abierto. `verificar-desplegado` corre a mano, así que una caída entre 2 despliegues sigue sin
+alarma propia.
+
 ## Gotchas
 
 - **Un reemplazo de texto por script va con calce exacto y sin barras invertidas.** El hook de
@@ -1269,9 +1297,11 @@ cambiaste.**
 - **Un proceso colgado se detiene por la RUTA de tu árbol de trabajo, no por el nombre de la
   prueba.** Los árboles hermanos corren pruebas con el mismo nombre. El 9 de octubre de 2026 un
   filtro por `tope-en-vuelo` detuvo también 4 procesos de `C:\dev\cmf-mcp-liberar`.
-- **Las tools de `www.cmfchile.cl` dependen de Floki.** Si todas responden 403 a la vez, mira
-  primero si la salida chilena está viva, con los comandos de `infra/salida-chilena/README.md`,
-  y busca `cmf_salida` con `proxy_fallo` en Workers Logs. Ver la lección 36.
+- **Las tools de los 9 hosts de la CMF dependen de Floki.** Si todas responden 403, 52x o 530 a
+  la vez, mira primero si la salida chilena está viva, con los comandos de
+  `infra/salida-chilena/README.md`, y busca `cmf_salida` con `proxy_fallo` en Workers Logs. Si
+  no hay ninguna línea `cmf_salida`, el cliente ni siquiera probó el proxy. Ver las lecciones 36
+  y 48.
 - **2 tools piden captcha.** `cmf_hechos_globales` y `cmf_fondos_mutuos_cartola`. La imagen se
   sirve como recurso `cmf://captcha/{id}`, es de un solo uso y dura 10 minutos. Nunca hay OCR
   automático, el código lo lee la persona.
