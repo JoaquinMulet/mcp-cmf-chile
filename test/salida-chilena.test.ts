@@ -85,6 +85,36 @@ test("un 520 directo también es bloqueo de origen y sale por el proxy", () =>
     assert.equal(alProxy(llamadas).length, 1);
   }));
 
+// Medido el 25 de octubre de 2026 en Workers Logs. www.cmfchile.cl respondía
+// 530 con "error code: 1016" (Cloudflare no resuelve el origen) y la consulta
+// nunca pasaba al proxy. La CMF no está detrás de Cloudflare (lección 36), así
+// que todo 52x o 530 que recibe el Worker lo escribe Cloudflare y dice lo mismo
+// que el 520: no llegó al origen.
+for (const [status, codigo] of [[521, 521], [522, 522], [523, 523], [524, 524], [525, 525], [526, 526], [530, 1016]]) {
+  test(`un ${status} de Cloudflare (error code: ${codigo}) también sale por el proxy`, () =>
+    conRed(
+      () => new Response(`error code: ${codigo}\n`, { status, headers: { server: "cloudflare", "content-type": "text/plain; charset=UTF-8" } }),
+      delProxy(PAGINA),
+      async (llamadas) => {
+        const texto = await getLegacy(RUTA, { rut: "90749000", pestania: 1 }, entorno(100 + status));
+        assert.equal(texto, PAGINA);
+        assert.equal(alDirecto(llamadas).length, 1);
+        assert.equal(alProxy(llamadas).length, 1);
+      },
+    ));
+}
+
+test("un 503 de la propia CMF no es bloqueo de origen: se reintenta directo y no toca el proxy", () =>
+  conRed(
+    () => new Response("<html>Servicio no disponible</html>", { status: 503 }),
+    delProxy(PAGINA),
+    async (llamadas) => {
+      await assert.rejects(getLegacy(RUTA, { rut: "90749000", pestania: 1 }, entorno(99)));
+      assert.equal(alProxy(llamadas).length, 0);
+      assert.equal(alDirecto(llamadas).length, 3);
+    },
+  ));
+
 test("el método y el cuerpo de un POST viajan intactos al proxy", () =>
   conRed(bloqueo403, delProxy(PAGINA), async (llamadas) => {
     const res = await fetchCmf(

@@ -657,7 +657,13 @@ const MEMORIA_BLOQUEO_MS = 10 * 60 * 1000;
 /** Hasta cuándo se da por bloqueado el camino directo, por URL de proxy. */
 const directoBloqueadoHasta = new Map<string, number>();
 
-const esBloqueoDeOrigen = (status: number) => status === 403 || status === 520;
+/**
+ * El 403 lo escribe la CMF. Los 520 a 526 y el 530 los escribe Cloudflare, porque
+ * la CMF no está detrás de Cloudflare (lección 36), y todos dicen que el Worker no
+ * llegó al origen. El 25 de octubre de 2026 llegó un 530 con "error code: 1016"
+ * (Cloudflare no resuelve el nombre) y quedaba fuera de la salida chilena.
+ */
+const esBloqueoDeOrigen = (status: number) => status === 403 || (status >= 520 && status <= 526) || status === 530;
 
 /**
  * Lo más que puede pesar una respuesta. Un Worker tiene 128 MB de memoria en
