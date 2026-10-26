@@ -212,6 +212,23 @@ test("una consulta que el Worker corta deja una línea con su etapa y su espera"
     assert.ok(!linea.includes("rut=90749000"), "sin la query");
   }));
 
+// La primera versión de la línea de corte salía también en las consultas que
+// terminaban bien: 87 «cortada» contra 86 respuestas 200 en la batería del 26 de
+// octubre de 2026. La prueba de arriba solo miraba la dirección del corte.
+test("una consulta que termina bien no deja línea de corte", () =>
+  conProxy({}, async (base) => {
+    const lineas: string[] = [];
+    console.log = (l: unknown) => lineas.push(String(l));
+    for (let i = 0; i < 3; i++) {
+      const res = await fetch(base, { headers: cabeceras() });
+      assert.equal(res.status, 200);
+      await res.text();
+    }
+    await new Promise((r) => setTimeout(r, 200));
+    assert.deepEqual(lineas.filter((l) => l.includes("cortada")), []);
+    assert.equal(lineas.filter((l) => / 200$/.test(l)).length, 3);
+  }));
+
 test("plazoRestante descuenta la espera y el margen, y tiene tope", () => {
   assert.equal(plazoRestante("2900", 0, 200), 900);
   assert.equal(plazoRestante("2900", 500, 200), 400, "la espera en la fila sale del plazo");

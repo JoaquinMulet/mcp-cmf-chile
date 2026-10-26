@@ -137,7 +137,9 @@ export function crearServidor({ token, fetchFn = fetch, minMs = 600, colaMaxima 
       const control = new AbortController();
       etapa = "fila";
       res.on("close", () => {
-        if (etapa !== "terminada") {
+        // writableFinished y no la etapa: el cierre de una respuesta enviada
+        // entera llega antes de que el await del pipeline vuelva a correr.
+        if (etapa !== "terminada" && !res.writableFinished) {
           console.log(`${new Date().toISOString()} ${req.method} ${destino.pathname} cortada por el Worker etapa=${etapa} tras ${Date.now() - llegada} ms`);
         }
         control.abort();

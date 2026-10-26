@@ -1259,7 +1259,16 @@ las tools lentas; con todo el tráfico de la CMF por el proxy, 5 de 68 consultas
 plazo en `X-Cmf-Plazo-Ms` y el proxy espera eso menos lo que la consulta pasó en su fila y 2
 segundos de margen, con tope de 118 (`plazoRestante`). Sin la cabecera vale el plazo de fábrica
 de 10. Regla. **quien atiende por encargo de otro corta con el plazo de quien encarga, no con uno
-propio.** Regla. **un estado HTTP que escribe el intermediario no es un error de la fuente**, y
+propio.** La batería siguiente dejó 5 `proxy_fallo` con status 0 y el registro del proxy limpio,
+así que no había causa que leer. Ahora `cmf_salida` lleva `error`, `detalle` (sin queries) y
+`ms`, y el proxy anota cada consulta que el Worker corta, con su etapa. Con eso puesto, la
+batería del 26 de octubre de 2026 tuvo 1 sola falla (un 502 porque `normativa2.php` tardó más
+que el plazo) y ninguna con status 0. La primera versión de la línea de corte salía también en
+las consultas que terminaban bien (87 «cortada» contra 86 respuestas 200), porque el cierre de
+una respuesta enviada entera llega antes de que el `await` del pipeline vuelva; ahora se mira
+`res.writableFinished`, y una prueba exige que una consulta normal no deje esa línea. Regla de
+siempre, que esta vez rompí yo. **un registro nuevo se prueba en las 2 direcciones, el caso que
+tiene que anotar y el que no.** Regla. **un estado HTTP que escribe el intermediario no es un error de la fuente**, y
 un verificador que los mezcla convierte una caída nuestra en «la CMF está mal». Lo que sigue
 abierto. `verificar-desplegado` corre a mano, así que una caída entre 2 despliegues sigue sin
 alarma propia.
