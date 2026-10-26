@@ -69,13 +69,30 @@ async function leerCuerpo(req) {
   return Buffer.concat(partes);
 }
 
+/** Lo que el proxy guarda para contestar su 502 antes de que el Worker lo dé por colgado. */
+const MARGEN_MS = 2000;
+/** El plazo más largo que se acepta. La tool más lenta del Worker pide 90 segundos. */
+const TOPE_MS = 118000;
+
+/**
+ * Cuánto se le puede esperar a la CMF. El Worker manda su plazo total en
+ * X-Cmf-Plazo-Ms; de ahí sale lo que la consulta ya esperó en la fila del proxy
+ * y el margen. 0 quiere decir que no queda tiempo. Sin la cabecera, o con un
+ * valor que no son puros dígitos, vale el plazo de fábrica (un Worker viejo).
+ */
+export function plazoRestante(pedido, transcurridoMs, porDefectoMs) {
+  if (typeof pedido !== "string" || !/^\d{1,9}$/.test(pedido)) return porDefectoMs;
+  return Math.max(0, Math.min(TOPE_MS, Number(pedido) - transcurridoMs - MARGEN_MS));
+}
+
 /**
  * Arma el servidor. `fetchFn` y `minMs` se inyectan para poder probarlo sin
  * red. `minMs` es la separación mínima entre 2 consultas a la CMF, y
  * `colaMaxima` cuántas pueden estar en curso, esperando turno o bajando su
- * cuerpo, antes de responder 429. `timeoutMs` es el plazo hasta las cabeceras
- * de la CMF, y va por debajo de los 12 s del Worker para que el proxy
- * conteste su 502 antes de que el Worker lo dé por colgado.
+ * cuerpo, antes de responder 429. `timeoutMs` es el plazo de fábrica hasta las
+ * cabeceras de la CMF, para un Worker que no manda X-Cmf-Plazo-Ms, y va por
+ * debajo de los 12 s del Worker para que el proxy conteste su 502 antes de que
+ * el Worker lo dé por colgado.
  */
 export function crearServidor({ token, fetchFn = fetch, minMs = 600, colaMaxima = 12, timeoutMs = 10000 }) {
   if (!token || token.length < 32) throw new Error("El token de la salida chilena falta o tiene menos de 32 caracteres");
@@ -88,6 +105,7 @@ export function crearServidor({ token, fetchFn = fetch, minMs = 600, colaMaxima 
   };
 
   return createServer(async (req, res) => {
+    const llegada = Date.now();
     try {
       if (!tokenValido(req.headers["x-cmf-token"], token)) return responder(res, 401, "no autorizado");
       const destino = destinoPermitido(req.headers["x-cmf-destino"]);
@@ -130,7 +148,10 @@ export function crearServidor({ token, fetchFn = fetch, minMs = 600, colaMaxima 
           if (req.headers[nombre]) headers[nombre] = req.headers[nombre];
         }
         // El plazo cubre solo hasta las cabeceras, como en el camino directo.
-        const plazo = setTimeout(() => control.abort(), timeoutMs);
+        const plazoMs = plazoRestante(req.headers["x-cmf-plazo-ms"], Date.now() - llegada, timeoutMs);
+        // Sin la marca x-cmf-salida: el Worker lo lee como falla del proxy.
+        if (plazoMs <= 0) return responder(res, 504, "la fila del proxy se comio el plazo del Worker");
+        const plazo = setTimeout(() => control.abort(), plazoMs);
         let respuesta;
         try {
           respuesta = await fetchFn(destino.toString(), {

@@ -1252,7 +1252,14 @@ marca `x-cmf-salida`, el Worker lo lee como `proxy_fallo` y la memoria rebota. Y
 lo vio en 3 días. `verify-remote.ts` aceptaba como «error de fuente honesto» cualquier HTTP en
 el texto de la tool, así que daba PASS con todo en 530. Ahora, después de desplegar, un 52x o
 530 de Cloudflare en el texto es FAIL; antes de desplegar (`CMF_ANTES_DE_DESPLEGAR=1`) solo se
-informa. Regla. **un estado HTTP que escribe el intermediario no es un error de la fuente**, y
+informa. Lo que mostró la batería de 13 preguntas de Hermes con el arreglo ya desplegado. El
+proxy cortaba a los 10 segundos fijos y el Worker le da 12 a una consulta normal y 60 o 90 a
+las tools lentas; con todo el tráfico de la CMF por el proxy, 5 de 68 consultas salieron en 502
+(«AbortError» en el registro del proxy) y 3 más vencieron en el Worker. Ahora el Worker manda su
+plazo en `X-Cmf-Plazo-Ms` y el proxy espera eso menos lo que la consulta pasó en su fila y 2
+segundos de margen, con tope de 118 (`plazoRestante`). Sin la cabecera vale el plazo de fábrica
+de 10. Regla. **quien atiende por encargo de otro corta con el plazo de quien encarga, no con uno
+propio.** Regla. **un estado HTTP que escribe el intermediario no es un error de la fuente**, y
 un verificador que los mezcla convierte una caída nuestra en «la CMF está mal». Lo que sigue
 abierto. `verificar-desplegado` corre a mano, así que una caída entre 2 despliegues sigue sin
 alarma propia.

@@ -117,6 +117,14 @@ test("un 503 de la propia CMF no es bloqueo de origen: se reintenta directo y no
     },
   ));
 
+test("el Worker le manda al proxy su plazo, el de fábrica o el de una tool lenta", () =>
+  conRed(bloqueo403, delProxy(PAGINA), async (llamadas) => {
+    await fetchCmf(DESTINO, {}, entorno(400));
+    await fetchCmf(DESTINO, {}, entorno(401, { CMF_UPSTREAM_TIMEOUT_MS: "90000" }));
+    const plazos = alProxy(llamadas).map((l) => l.headers.get("x-cmf-plazo-ms"));
+    assert.deepEqual(plazos, ["12000", "90000"]);
+  }));
+
 test("el método y el cuerpo de un POST viajan intactos al proxy", () =>
   conRed(bloqueo403, delProxy(PAGINA), async (llamadas) => {
     const res = await fetchCmf(

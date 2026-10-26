@@ -663,6 +663,7 @@ export const HOSTS_CON_SALIDA: ReadonlySet<string> = new Set([
 ]);
 const CABECERA_DESTINO = "X-Cmf-Destino";
 const CABECERA_TOKEN = "X-Cmf-Token";
+const CABECERA_PLAZO = "X-Cmf-Plazo-Ms";
 const MARCA_SALIDA = "x-cmf-salida";
 /** El 429 del propio proxy, cuando su cola está llena. No viene de la CMF. */
 const MARCA_COLA = "x-cmf-salida-cola";
@@ -712,6 +713,9 @@ function salidaChilena(env: CmfEnv, destino: URL, timeoutMs: number): { clave: s
       // Normalizada: una cabecera no admite caracteres fuera de latin1.
       headers.set(CABECERA_DESTINO, new URL(url).toString());
       headers.set(CABECERA_TOKEN, token);
+      // El proxy no sabe cuánto espera esta consulta: 12 s la normal, 60 o 90
+      // una tool lenta. Sin esto cortaba a los 10 fijos (lección 48).
+      headers.set(CABECERA_PLAZO, String(timeoutMs));
       return fetchConTimeout(proxy.toString(), { ...init, headers }, timeoutMs, url);
     },
   };

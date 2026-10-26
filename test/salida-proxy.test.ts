@@ -10,7 +10,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 // @ts-expect-error el proxy es JavaScript sin tipos, a propósito: corre sin compilar.
-import { crearServidor, destinoPermitido } from "../infra/salida-chilena/proxy.mjs";
+import { crearServidor, destinoPermitido, plazoRestante } from "../infra/salida-chilena/proxy.mjs";
 
 const TOKEN = "t".repeat(48);
 const DESTINO = "https://www.cmfchile.cl/institucional/mercados/entidad.php?rut=90749000";
@@ -165,6 +165,46 @@ test("con la cola llena responde 429 sin la marca de la CMF", () =>
     for (const r of rechazadas) assert.equal(r.headers.get("x-cmf-salida"), null);
     await Promise.all(respuestas.map((r) => r.text()));
   }));
+
+// Medido el 25 de octubre de 2026. El proxy cortaba a los 10 segundos fijos,
+// y el Worker le daba 12 a una consulta normal y 60 o 90 a las lentas. Con
+// todo el tráfico de la CMF por acá, 5 de 68 consultas terminaron en 502.
+
+/** Un fetch que entrega las cabeceras recién a los `ms`, y que obedece el corte. */
+const fetchTardio = (ms: number) => (_url: string, init: RequestInit) =>
+  new Promise<Response>((resolver, rechazar) => {
+    const t = setTimeout(() => resolver(new Response("ficha tardia", { status: 200 })), ms);
+    init.signal?.addEventListener("abort", () => {
+      clearTimeout(t);
+      rechazar(new DOMException("aborted", "AbortError"));
+    });
+  });
+
+test("el plazo lo pone quien llama: con X-Cmf-Plazo-Ms el proxy espera más que su plazo de fábrica", () =>
+  conProxy({ timeoutMs: 200, fetchFn: fetchTardio(400) }, async (base) => {
+    const res = await fetch(base, { headers: cabeceras({ "X-Cmf-Plazo-Ms": "2900" }) });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("x-cmf-salida"), "1");
+    assert.equal(await res.text(), "ficha tardia");
+  }));
+
+test("sin X-Cmf-Plazo-Ms vale el plazo de fábrica, como con un Worker viejo", () =>
+  conProxy({ timeoutMs: 200, fetchFn: fetchTardio(400) }, async (base) => {
+    const res = await fetch(base, { headers: cabeceras() });
+    assert.equal(res.status, 502);
+    assert.equal(res.headers.get("x-cmf-salida"), null);
+  }));
+
+test("plazoRestante descuenta la espera y el margen, y tiene tope", () => {
+  assert.equal(plazoRestante("2900", 0, 200), 900);
+  assert.equal(plazoRestante("2900", 500, 200), 400, "la espera en la fila sale del plazo");
+  assert.equal(plazoRestante("2000", 0, 200), 0, "sin tiempo para la CMF");
+  assert.equal(plazoRestante(undefined, 0, 10000), 10000);
+  assert.equal(plazoRestante("abc", 0, 10000), 10000);
+  assert.equal(plazoRestante("-5", 0, 10000), 10000);
+  assert.equal(plazoRestante("12000.5", 0, 10000), 10000, "solo dígitos");
+  assert.equal(plazoRestante("999999", 0, 10000), 118000, "tope");
+});
 
 test("un token corto no arranca el servidor", () => {
   assert.throws(() => crearServidor({ token: "corto" }), /32 caracteres/);
