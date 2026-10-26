@@ -721,9 +721,26 @@ function salidaChilena(env: CmfEnv, destino: URL, timeoutMs: number): { clave: s
   };
 }
 
-/** Deja rastro de cada cambio de camino. Nunca lleva el token ni la query. */
-function registrarSalida(motivo: "directo_bloqueado" | "proxy_fallo", status: number, destino: URL): void {
-  console.warn(JSON.stringify({ cmf_salida: { motivo, status, ruta: destino.pathname } }));
+/** Lo que se anota de una excepción: su nombre y su mensaje sin queries, recortado. */
+interface FallaAnotada {
+  error: string;
+  detalle: string;
+  ms: number;
+}
+
+function anotarFalla(e: unknown, inicio: number): FallaAnotada {
+  const error = e instanceof Error || e instanceof DOMException ? e.name : typeof e;
+  // Un mensaje puede traer una URL con la API key o un token en la query.
+  const detalle = String(e instanceof Error ? e.message : e).replace(/\?[^\s"'<>]*/g, "?…").slice(0, 160);
+  return { error, detalle, ms: Date.now() - inicio };
+}
+
+/**
+ * Deja rastro de cada cambio de camino. Nunca lleva el token ni la query. Un
+ * proxy_fallo sin respuesta lleva además la excepción y cuánto tardó (lección 48).
+ */
+function registrarSalida(motivo: "directo_bloqueado" | "proxy_fallo", status: number, destino: URL, falla?: FallaAnotada): void {
+  console.warn(JSON.stringify({ cmf_salida: { motivo, status, ruta: destino.pathname, ...falla } }));
 }
 
 /**
@@ -794,6 +811,7 @@ async function consultarCmf(url: string, init: RequestInit, env: CmfEnv, jar: Co
     // una vez por cada esperar(). Lo que lanza después (una redirección a un
     // destino no permitido) no vuelve a pasar por el catch.
     let res: Response;
+    const inicioIntento = Date.now();
     try {
       res = await resolverChallenge(porProxy && salida ? salida.fetchFn : fetchConCfg, url, { ...init, headers }, jar, MAX_BYTES_DE_UNA_RESPUESTA);
     } catch (e) {
@@ -808,7 +826,7 @@ async function consultarCmf(url: string, init: RequestInit, env: CmfEnv, jar: Co
       if (plazosTotalesVencidos.has(e as object) || e instanceof DesafioRepetido || e instanceof RespuestaDemasiadoGrande) throw e;
       if (porProxy && salida) {
         // Un proxy colgado o sin red es un proxy caído. No se le insiste.
-        registrarSalida("proxy_fallo", 0, u);
+        registrarSalida("proxy_fallo", 0, u, anotarFalla(e, inicioIntento));
         directoBloqueadoHasta.delete(salida.clave);
         salida = null;
         porProxy = false;

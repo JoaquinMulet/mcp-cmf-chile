@@ -195,6 +195,23 @@ test("sin X-Cmf-Plazo-Ms vale el plazo de fábrica, como con un Worker viejo", (
     assert.equal(res.headers.get("x-cmf-salida"), null);
   }));
 
+// El 26 de octubre de 2026 el Worker cortó 5 consultas por el proxy y el
+// registro del proxy quedó limpio: una consulta cortada salía sin una línea.
+test("una consulta que el Worker corta deja una línea con su etapa y su espera", () =>
+  conProxy({ fetchFn: fetchTardio(1500) }, async (base) => {
+    const lineas: string[] = [];
+    console.log = (l: unknown) => lineas.push(String(l));
+    const control = new AbortController();
+    setTimeout(() => control.abort(), 300);
+    await assert.rejects(fetch(base, { headers: cabeceras(), signal: control.signal }));
+    await new Promise((r) => setTimeout(r, 200));
+    const linea = lineas.find((l) => l.includes("cortada"));
+    assert.ok(linea, `sin línea de corte: ${JSON.stringify(lineas)}`);
+    assert.match(linea, /etapa=cabeceras/);
+    assert.match(linea, /\d+ ms/);
+    assert.ok(!linea.includes("rut=90749000"), "sin la query");
+  }));
+
 test("plazoRestante descuenta la espera y el margen, y tiene tope", () => {
   assert.equal(plazoRestante("2900", 0, 200), 900);
   assert.equal(plazoRestante("2900", 500, 200), 400, "la espera en la fila sale del plazo");

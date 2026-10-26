@@ -292,6 +292,35 @@ test("un proxy que cuelga o falla de red entrega el bloqueo original y se olvida
   }
 });
 
+// El 26 de octubre de 2026 la batería de Hermes dejó 5 líneas «proxy_fallo» con
+// status 0 y el proxy no anotó ningún error. Sin la excepción no había causa.
+test("un proxy_fallo sin respuesta anota la excepción y cuánto tardó, sin token ni query", async () => {
+  const original = globalThis.fetch;
+  const avisoOriginal = console.warn;
+  const lineas: string[] = [];
+  console.warn = (l: unknown) => lineas.push(String(l));
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    if (new URL(String(url)).hostname.endsWith(".example.cl")) {
+      throw new TypeError("fetch failed hacia https://salida-301.example.cl/?apikey=SECRETA&x=token-de-prueba");
+    }
+    return bloqueo403();
+  }) as typeof fetch;
+  try {
+    await assert.rejects(getLegacy(RUTA, { rut: "90749000", pestania: 1 }, entorno(301)));
+  } finally {
+    globalThis.fetch = original;
+    console.warn = avisoOriginal;
+  }
+  const linea = lineas.find((l) => l.includes("proxy_fallo"));
+  assert.ok(linea, "hay una línea proxy_fallo");
+  const { cmf_salida } = JSON.parse(linea);
+  assert.equal(cmf_salida.status, 0);
+  assert.equal(cmf_salida.error, "TypeError");
+  assert.match(cmf_salida.detalle, /fetch failed/);
+  assert.equal(typeof cmf_salida.ms, "number");
+  assert.ok(!linea.includes("SECRETA") && !linea.includes("token-de-prueba") && !linea.includes("apikey"), linea);
+});
+
 test("una URL con un carácter fuera de latin1 viaja codificada al proxy", () =>
   conRed(bloqueo403, delProxy(PAGINA), async (llamadas) => {
     const res = await fetchCmf("https://www.cmfchile.cl/x.php?nombre=Memoria – 2025", {}, entorno(10));

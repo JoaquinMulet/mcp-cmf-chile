@@ -106,6 +106,8 @@ export function crearServidor({ token, fetchFn = fetch, minMs = 600, colaMaxima 
 
   return createServer(async (req, res) => {
     const llegada = Date.now();
+    // fila, cabeceras, cuerpo o terminada. Lo lee la línea de una consulta cortada.
+    let etapa = "terminada";
     try {
       if (!tokenValido(req.headers["x-cmf-token"], token)) return responder(res, 401, "no autorizado");
       const destino = destinoPermitido(req.headers["x-cmf-destino"]);
@@ -129,9 +131,15 @@ export function crearServidor({ token, fetchFn = fetch, minMs = 600, colaMaxima 
           enCola--;
         }
       };
-      // Si el Worker corta, la consulta a la CMF se corta con él.
+      // Si el Worker corta, la consulta a la CMF se corta con él. Y queda una
+      // línea con la etapa: sin ella, una consulta cortada no dejaba rastro
+      // (lección 48). Sin la query, que lleva tokens.
       const control = new AbortController();
+      etapa = "fila";
       res.on("close", () => {
+        if (etapa !== "terminada") {
+          console.log(`${new Date().toISOString()} ${req.method} ${destino.pathname} cortada por el Worker etapa=${etapa} tras ${Date.now() - llegada} ms`);
+        }
         control.abort();
         liberar();
       });
@@ -150,7 +158,12 @@ export function crearServidor({ token, fetchFn = fetch, minMs = 600, colaMaxima 
         // El plazo cubre solo hasta las cabeceras, como en el camino directo.
         const plazoMs = plazoRestante(req.headers["x-cmf-plazo-ms"], Date.now() - llegada, timeoutMs);
         // Sin la marca x-cmf-salida: el Worker lo lee como falla del proxy.
-        if (plazoMs <= 0) return responder(res, 504, "la fila del proxy se comio el plazo del Worker");
+        if (plazoMs <= 0) {
+          etapa = "terminada";
+          console.log(`${new Date().toISOString()} ${req.method} ${destino.pathname} 504 la fila se comio el plazo tras ${Date.now() - llegada} ms`);
+          return responder(res, 504, "la fila del proxy se comio el plazo del Worker");
+        }
+        etapa = "cabeceras";
         const plazo = setTimeout(() => control.abort(), plazoMs);
         let respuesta;
         try {
@@ -175,9 +188,11 @@ export function crearServidor({ token, fetchFn = fetch, minMs = 600, colaMaxima 
         const cookies = respuesta.headers.getSetCookie?.() ?? [];
         if (cookies.length > 0) salida["set-cookie"] = cookies;
         res.writeHead(respuesta.status, salida);
+        etapa = "cuerpo";
         // El cuerpo pasa en tramos, sin juntarse en memoria.
         if (respuesta.body) await pipeline(Readable.fromWeb(respuesta.body), res);
         else res.end();
+        etapa = "terminada";
         // Solo estado y ruta. La query lleva tokens de la CMF y no se registra.
         console.log(`${new Date().toISOString()} ${req.method} ${destino.pathname} ${respuesta.status}`);
       } finally {
@@ -185,6 +200,7 @@ export function crearServidor({ token, fetchFn = fetch, minMs = 600, colaMaxima 
       }
     } catch (e) {
       if (res.destroyed) return;
+      etapa = "terminada";
       // Sin la marca x-cmf-salida: el Worker lo lee como falla del proxy.
       console.error(`${new Date().toISOString()} error ${e?.name ?? "Error"}: ${e?.message ?? e}`);
       if (!res.headersSent) responder(res, 502, "la salida chilena no pudo consultar a la CMF");
